@@ -105,6 +105,8 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(!firstPage.includes('data-lore-id='));
 		const sidebar = firstPage.split('<aside class="lore-sidebar"')[1].split('</aside>')[0];
 		assert.ok(!sidebar.includes('로어 관리'));
+		assert.ok(sidebar.includes('aria-label="저장 슬롯"'));
+		assert.ok(!firstPage.split('<main class="reader">')[1].split('</main>')[0].includes('aria-label="저장 슬롯"'));
 		assert.ok(firstPage.includes('현재 세션'));
 		assert.ok(firstPage.includes('저장 슬롯'));
 		assert.ok(!firstPage.includes('new-lore-world'));

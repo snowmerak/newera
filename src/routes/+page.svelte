@@ -61,6 +61,15 @@
 						</form>
 					{/each}
 				</nav>
+				<section class="save-panel sidebar-saves" aria-label="저장 슬롯">
+					<div class="save-panel-title"><h2>저장 슬롯</h2><span>{data.saves.length}/3 사용 중</span></div>
+					<div class="save-slots">{#each [1, 2, 3] as number}
+						{@const saved = data.saves.find((save) => save.slot === number)}
+						<div class="save-slot"><div><strong>슬롯 {number}</strong><span>{saved ? `${saved.turn}턴 저장 · ${new Date(saved.savedAt).toLocaleString('ko-KR')}` : '비어 있음'}</span></div>
+							<div class="save-slot-actions"><form method="POST" action="?/save" use:enhance={submit}><button name="slot" value={number} disabled={busy}>저장</button></form><form method="POST" action="?/load" use:enhance={submit}><button name="slot" value={number} disabled={busy || !saved}>불러오기</button></form></div>
+						</div>
+					{/each}</div>
+				</section>
 			</div>
 		</aside>
 
@@ -68,15 +77,6 @@
 			<div class="lore-heading"><div><p class="eyebrow">PLAYING LORE</p><h1>{data.lore.title}</h1></div><a href="/lores">설정 관리 →</a></div>
 			<section class="session-panel" aria-label="현재 세션">
 				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴 · 체력 {data.player.energy}/{data.player.maxEnergy}</small></div>
-			</section>
-			<section class="save-panel" aria-label="저장 슬롯">
-				<div class="save-panel-title"><h2>저장 슬롯</h2><span>{data.saves.length}/3 사용 중</span></div>
-				<div class="save-slots">{#each [1, 2, 3] as number}
-					{@const saved = data.saves.find((save) => save.slot === number)}
-					<div class="save-slot"><div><strong>슬롯 {number}</strong><span>{saved ? `${saved.turn}턴 저장 · ${new Date(saved.savedAt).toLocaleString('ko-KR')}` : '비어 있음'}</span></div>
-						<div class="save-slot-actions"><form method="POST" action="?/save" use:enhance={submit}><button name="slot" value={number} disabled={busy}>저장</button></form><form method="POST" action="?/load" use:enhance={submit}><button name="slot" value={number} disabled={busy || !saved}>불러오기</button></form></div>
-					</div>
-				{/each}</div>
 			</section>
 			<div class="scene-meta"><span>TURN {data.world.turn}</span><span>{data.world.day}일차 · {timeLabel(data.world.minute)}</span><span>{data.world.location}</span></div>
 			<article class="scene" aria-label="현재 장면">
