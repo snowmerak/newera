@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { DEFAULT_TALENT } from '$lib/game/types';
 import type {
 	BaseStats,
 	Character,
@@ -49,6 +50,7 @@ function characterFromRow(row: Row): Character {
 		profile: String(row.profile ?? row.introduction),
 		base: parse(row.base_json),
 		trait: parse(row.trait_json),
+		talent: { ...DEFAULT_TALENT, ...(row.talent_json ? parse<Character['talent']>(row.talent_json) : {}) },
 		abl: { conversation: abl.conversation ?? 1, empathy: abl.empathy ?? 1, seduction: abl.seduction ?? 1 },
 		exp: { conversation: exp.conversation ?? 0, empathy: exp.empathy ?? 0, seduction: exp.seduction ?? 0 },
 		mark: parse(row.mark_json),
@@ -134,6 +136,7 @@ export function getDb(): DatabaseSync {
 			profile TEXT NOT NULL DEFAULT '',
 			base_json TEXT NOT NULL,
 			trait_json TEXT NOT NULL,
+			talent_json TEXT NOT NULL DEFAULT '{"pride":50,"openness":50,"empathy":50,"assertiveness":50}',
 			abl_json TEXT NOT NULL,
 			exp_json TEXT NOT NULL,
 			mark_json TEXT NOT NULL,
@@ -228,6 +231,9 @@ export function getDb(): DatabaseSync {
 	if (!characterColumns.some((column) => column.name === 'module_id')) {
 		db.exec('ALTER TABLE characters ADD COLUMN module_id TEXT');
 	}
+	if (!characterColumns.some((column) => column.name === 'talent_json')) {
+		db.exec('ALTER TABLE characters ADD COLUMN talent_json TEXT NOT NULL DEFAULT \'{"pride":50,"openness":50,"empathy":50,"assertiveness":50}\'');
+	}
 	const configColumns = db.prepare('PRAGMA table_info(scenario_config)').all() as Row[];
 	if (!configColumns.some((column) => column.name === 'world_memory')) {
 		db.exec("ALTER TABLE scenario_config ADD COLUMN world_memory TEXT NOT NULL DEFAULT ''");
@@ -271,6 +277,7 @@ function seed(): void {
 				profile: '서연은 망원동의 독립 서점에서 일한다. 말수가 적지만 관찰력이 좋고, 친해진 사람에게는 자기 생각을 솔직하게 털어놓는다.',
 				base: { energy: 20, maxEnergy: 20 },
 				trait: ['차분함', '섬세함'],
+				talent: { pride: 45, openness: 65, empathy: 75, assertiveness: 40 },
 				abl: { conversation: 1, empathy: 2, seduction: 1 },
 				exp: { conversation: 0, empathy: 15, seduction: 0 },
 				mark: [],
@@ -286,6 +293,7 @@ function seed(): void {
 				profile: '지은은 프리랜서 편집자다. 상대의 말보다 행동을 오래 기억하며, 먼저 다가갈 때에도 자신의 기준을 분명히 한다.',
 				base: { energy: 18, maxEnergy: 18 },
 				trait: ['신중함', '관찰력'],
+				talent: { pride: 65, openness: 45, empathy: 60, assertiveness: 70 },
 				abl: { conversation: 1, empathy: 1, seduction: 1 },
 				exp: { conversation: 0, empathy: 0, seduction: 0 },
 				mark: [],
@@ -393,7 +401,8 @@ export function getCharacterLore(): CharacterLore[] {
 		.filter((row) => !row.module_id || moduleCharacters.has(String(row.id)))
 		.map(characterFromRow);
 	const storedIds = new Set(stored.map((character) => character.id));
-	const missing = [...moduleCharacters.values()].filter((character) => !storedIds.has(character.id));
+	const missing = [...moduleCharacters.values()].filter((character) => !storedIds.has(character.id))
+		.map((character) => ({ ...character, talent: character.talent ?? { ...DEFAULT_TALENT } }));
 	return [...stored, ...missing].map((character) => ({
 		character, active: !character.moduleId || activeIds.has(character.id)
 	}));
@@ -505,15 +514,16 @@ export function updateCharacter(character: Character, sortOrder?: number): void 
 		.prepare(`
 			INSERT INTO characters (
 				id, module_id, sort_order, name, age, portrait, introduction, profile, base_json,
-				trait_json, abl_json, exp_json, mark_json, relation_json, palam_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				trait_json, abl_json, exp_json, mark_json, relation_json, palam_json, talent_json
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET
 				module_id=excluded.module_id,
 				name=excluded.name, age=excluded.age, portrait=excluded.portrait,
 				introduction=excluded.introduction, profile=excluded.profile, base_json=excluded.base_json,
 				trait_json=excluded.trait_json, abl_json=excluded.abl_json,
 				exp_json=excluded.exp_json, mark_json=excluded.mark_json,
-				relation_json=excluded.relation_json, palam_json=excluded.palam_json
+				relation_json=excluded.relation_json, palam_json=excluded.palam_json,
+				talent_json=excluded.talent_json
 		`)
 		.run(
 			character.id,
@@ -530,7 +540,8 @@ export function updateCharacter(character: Character, sortOrder?: number): void 
 			JSON.stringify(character.exp),
 			JSON.stringify(character.mark),
 			JSON.stringify(character.relation),
-			JSON.stringify(character.palam)
+			JSON.stringify(character.palam),
+			JSON.stringify(character.talent ?? DEFAULT_TALENT)
 		);
 }
 
@@ -894,8 +905,8 @@ function restoreSnapshot(snapshot: Snapshot): void {
 		for (const value of snapshot.characters) {
 			db.prepare(`INSERT INTO characters (
 				id, module_id, sort_order, name, age, portrait, introduction, profile, base_json,
-				trait_json, abl_json, exp_json, mark_json, relation_json, palam_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+				trait_json, abl_json, exp_json, mark_json, relation_json, palam_json, talent_json
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
 				value.id as string,
 				(value.module_id ?? null) as string | null,
 				value.sort_order as number,
@@ -910,7 +921,8 @@ function restoreSnapshot(snapshot: Snapshot): void {
 				value.exp_json as string,
 				value.mark_json as string,
 				value.relation_json as string,
-				value.palam_json as string
+				value.palam_json as string,
+				(value.talent_json ?? JSON.stringify(DEFAULT_TALENT)) as string
 			);
 		}
 		for (const value of snapshot.events) {

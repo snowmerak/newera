@@ -47,7 +47,7 @@
 <div class="page">
 	<header class="topbar">
 		<div class="brand-group"><a class="brand" href="/">newera</a><span class="adult-label">성인용 텍스트 게임</span></div>
-		<div class="top-actions"><a class="top-link" href="/lores">로어 관리</a><button type="button" class="lore-toggle" aria-expanded={loreOpen} onclick={() => (loreOpen = !loreOpen)}>로어 {loreOpen ? '닫기' : '목록'}</button></div>
+		<div class="top-actions"><a class="top-link" href="/simulator">시뮬레이터</a><a class="top-link" href="/lores">로어 관리</a><button type="button" class="lore-toggle" aria-expanded={loreOpen} onclick={() => (loreOpen = !loreOpen)}>로어 {loreOpen ? '닫기' : '목록'}</button></div>
 	</header>
 
 	<div class="game-layout">

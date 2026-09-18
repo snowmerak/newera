@@ -1,4 +1,4 @@
-import type { Character } from '$lib/game/types';
+import { DEFAULT_TALENT, type Character } from '$lib/game/types';
 
 export interface ModuleManifest {
 	schemaVersion: 1;
@@ -80,12 +80,14 @@ export function parseModuleManifest(raw: string): ModuleManifest {
 		const profile = text(source.profile, `characters[${index}].profile`, 20_000);
 		const base = numbers(source.base, 'BASE', { energy: 20, maxEnergy: 20 }) as Character['base'];
 		if (base.maxEnergy < 1 || base.energy > base.maxEnergy) throw new Error('BASE 체력 값을 확인해 주세요.');
+		const talent = numbers(source.talent, 'TALENT', { ...DEFAULT_TALENT });
+		if (Object.values(talent).some((value) => value > 100)) throw new Error('TALENT는 0~100으로 입력해 주세요.');
 		return {
 			id: `mod:${id}:${localId}`, moduleId: id,
 			name: text(source.name, `characters[${index}].name`, 100), age,
 			portrait: '',
 			introduction: text(source.introduction, `characters[${index}].introduction`, 500, false) || profile.split('\n')[0],
-			profile, base,
+			profile, base, talent,
 			trait: strings(source.trait, 'TRAIT'),
 			abl: numbers(source.abl, 'ABL', { conversation: 1, empathy: 1, seduction: 1 }) as Character['abl'],
 			exp: numbers(source.exp, 'EXP', { conversation: 0, empathy: 0, seduction: 0 }) as Character['exp'],

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Character } from '$lib/game/types';
 
-	let { stats }: { stats: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> } = $props();
+	let { stats }: { stats: Pick<Character, 'base' | 'talent' | 'abl' | 'exp' | 'relation' | 'palam'> } = $props();
 </script>
 
 <div class="stat-fields">
@@ -10,6 +10,15 @@
 		<div class="stat-grid">
 			<label>체력 <small>energy</small><input name="base.energy" type="number" min="0" step="1" required value={stats.base.energy} /></label>
 			<label>최대 체력 <small>maxEnergy</small><input name="base.maxEnergy" type="number" min="1" step="1" required value={stats.base.maxEnergy} /></label>
+		</div>
+	</fieldset>
+	<fieldset>
+		<legend>TALENT · 성향 (0~100)</legend>
+		<div class="stat-grid">
+			<label>자존심 <small>pride</small><input name="talent.pride" type="number" min="0" max="100" step="1" required value={stats.talent.pride} /></label>
+			<label>개방성 <small>openness</small><input name="talent.openness" type="number" min="0" max="100" step="1" required value={stats.talent.openness} /></label>
+			<label>공감 성향 <small>empathy</small><input name="talent.empathy" type="number" min="0" max="100" step="1" required value={stats.talent.empathy} /></label>
+			<label>주도성 <small>assertiveness</small><input name="talent.assertiveness" type="number" min="0" max="100" step="1" required value={stats.talent.assertiveness} /></label>
 		</div>
 	</fieldset>
 	<fieldset>

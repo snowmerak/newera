@@ -5,6 +5,16 @@ export interface BaseStats {
 	maxEnergy: number;
 }
 
+export interface TalentStats {
+	pride: number;
+	openness: number;
+	empathy: number;
+	assertiveness: number;
+}
+
+export const DEFAULT_TALENT: TalentStats = { pride: 50, openness: 50, empathy: 50, assertiveness: 50 };
+export type CustomState = Record<string, string | number | boolean | null>;
+
 export interface Character {
 	id: string;
 	moduleId?: string | null;
@@ -15,6 +25,7 @@ export interface Character {
 	profile: string;
 	base: BaseStats;
 	trait: string[];
+	talent: TalentStats;
 	abl: { conversation: number; empathy: number; seduction: number };
 	exp: { conversation: number; empathy: number; seduction: number };
 	mark: string[];

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ACTIONS, actionReason, applyEffects, calculateSource, eventSummary } from '$lib/game/actions';
-import type { ActionId, Character, EventRecord, MemoryRecord, Proposal, Source, WorldState } from '$lib/game/types';
+import { DEFAULT_TALENT, type ActionId, type Character, type EventRecord, type MemoryRecord, type Proposal, type Source, type WorldState } from '$lib/game/types';
 import {
 	getCharacter,
 	getEffectiveScenarioConfig,
@@ -274,7 +274,7 @@ export function saveScenarioSettings(worldSetting: string, eraRules: string): Pr
 	});
 }
 
-export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> }): Promise<string> {
+export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> & Partial<Pick<Character, 'talent'>> }): Promise<string> {
 	return runExclusive(() => {
 		const name = input.name.trim();
 		const profile = input.profile.trim();
@@ -285,12 +285,13 @@ export function saveCharacterSettings(input: { id: string; name: string; age: nu
 		const character: Character = existing ?? {
 			id: randomUUID(), name, age: input.age, portrait: '', introduction: '', profile,
 			base: { energy: 20, maxEnergy: 20 }, trait: [],
+			talent: { ...DEFAULT_TALENT },
 			abl: { conversation: 1, empathy: 1, seduction: 1 },
 			exp: { conversation: 0, empathy: 0, seduction: 0 },
 			mark: [], relation: { affection: 0, trust: 0, desire: 0 },
 			palam: { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }
 		};
-		const stats = input.stats ?? character;
+		const stats = input.stats ? { ...input.stats, talent: input.stats.talent ?? character.talent } : character;
 		if (stats.base.maxEnergy < 1 || stats.base.energy > stats.base.maxEnergy) {
 			throw new Error('BASE 체력 값을 확인해 주세요.');
 		}

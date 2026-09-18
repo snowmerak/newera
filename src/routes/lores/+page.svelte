@@ -2,7 +2,7 @@
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import CharacterStatsFields from '$lib/components/CharacterStatsFields.svelte';
-	import type { Character } from '$lib/game/types';
+	import { DEFAULT_TALENT, type Character } from '$lib/game/types';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -18,8 +18,9 @@
 		};
 	};
 
-	const initialStats: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> = {
+	const initialStats: Pick<Character, 'base' | 'talent' | 'abl' | 'exp' | 'relation' | 'palam'> = {
 		base: { energy: 20, maxEnergy: 20 },
+		talent: { ...DEFAULT_TALENT },
 		abl: { conversation: 1, empathy: 1, seduction: 1 },
 		exp: { conversation: 0, empathy: 0, seduction: 0 },
 		relation: { affection: 0, trust: 0, desire: 0 },
@@ -35,7 +36,7 @@
 <div class="page">
 	<header class="topbar">
 		<div class="brand-group"><a class="brand" href="/">newera</a><span class="adult-label">로어 관리</span></div>
-		<a class="top-link" href="/">플레이 화면으로</a>
+		<div class="top-actions"><a class="top-link" href="/simulator">시뮬레이터</a><a class="top-link" href="/">플레이 화면으로</a></div>
 	</header>
 	<main class="manage-shell">
 		<div class="manage-intro"><p class="eyebrow">LORE LIBRARY</p><h1>로어 관리</h1><p>제목과 세계관, 등장인물 설정을 관리합니다. 플레이 중인 장면과 저장 슬롯은 플레이 화면에 있습니다.</p></div>
@@ -102,7 +103,7 @@
 							<input type="hidden" name="id" value={selected.id} />
 							<div class="form-pair"><label>이름<input name="name" required value={selected.name} /></label><label>나이<input name="age" type="number" min="20" required value={selected.age} /></label></div>
 							<label for="character-profile">인물 설정</label><textarea id="character-profile" name="profile" rows="6" required value={selected.profile}></textarea>
-							<details class="nested"><summary>era 수치 · BASE · ABL · EXP · RELATION · PALAM</summary><CharacterStatsFields stats={selected} /></details>
+							<details class="nested"><summary>era 수치 · BASE · TALENT · ABL · EXP · RELATION · PALAM</summary><CharacterStatsFields stats={selected} /></details>
 							<div class="variable-stats"><strong>TRAIT · MARK</strong><p>개수가 달라지는 목록입니다. 저장할 때 현재 값을 그대로 유지합니다.</p><div><span>TRAIT</span> {selected.trait.length ? selected.trait.join(' · ') : '없음'}</div><div><span>MARK</span> {selected.mark.length ? selected.mark.join(' · ') : '없음'}</div></div>
 							<button disabled={busy}>인물 저장</button>
 						</form>{/key}

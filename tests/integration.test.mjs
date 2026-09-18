@@ -126,14 +126,16 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			db.prepare('UPDATE characters SET trait_json = ?, mark_json = ? WHERE id = ?').run('["작가"]', '["첫 만남"]', harinId);
 			const fixedFields = {
 				'base.energy': '17', 'base.maxEnergy': '24',
+				'talent.pride': '61', 'talent.openness': '73', 'talent.empathy': '82', 'talent.assertiveness': '45',
 				'abl.conversation': '4', 'abl.empathy': '3', 'abl.seduction': '2',
 				'exp.conversation': '9', 'exp.empathy': '8', 'exp.seduction': '7',
 				'relation.affection': '12', 'relation.trust': '11', 'relation.desire': '4',
 				'palam.rapport': '6', 'palam.trust': '5', 'palam.arousal': '3', 'palam.pleasure': '2'
 			};
 			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields });
-			const harinStats = db.prepare('SELECT base_json, trait_json, abl_json, exp_json, mark_json, relation_json, palam_json FROM characters WHERE id = ?').get(harinId);
+			const harinStats = db.prepare('SELECT base_json, trait_json, talent_json, abl_json, exp_json, mark_json, relation_json, palam_json FROM characters WHERE id = ?').get(harinId);
 			assert.deepEqual(JSON.parse(harinStats.base_json), { energy: 17, maxEnergy: 24 });
+			assert.deepEqual(JSON.parse(harinStats.talent_json), { pride: 61, openness: 73, empathy: 82, assertiveness: 45 });
 			assert.deepEqual(JSON.parse(harinStats.abl_json), { conversation: 4, empathy: 3, seduction: 2 });
 			assert.deepEqual(JSON.parse(harinStats.exp_json), { conversation: 9, empathy: 8, seduction: 7 });
 			assert.deepEqual(JSON.parse(harinStats.relation_json), { affection: 12, trust: 11, desire: 4 });
@@ -142,6 +144,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.deepEqual(JSON.parse(harinStats.mark_json), ['첫 만남']);
 			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'base.energy': '25' }, true);
 			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'abl.conversation': '' }, true);
+			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'talent.pride': '101' }, true);
 			assert.deepEqual(JSON.parse(db.prepare('SELECT base_json FROM characters WHERE id = ?').get(harinId).base_json), { energy: 17, maxEnergy: 24 });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'advance');
 			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '망원동에 비가 내린다.');
@@ -184,6 +187,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('advance');
 			await post('load', { slot: '1' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
+			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 61, openness: 73, empathy: 82, assertiveness: 45 });
 			assert.ok(modelCalls.filter((call) => call.kind === 'world').length >= 3);
 			assert.ok(modelCalls.filter((call) => call.kind === 'character').length >= 3);
 			assert.ok(modelCalls.some((call) => call.kind === 'suggest'));
@@ -193,11 +197,15 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const characterModule = readFileSync(join(process.cwd(), 'static/modules/example-character.json'), 'utf8');
 			const worldModule = readFileSync(join(process.cwd(), 'static/modules/example-world.json'), 'utf8');
 			await postModule('underage.json', JSON.stringify({ schemaVersion: 1, id: 'invalid.age', name: 'invalid', version: '1', characters: [{ id: 'a', name: 'a', age: 19, profile: 'profile' }] }), true);
+			const invalidTalentModule = JSON.parse(characterModule);
+			invalidTalentModule.characters[0].talent.pride = 101;
+			await postModule('invalid-talent.json', JSON.stringify(invalidTalentModule), true);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
 			await postModule('character.json', characterModule);
 			await postModule('world.json', worldModule);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
 			assert.equal(db.prepare("SELECT module_id FROM characters WHERE id = 'mod:example.harin:harin'").get().module_id, 'example.harin');
+			assert.equal(JSON.parse(db.prepare("SELECT talent_json FROM characters WHERE id = 'mod:example.harin:harin'").get().talent_json).pride, 72);
 			const modulePage = await (await fetch(`${base}/lores`)).text();
 			assert.ok(modulePage.includes('value="mod:example.harin:harin"'));
 			assert.ok(modulePage.includes('세계관·인물 모듈'));
@@ -295,13 +303,19 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id, originalLoreId);
 			const originalBundle = await (await fetch(`${base}/lores/export/${originalLoreId}`)).text();
 			assert.equal(JSON.parse(originalBundle).state.modules.length, 3);
+			const legacyTalentBundle = JSON.parse(originalBundle);
+			for (const character of legacyTalentBundle.state.characters) delete character.talent_json;
+			for (const save of legacyTalentBundle.saves) {
+				for (const character of save.state.characters) delete character.talent_json;
+			}
 			const originalFile = new FormData();
-			originalFile.append('loreFile', new Blob([originalBundle], { type: 'application/json' }), 'original.json');
+			originalFile.append('loreFile', new Blob([JSON.stringify(legacyTalentBundle)], { type: 'application/json' }), 'original.json');
 			const originalImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: originalFile });
 			assert.equal(originalImport.status, 200);
 			assert.ok(!(await originalImport.text()).includes('"type":"failure"'));
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, JSON.parse(originalBundle).state.events.length);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
+			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 50, openness: 50, empathy: 50, assertiveness: 50 });
 			const importedOriginalId = db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedOriginalId).n, 2);
 			const badBundle = JSON.parse(originalBundle);
