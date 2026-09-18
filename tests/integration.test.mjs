@@ -74,8 +74,10 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		stdio: 'pipe'
 	});
 	const base = `http://127.0.0.1:${appPort}`;
+	const manageActions = new Set(['createLore', 'renameLore', 'scenario', 'character', 'installModule', 'toggleModule', 'selectWorld', 'importLore', 'deleteLore']);
 	const post = async (action, fields = {}, expectFailure = false) => {
-		const response = await fetch(`${base}/?/${action}`, { method: 'POST', headers: { Origin: base }, body: new URLSearchParams(fields) });
+		const path = manageActions.has(action) ? '/lores' : '/';
+		const response = await fetch(`${base}${path}?/${action}`, { method: 'POST', headers: { Origin: base }, body: new URLSearchParams(fields) });
 		const body = await response.text();
 		assert.equal(response.status, 200, `${action}: ${body}`);
 		assert.equal(body.includes('"type":"failure"'), expectFailure, `${action}: ${body}`);
@@ -83,7 +85,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 	const postModule = async (name, contents, expectFailure = false) => {
 		const form = new FormData();
 		form.append('moduleFile', new Blob([contents], { type: 'application/json' }), name);
-		const response = await fetch(`${base}/?/installModule`, { method: 'POST', headers: { Origin: base }, body: form });
+		const response = await fetch(`${base}/lores?/installModule`, { method: 'POST', headers: { Origin: base }, body: form });
 		const body = await response.text();
 		assert.equal(response.status, 200, `installModule: ${body}`);
 		assert.equal(body.includes('"type":"failure"'), expectFailure, `installModule: ${body}`);
@@ -101,6 +103,16 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(firstPage.includes('aria-label="로어 목록"'));
 		assert.ok(firstPage.includes('>망원동</button>'));
 		assert.ok(!firstPage.includes('data-lore-id='));
+		const sidebar = firstPage.split('<aside class="lore-sidebar"')[1].split('</aside>')[0];
+		assert.ok(!sidebar.includes('로어 관리'));
+		assert.ok(firstPage.includes('현재 세션'));
+		assert.ok(firstPage.includes('저장 슬롯'));
+		assert.ok(!firstPage.includes('new-lore-world'));
+		const managementPage = await (await fetch(`${base}/lores`)).text();
+		assert.ok(managementPage.includes('새 로어 만들기'));
+		assert.ok(managementPage.includes('로어 가져오기'));
+		assert.ok(managementPage.includes('로어 삭제'));
+		assert.ok(managementPage.includes('내보내기'));
 		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
 		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
 		await post('advance');
@@ -163,9 +175,9 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await postModule('world.json', worldModule);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
 			assert.equal(db.prepare("SELECT module_id FROM characters WHERE id = 'mod:example.harin:harin'").get().module_id, 'example.harin');
-			const modulePage = await (await fetch(base)).text();
+			const modulePage = await (await fetch(`${base}/lores`)).text();
 			assert.ok(modulePage.includes('value="mod:example.harin:harin"'));
-			assert.ok(modulePage.includes('세계관 모듈'));
+			assert.ok(modulePage.includes('세계관·인물 모듈'));
 			assert.ok(!modulePage.includes('data-lore-id='));
 			await post('advance');
 			assert.ok(modelCalls.findLast((call) => call.kind === 'world').input.worldSetting.includes('며칠째 늦여름 비'));
@@ -215,7 +227,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const secondPage = await (await fetch(base)).text();
 			assert.ok(secondPage.includes('>망원동</button>'));
 			assert.ok(secondPage.includes('>비밀의 저택</button>'));
-			assert.ok(secondPage.includes('저장 슬롯 0/3'));
+			assert.ok(secondPage.includes('0/3 사용 중'));
 			await post('load', { slot: '2' }, true);
 			await post('character', { name: '도희', age: '30', profile: '저택의 관리인이다.' });
 			await post('save', { slot: '1' });
@@ -224,17 +236,58 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
 			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '비가 잦은 망원동');
-			assert.ok((await (await fetch(base)).text()).includes('저장 슬롯 2/3'));
+			assert.ok((await (await fetch(base)).text()).includes('2/3 사용 중'));
 			await post('load', { slot: '2' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
 			await post('switchLore', { id: secondLoreId });
 			assert.equal(db.prepare('SELECT name FROM characters').get().name, '도희');
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
-			assert.ok((await (await fetch(base)).text()).includes('저장 슬롯 1/3'));
+			assert.ok((await (await fetch(base)).text()).includes('1/3 사용 중'));
 			await post('renameLore', { title: '저택의 밤' });
 			assert.equal(db.prepare('SELECT title FROM lores WHERE id = ?').get(secondLoreId).title, '저택의 밤');
 			await post('switchLore', { id: 'missing-lore' }, true);
 			assert.equal(db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id, secondLoreId);
+			const exportResponse = await fetch(`${base}/lores/export/${secondLoreId}`);
+			assert.equal(exportResponse.status, 200);
+			assert.ok(exportResponse.headers.get('content-disposition').includes('.json'));
+			const exported = await exportResponse.text();
+			const bundle = JSON.parse(exported);
+			assert.equal(bundle.title, '저택의 밤');
+			assert.equal(bundle.saves.length, 1);
+			const loreFile = new FormData();
+			loreFile.append('loreFile', new Blob([exported], { type: 'application/json' }), 'lore.json');
+			const importResponse = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: loreFile });
+			assert.equal(importResponse.status, 200);
+			assert.ok(!(await importResponse.text()).includes('"type":"failure"'));
+			const importedLoreId = db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
+			assert.notEqual(importedLoreId, secondLoreId);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 3);
+			assert.equal(db.prepare('SELECT name FROM characters').get().name, '도희');
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedLoreId).n, 1);
+			await post('deleteLore', { id: importedLoreId, confirmation: '다른 제목' }, true);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 3);
+			await post('deleteLore', { id: importedLoreId, confirmation: '저택의 밤' });
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 2);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedLoreId).n, 0);
+			assert.equal(db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id, originalLoreId);
+			const originalBundle = await (await fetch(`${base}/lores/export/${originalLoreId}`)).text();
+			assert.equal(JSON.parse(originalBundle).state.modules.length, 3);
+			const originalFile = new FormData();
+			originalFile.append('loreFile', new Blob([originalBundle], { type: 'application/json' }), 'original.json');
+			const originalImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: originalFile });
+			assert.equal(originalImport.status, 200);
+			assert.ok(!(await originalImport.text()).includes('"type":"failure"'));
+			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, JSON.parse(originalBundle).state.events.length);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
+			const importedOriginalId = db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedOriginalId).n, 2);
+			const badBundle = JSON.parse(originalBundle);
+			badBundle.state.characters[0].age = 19;
+			const invalidFile = new FormData();
+			invalidFile.append('loreFile', new Blob([JSON.stringify(badBundle)], { type: 'application/json' }), 'invalid.json');
+			const invalidImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: invalidFile });
+			assert.ok((await invalidImport.text()).includes('"type":"failure"'));
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 3);
 		} finally {
 			db.close();
 		}
@@ -295,6 +348,15 @@ test('existing progress and legacy save slots become the first lore', async () =
 			assert.equal(migrated.prepare('SELECT turn FROM world_state').get().turn, 4);
 			assert.equal(migrated.prepare('SELECT energy FROM player_state').get().energy, 17);
 			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lores').get().n, 1);
+			const firstLoreId = migrated.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
+			const exported = await (await fetch(`${base}/lores/export/${firstLoreId}`)).text();
+			const form = new FormData();
+			form.append('loreFile', new Blob([exported], { type: 'application/json' }), 'legacy-lore.json');
+			const imported = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: form });
+			assert.equal(imported.status, 200);
+			assert.ok(!(await imported.text()).includes('"type":"failure"'));
+			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lores').get().n, 2);
+			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lore_save_slots').get().n, 2);
 		} finally {
 			migrated.close();
 		}

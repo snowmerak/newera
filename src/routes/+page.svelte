@@ -1,17 +1,14 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import type { Character } from '$lib/game/types';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 	let selectedId = $state('');
 	let loreOpen = $state(false);
 	let busy = $state(false);
-	let slot = $state(1);
 	let targetId = $derived(data.characters.some((character) => character.id === selectedId) ? selectedId : '');
 	let selected = $derived(data.characters.find((character) => character.id === targetId) ?? null);
-	let activeWorld = $derived(data.worldLore.find((world) => world.active) ?? data.worldLore[0]);
 	let proposalCharacter = $derived(data.characters.find((character) => character.id === data.config.pendingProposal?.characterId));
 	let suggestions = $derived(data.config.playerSuggestions?.turn === data.world.turn && data.config.playerSuggestions.targetId === (targetId || null)
 		? data.config.playerSuggestions.options : []);
@@ -33,7 +30,6 @@
 
 	function afterLoreSwitch(): void {
 		selectedId = '';
-		slot = 1;
 		loreOpen = false;
 	}
 
@@ -41,12 +37,6 @@
 		return `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
 	}
 
-	function statsJson(character: Character): string {
-		return JSON.stringify({
-			base: character.base, trait: character.trait, abl: character.abl, exp: character.exp,
-			mark: character.mark, relation: character.relation, palam: character.palam
-		}, null, 2);
-	}
 </script>
 
 <svelte:head>
@@ -57,7 +47,7 @@
 <div class="page">
 	<header class="topbar">
 		<div class="brand-group"><a class="brand" href="/">newera</a><span class="adult-label">성인용 텍스트 게임</span></div>
-		<button type="button" class="lore-toggle" aria-expanded={loreOpen} onclick={() => (loreOpen = !loreOpen)}>로어 {loreOpen ? '닫기' : '목록'}</button>
+		<div class="top-actions"><a class="top-link" href="/lores">로어 관리</a><button type="button" class="lore-toggle" aria-expanded={loreOpen} onclick={() => (loreOpen = !loreOpen)}>로어 {loreOpen ? '닫기' : '목록'}</button></div>
 	</header>
 
 	<div class="game-layout">
@@ -71,28 +61,23 @@
 						</form>
 					{/each}
 				</nav>
-				<details class="lore-create"><summary>새 로어 만들기</summary>
-					<form method="POST" action="?/createLore" use:enhance={submit} class="settings-form">
-						<label for="new-lore-title">제목</label><input id="new-lore-title" name="title" maxlength="80" required />
-						<label for="new-lore-world">세계관 설정</label><textarea id="new-lore-world" name="worldSetting" rows="5" required></textarea>
-						<label for="new-lore-rules">era 규칙</label><textarea id="new-lore-rules" name="eraRules" rows="4" required value={data.config.eraRules}></textarea>
-						<button disabled={busy} onclick={afterLoreSwitch}>만들고 열기</button>
-					</form>
-				</details>
 			</div>
 		</aside>
 
 		<main class="reader">
-			<div class="lore-heading">
-				<div><h1>{data.lore.title}</h1><p>이 로어의 진행 · 저장 슬롯 {data.saves.length}/3</p></div>
-				<div class="save-group">
-					<select bind:value={slot} aria-label="{data.lore.title} 저장 슬롯">
-						{#each [1, 2, 3] as number}<option value={number}>슬롯 {number} · {data.saves.some((save) => save.slot === number) ? '저장됨' : '비어 있음'}</option>{/each}
-					</select>
-					<form method="POST" action="?/save" use:enhance={submit}><input type="hidden" name="slot" value={slot} /><button disabled={busy}>저장</button></form>
-					<form method="POST" action="?/load" use:enhance={submit}><input type="hidden" name="slot" value={slot} /><button disabled={busy || !data.saves.some((save) => save.slot === slot)}>불러오기</button></form>
-				</div>
-			</div>
+			<div class="lore-heading"><div><p class="eyebrow">PLAYING LORE</p><h1>{data.lore.title}</h1></div><a href="/lores">설정 관리 →</a></div>
+			<section class="session-panel" aria-label="현재 세션">
+				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴 · 체력 {data.player.energy}/{data.player.maxEnergy}</small></div>
+			</section>
+			<section class="save-panel" aria-label="저장 슬롯">
+				<div class="save-panel-title"><h2>저장 슬롯</h2><span>{data.saves.length}/3 사용 중</span></div>
+				<div class="save-slots">{#each [1, 2, 3] as number}
+					{@const saved = data.saves.find((save) => save.slot === number)}
+					<div class="save-slot"><div><strong>슬롯 {number}</strong><span>{saved ? `${saved.turn}턴 저장 · ${new Date(saved.savedAt).toLocaleString('ko-KR')}` : '비어 있음'}</span></div>
+						<div class="save-slot-actions"><form method="POST" action="?/save" use:enhance={submit}><button name="slot" value={number} disabled={busy}>저장</button></form><form method="POST" action="?/load" use:enhance={submit}><button name="slot" value={number} disabled={busy || !saved}>불러오기</button></form></div>
+					</div>
+				{/each}</div>
+			</section>
 			<div class="scene-meta"><span>TURN {data.world.turn}</span><span>{data.world.day}일차 · {timeLabel(data.world.minute)}</span><span>{data.world.location}</span></div>
 			<article class="scene" aria-label="현재 장면">
 				{#each data.latestNarrative.split('\n\n') as paragraph}<p>{paragraph}</p>{/each}
@@ -145,70 +130,6 @@
 			{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
 
 			<div class="details-area">
-				<details><summary>로어 제목 편집</summary>
-					<form method="POST" action="?/renameLore" use:enhance={submit} class="settings-form">
-						<label for="lore-title">제목</label><input id="lore-title" name="title" maxlength="80" required value={data.lore.title} />
-						<button disabled={busy}>제목 저장</button>
-					</form>
-				</details>
-				<details><summary>세계관 설정</summary>
-					<p class="minor">현재 적용: {activeWorld?.name}</p>
-					<form method="POST" action="?/scenario" use:enhance={submit} class="settings-form">
-						<label for="world-setting">기본 세계관</label><textarea id="world-setting" name="worldSetting" rows="6" required value={data.config.worldSetting}></textarea>
-						<label for="era-rules">era 규칙과 진행 방향</label><textarea id="era-rules" name="eraRules" rows="5" required value={data.config.eraRules}></textarea>
-						<button disabled={busy}>설정 저장</button>
-					</form>
-					{#if data.worldLore.length > 1}
-						<h3>세계관 모듈</h3>
-						<div class="module-list">
-							{#each data.worldLore as world}
-								<form method="POST" action="?/selectWorld" use:enhance={submit}>
-									<button name="id" value={world.id ?? ''} disabled={busy || world.active}>{world.name} · {world.active ? '적용 중' : '적용'}</button>
-								</form>
-							{/each}
-						</div>
-					{/if}
-				</details>
-				<details><summary>등장인물 설정</summary>
-					{#if data.characters.length}
-						<div class="character-chooser"><label for="character-setting">인물 선택</label><select id="character-setting" value={targetId} onchange={(event) => (selectedId = event.currentTarget.value)}><option value="">선택</option>{#each data.characters as character}<option value={character.id}>{character.name}</option>{/each}</select></div>
-					{/if}
-					{#if selected}
-						{#key selected.id}
-							<form method="POST" action="?/character" use:enhance={submit} class="settings-form">
-								<input type="hidden" name="id" value={selected.id} />
-								<div class="form-pair"><label>이름<input name="name" required value={selected.name} /></label><label>나이<input name="age" type="number" min="20" required value={selected.age} /></label></div>
-								<label for="character-profile">인물 설정</label><textarea id="character-profile" name="profile" rows="6" required value={selected.profile}></textarea>
-								<details class="nested"><summary>BASE · TRAIT · ABL · EXP · MARK · RELATION · PALAM</summary><textarea name="statsJson" rows="18" spellcheck="false" value={statsJson(selected)}></textarea></details>
-								<button disabled={busy}>인물 저장</button>
-							</form>
-						{/key}
-					{/if}
-					<details class="nested"><summary>새 인물 추가</summary>
-						<form method="POST" action="?/character" use:enhance={submit} class="settings-form">
-							<div class="form-pair"><label>이름<input name="name" required /></label><label>나이<input name="age" type="number" min="20" value="25" required /></label></div>
-							<label for="new-profile">인물 설정</label><textarea id="new-profile" name="profile" rows="5" required></textarea>
-							<button disabled={busy}>인물 추가</button>
-						</form>
-					</details>
-				</details>
-				<details><summary>JSON 모듈</summary>
-					<form method="POST" action="?/installModule" enctype="multipart/form-data" use:enhance={submit} class="settings-form">
-						<label for="module-file">세계관·인물 모듈 파일</label><input id="module-file" type="file" name="moduleFile" accept=".json,application/json" required />
-						<button disabled={busy}>설치하고 적용</button>
-					</form>
-					<p class="minor"><a href="/modules/example-world.json" download>세계관 예시</a> · <a href="/modules/example-character.json" download>인물 예시</a> · <a href="/modules/README.md" target="_blank" rel="noreferrer">파일 형식</a></p>
-					{#if data.modules.length}
-						<div class="module-list">
-							{#each data.modules as module}
-								<form method="POST" action="?/toggleModule" use:enhance={submit}>
-									<input type="hidden" name="id" value={module.id} />
-									<button name="enabled" value={module.enabled ? '0' : '1'} disabled={busy}>{module.name} · {module.enabled ? '끄기' : '적용'}</button>
-								</form>
-							{/each}
-						</div>
-					{/if}
-				</details>
 				<details><summary>상태와 기억</summary>
 					<p class="minor">플레이어 체력 {data.player.energy}/{data.player.maxEnergy}</p>
 					{#if selected}

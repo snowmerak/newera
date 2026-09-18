@@ -665,6 +665,19 @@ export function createLore(title: string, worldSetting: string, eraRules: string
 	return id;
 }
 
+export function deleteLore(id: string, confirmation: string): void {
+	withTransaction(() => {
+		const lore = one('SELECT title FROM lores WHERE id = ?', id);
+		if (!lore) throw new Error('삭제할 로어를 찾을 수 없습니다.');
+		if (confirmation !== lore.title) throw new Error('로어 제목을 정확히 입력해 주세요.');
+		const other = one('SELECT id FROM lores WHERE id <> ? ORDER BY created_at, id LIMIT 1', id);
+		if (!other) throw new Error('마지막 로어는 삭제할 수 없습니다.');
+		if (id === activeLoreId()) activateLore(String(other.id));
+		getDb().prepare('DELETE FROM lore_save_slots WHERE lore_id = ?').run(id);
+		getDb().prepare('DELETE FROM lores WHERE id = ?').run(id);
+	});
+}
+
 export function getGameView(): GameView {
 	const latestEvents = rows('SELECT * FROM events ORDER BY id DESC LIMIT 30').map(eventFromRow);
 	const characters = getCharacters();
@@ -738,6 +751,101 @@ function captureSnapshot(): Snapshot {
 		modules: getModuleRows(),
 		enabledModuleIds: rows('SELECT id FROM modules WHERE enabled = 1').map((row) => String(row.id))
 	};
+}
+
+function checkedSnapshot(value: unknown, full: boolean): Snapshot {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('로어 진행 데이터가 올바르지 않습니다.');
+	const snapshot = value as Record<string, unknown>;
+	const required = ['world', 'player', 'characters', 'events', 'memories'];
+	if (full) required.push('config', 'modules');
+	for (const key of required) {
+		if (!Array.isArray(snapshot[key]) || (snapshot[key] as unknown[]).some((row) => !row || typeof row !== 'object' || Array.isArray(row))) {
+			throw new Error(`로어의 ${key} 데이터가 올바르지 않습니다.`);
+		}
+	}
+	if ((snapshot.world as Row[]).length !== 1 || (snapshot.player as Row[]).length !== 1) {
+		throw new Error('로어의 세계와 플레이어 상태가 올바르지 않습니다.');
+	}
+	const world = (snapshot.world as Row[])[0];
+	const player = (snapshot.player as Row[])[0];
+	if (world.id !== 1 || !Number.isInteger(world.turn) || !Number.isInteger(world.day) ||
+		!Number.isInteger(world.minute) || typeof world.location !== 'string' ||
+		player.id !== 1 || !Number.isInteger(player.energy) || !Number.isInteger(player.max_energy)) {
+		throw new Error('로어의 세계와 플레이어 상태가 올바르지 않습니다.');
+	}
+	if (snapshot.config !== undefined) {
+		if (!Array.isArray(snapshot.config) || snapshot.config.length !== 1 ||
+			typeof snapshot.config[0]?.world_setting !== 'string' || typeof snapshot.config[0]?.era_rules !== 'string') {
+			throw new Error('로어의 세계관 설정이 올바르지 않습니다.');
+		}
+	}
+	for (const character of snapshot.characters as Row[]) {
+		if (typeof character.id !== 'string' || typeof character.name !== 'string' ||
+			!Number.isInteger(character.age) || Number(character.age) < 20 ||
+			(typeof character.profile !== 'string' && typeof character.introduction !== 'string')) {
+			throw new Error('로어의 등장인물 설정이 올바르지 않습니다.');
+		}
+	}
+	if (snapshot.modules !== undefined) {
+		if (!Array.isArray(snapshot.modules)) throw new Error('로어의 모듈 목록이 올바르지 않습니다.');
+		for (const module of snapshot.modules as Row[]) {
+			if (typeof module.id !== 'string' || typeof module.manifest_json !== 'string') {
+				throw new Error('로어의 모듈 목록이 올바르지 않습니다.');
+			}
+			let manifest: ModuleManifest;
+			try { manifest = parse<ModuleManifest>(module.manifest_json); } catch { throw new Error('로어의 모듈 목록이 올바르지 않습니다.'); }
+			if (!manifest || manifest.schemaVersion !== 1 || manifest.id !== module.id || typeof manifest.name !== 'string' ||
+				!Array.isArray(manifest.characters) || manifest.characters.some((character) =>
+					!character || typeof character.id !== 'string' || !character.id.startsWith(`mod:${manifest.id}:`) ||
+					!Number.isInteger(character.age) || character.age < 20)) {
+				throw new Error('로어의 모듈 목록이 올바르지 않습니다.');
+			}
+		}
+	}
+	return value as Snapshot;
+}
+
+export function exportLoreJson(id: string): string {
+	const lore = one('SELECT title, state_json FROM lores WHERE id = ?', id);
+	if (!lore) throw new Error('내보낼 로어를 찾을 수 없습니다.');
+	const state = id === activeLoreId() ? captureSnapshot() : checkedSnapshot(parse(lore.state_json), true);
+	const saves = rows('SELECT slot, saved_at, turn, snapshot_json FROM lore_save_slots WHERE lore_id = ? ORDER BY slot', id)
+		.map((row) => ({ slot: Number(row.slot), savedAt: String(row.saved_at), turn: Number(row.turn),
+			state: parse<Snapshot>(row.snapshot_json) }));
+	return JSON.stringify({ format: 'newera-lore', version: 1, title: String(lore.title), state, saves }, null, 2);
+}
+
+export function importLoreJson(raw: string): string {
+	let value: unknown;
+	try { value = JSON.parse(raw); } catch { throw new Error('로어 JSON 형식을 확인해 주세요.'); }
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('로어 파일 형식이 올바르지 않습니다.');
+	const bundle = value as Record<string, unknown>;
+	if (bundle.format !== 'newera-lore' || bundle.version !== 1 ||
+		typeof bundle.title !== 'string' || !bundle.title.trim() || bundle.title.length > 80 ||
+		!Array.isArray(bundle.saves) || bundle.saves.length > 3) {
+		throw new Error('지원하지 않는 로어 파일입니다.');
+	}
+	const state = checkedSnapshot(bundle.state, true);
+	const saves = bundle.saves.map((entry: unknown) => {
+		if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('저장 슬롯 형식이 올바르지 않습니다.');
+		const save = entry as Record<string, unknown>;
+		if (!Number.isInteger(save.slot) || Number(save.slot) < 1 || Number(save.slot) > 3 ||
+			!Number.isInteger(save.turn) || typeof save.savedAt !== 'string') throw new Error('저장 슬롯 형식이 올바르지 않습니다.');
+		return { slot: Number(save.slot), turn: Number(save.turn), savedAt: save.savedAt, state: checkedSnapshot(save.state, false) };
+	});
+	if (new Set(saves.map((save) => save.slot)).size !== saves.length) throw new Error('중복된 저장 슬롯이 있습니다.');
+	const id = randomUUID();
+	withTransaction(() => {
+		getDb().prepare('INSERT INTO lores (id, title, state_json, created_at) VALUES (?, ?, ?, ?)')
+			.run(id, (bundle.title as string).trim(), JSON.stringify(state), new Date().toISOString());
+		for (const save of saves) {
+			getDb().prepare('INSERT INTO lore_save_slots (lore_id, slot, saved_at, turn, snapshot_json) VALUES (?, ?, ?, ?, ?)')
+				.run(id, save.slot, save.savedAt, save.turn, JSON.stringify(save.state));
+		}
+		activateLore(id);
+		getGameView();
+	});
+	return id;
 }
 
 export function saveGame(slot: number): void {
