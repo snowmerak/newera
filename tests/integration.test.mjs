@@ -122,6 +122,27 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		try {
 			const originalLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
+			const harinId = db.prepare("SELECT id FROM characters WHERE name = '하린'").get().id;
+			db.prepare('UPDATE characters SET trait_json = ?, mark_json = ? WHERE id = ?').run('["작가"]', '["첫 만남"]', harinId);
+			const fixedFields = {
+				'base.energy': '17', 'base.maxEnergy': '24',
+				'abl.conversation': '4', 'abl.empathy': '3', 'abl.seduction': '2',
+				'exp.conversation': '9', 'exp.empathy': '8', 'exp.seduction': '7',
+				'relation.affection': '12', 'relation.trust': '11', 'relation.desire': '4',
+				'palam.rapport': '6', 'palam.trust': '5', 'palam.arousal': '3', 'palam.pleasure': '2'
+			};
+			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields });
+			const harinStats = db.prepare('SELECT base_json, trait_json, abl_json, exp_json, mark_json, relation_json, palam_json FROM characters WHERE id = ?').get(harinId);
+			assert.deepEqual(JSON.parse(harinStats.base_json), { energy: 17, maxEnergy: 24 });
+			assert.deepEqual(JSON.parse(harinStats.abl_json), { conversation: 4, empathy: 3, seduction: 2 });
+			assert.deepEqual(JSON.parse(harinStats.exp_json), { conversation: 9, empathy: 8, seduction: 7 });
+			assert.deepEqual(JSON.parse(harinStats.relation_json), { affection: 12, trust: 11, desire: 4 });
+			assert.deepEqual(JSON.parse(harinStats.palam_json), { rapport: 6, trust: 5, arousal: 3, pleasure: 2 });
+			assert.deepEqual(JSON.parse(harinStats.trait_json), ['작가']);
+			assert.deepEqual(JSON.parse(harinStats.mark_json), ['첫 만남']);
+			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'base.energy': '25' }, true);
+			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'abl.conversation': '' }, true);
+			assert.deepEqual(JSON.parse(db.prepare('SELECT base_json FROM characters WHERE id = ?').get(harinId).base_json), { energy: 17, maxEnergy: 24 });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'advance');
 			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '망원동에 비가 내린다.');
 			assert.equal(JSON.parse(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json).actionId, 'talk');

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import CharacterStatsFields from '$lib/components/CharacterStatsFields.svelte';
 	import type { Character } from '$lib/game/types';
 	import type { PageProps } from './$types';
 
@@ -17,12 +18,13 @@
 		};
 	};
 
-	function statsJson(character: Character): string {
-		return JSON.stringify({
-			base: character.base, trait: character.trait, abl: character.abl, exp: character.exp,
-			mark: character.mark, relation: character.relation, palam: character.palam
-		}, null, 2);
-	}
+	const initialStats: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> = {
+		base: { energy: 20, maxEnergy: 20 },
+		abl: { conversation: 1, empathy: 1, seduction: 1 },
+		exp: { conversation: 0, empathy: 0, seduction: 0 },
+		relation: { affection: 0, trust: 0, desire: 0 },
+		palam: { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }
+	};
 </script>
 
 <svelte:head>
@@ -100,13 +102,15 @@
 							<input type="hidden" name="id" value={selected.id} />
 							<div class="form-pair"><label>이름<input name="name" required value={selected.name} /></label><label>나이<input name="age" type="number" min="20" required value={selected.age} /></label></div>
 							<label for="character-profile">인물 설정</label><textarea id="character-profile" name="profile" rows="6" required value={selected.profile}></textarea>
-							<details class="nested"><summary>BASE · TRAIT · ABL · EXP · MARK · RELATION · PALAM</summary><textarea name="statsJson" rows="18" spellcheck="false" value={statsJson(selected)}></textarea></details>
+							<details class="nested"><summary>era 수치 · BASE · ABL · EXP · RELATION · PALAM</summary><CharacterStatsFields stats={selected} /></details>
+							<div class="variable-stats"><strong>TRAIT · MARK</strong><p>개수가 달라지는 목록입니다. 저장할 때 현재 값을 그대로 유지합니다.</p><div><span>TRAIT</span> {selected.trait.length ? selected.trait.join(' · ') : '없음'}</div><div><span>MARK</span> {selected.mark.length ? selected.mark.join(' · ') : '없음'}</div></div>
 							<button disabled={busy}>인물 저장</button>
 						</form>{/key}
 					{/if}
 					<details class="nested"><summary>새 인물 추가</summary><form method="POST" action="?/character" use:enhance={submit} class="settings-form">
 						<div class="form-pair"><label>이름<input name="name" required /></label><label>나이<input name="age" type="number" min="20" value="25" required /></label></div>
 						<label for="new-profile">인물 설정</label><textarea id="new-profile" name="profile" rows="5" required></textarea>
+						<details class="nested"><summary>초기 era 수치</summary><CharacterStatsFields stats={initialStats} /></details>
 						<button disabled={busy}>인물 추가</button>
 					</form></details>
 				</div>

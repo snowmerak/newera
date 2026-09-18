@@ -274,44 +274,7 @@ export function saveScenarioSettings(worldSetting: string, eraRules: string): Pr
 	});
 }
 
-function statsFromJson(raw: string): Pick<Character, 'base' | 'trait' | 'abl' | 'exp' | 'mark' | 'relation' | 'palam'> {
-	let value: unknown;
-	try { value = JSON.parse(raw); } catch { throw new Error('era 스탯 JSON 형식을 확인해 주세요.'); }
-	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('era 스탯은 JSON 객체여야 합니다.');
-	const stats = value as Record<string, unknown>;
-	const numbers = (key: string, fields: string[]): Record<string, number> => {
-		const group = stats[key];
-		if (!group || typeof group !== 'object' || Array.isArray(group)) throw new Error(`${key} 값이 올바르지 않습니다.`);
-		const result: Record<string, number> = {};
-		for (const field of fields) {
-			const number = (group as Record<string, unknown>)[field];
-			if (typeof number !== 'number' || !Number.isFinite(number) || number < 0 || !Number.isInteger(number)) {
-				throw new Error(`${key}.${field}는 0 이상의 정수여야 합니다.`);
-			}
-			result[field] = number;
-		}
-		return result;
-	};
-	const strings = (key: string): string[] => {
-		const list = stats[key];
-		if (!Array.isArray(list) || list.some((item) => typeof item !== 'string')) throw new Error(`${key}는 문자열 배열이어야 합니다.`);
-		return list.map((item: string) => item.trim()).filter(Boolean);
-	};
-	const baseValues = numbers('base', ['energy', 'maxEnergy']);
-	const base = { energy: baseValues.energy, maxEnergy: baseValues.maxEnergy };
-	if (base.energy > base.maxEnergy || base.maxEnergy < 1) throw new Error('BASE 체력 값을 확인해 주세요.');
-	return {
-		base,
-		trait: strings('trait'),
-		abl: numbers('abl', ['conversation', 'empathy', 'seduction']) as Character['abl'],
-		exp: numbers('exp', ['conversation', 'empathy', 'seduction']) as Character['exp'],
-		mark: strings('mark'),
-		relation: numbers('relation', ['affection', 'trust', 'desire']) as Character['relation'],
-		palam: numbers('palam', ['rapport', 'trust', 'arousal', 'pleasure']) as Character['palam']
-	};
-}
-
-export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; statsJson: string }): Promise<string> {
+export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> }): Promise<string> {
 	return runExclusive(() => {
 		const name = input.name.trim();
 		const profile = input.profile.trim();
@@ -327,7 +290,10 @@ export function saveCharacterSettings(input: { id: string; name: string; age: nu
 			mark: [], relation: { affection: 0, trust: 0, desire: 0 },
 			palam: { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }
 		};
-		const stats = input.statsJson.trim() ? statsFromJson(input.statsJson) : character;
+		const stats = input.stats ?? character;
+		if (stats.base.maxEnergy < 1 || stats.base.energy > stats.base.maxEnergy) {
+			throw new Error('BASE 체력 값을 확인해 주세요.');
+		}
 		updateCharacter({ ...character, ...stats, name, age: input.age, profile, introduction: profile.split('\n')[0] });
 		const config = getGameView().config;
 		if (config.playerSuggestions) updateScenarioConfig({ ...config, playerSuggestions: null });
