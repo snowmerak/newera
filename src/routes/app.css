@@ -1,0 +1,70 @@
+:root { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #e8e5dc; background: #191b20; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid #d6b989; outline-offset: 3px; }
+form { margin: 0; }
+.page { min-height: 100vh; }
+.topbar { min-height: 66px; padding: 12px max(24px, calc((100vw - 900px) / 2)); border-bottom: 1px solid #3c3c40; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { color: #f3eee6; text-decoration: none; font: 700 29px Georgia, serif; letter-spacing: -.06em; }
+.adult-label { margin-left: 15px; color: #aaa59d; font-size: 12px; }
+.save-group, .button-row { display: flex; align-items: center; gap: 7px; }
+.save-group button, .save-group select, .button-row button { min-height: 32px; padding: 5px 10px; color: #ddd7ca; border: 1px solid #55545a; border-radius: 2px; background: #27282d; font-size: 12px; }
+.save-group button:hover:not(:disabled), .button-row button:hover:not(:disabled) { border-color: #c2a77a; }
+.reader { width: min(100% - 40px, 760px); margin: 0 auto; padding: 45px 0 90px; }
+.scene-meta { display: flex; flex-wrap: wrap; gap: 9px 18px; align-items: center; padding-bottom: 19px; color: #a9a49b; border-bottom: 1px solid #424146; font-size: 12px; }
+.scene-meta span:first-child { color: #d0b588; font-family: Georgia, serif; font-size: 13px; letter-spacing: .08em; }
+.scene { min-height: 250px; padding: 20px 2px 28px; color: #eeeae4; font-family: 'Noto Serif KR', 'Batang', serif; font-size: 18px; line-height: 2.05; white-space: pre-line; overflow-wrap: anywhere; }
+.scene p { margin: 0 0 1.25em; }
+.proposal { padding: 20px 22px; margin: 0 0 28px; border: 1px solid #74634e; background: #292722; }
+.eyebrow { color: #d2b888; font-size: 12px; font-weight: 700; }
+.proposal p { margin: 12px 0 18px; line-height: 1.7; }
+.button-row button { min-width: 94px; min-height: 38px; font-size: 13px; }
+.button-row .accent { color: #25221c; border-color: #d6b989; background: #d6b989; font-weight: 700; }
+.turn-controls { border-top: 1px solid #424146; padding-top: 25px; }
+.next-button { width: 100%; padding: 13px 17px; display: flex; justify-content: space-between; color: #28241d; background: #cbb080; border: 1px solid #d7bd8d; border-radius: 2px; text-align: left; font-weight: 700; }
+.next-button:hover:not(:disabled) { background: #e0c594; }
+.or-label { margin: 24px 0 16px; color: #aaa49b; font-size: 12px; }
+.target-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: #d8d3c8; font-size: 13px; }
+.target-row select { min-width: 140px; padding: 7px 10px; background: #28292e; color: #eeeae2; border: 1px solid #55545a; border-radius: 2px; }
+.suggest-button { width: 100%; padding: 11px 14px; color: #e9ddc8; background: #34312c; border: 1px solid #857253; border-radius: 2px; text-align: left; font-size: 13px; }
+.suggest-button:hover:not(:disabled) { border-color: #d6b989; background: #3d3830; }
+.suggestion-list { display: grid; gap: 8px; margin-top: 12px; }
+.suggestion-list button { width: 100%; min-height: 52px; display: flex; align-items: baseline; gap: 12px; padding: 12px 14px; color: #ebe6dc; background: #24262b; border: 1px solid #4e4d50; border-radius: 2px; text-align: left; line-height: 1.5; }
+.suggestion-list button:hover:not(:disabled) { border-color: #c1a67c; background: #303037; }
+.suggestion-list button span { flex: none; color: #cbb080; font-family: Georgia, serif; }
+.free-action-form { display: flex; flex-direction: column; gap: 9px; margin-top: 22px; }
+.free-action-form label { color: #c9c2b6; font-size: 12px; }
+.free-action-form textarea { width: 100%; padding: 11px 12px; resize: vertical; color: #ebe7de; background: #25262b; border: 1px solid #535257; border-radius: 2px; line-height: 1.6; }
+.free-action-form button { align-self: flex-end; padding: 9px 18px; color: #28241d; background: #cbb080; border: 1px solid #d7bd8d; border-radius: 2px; font-weight: 700; font-size: 13px; }
+.free-action-form button:hover:not(:disabled) { background: #e0c594; }
+.action-hint { margin: 14px 0 0; color: #918d86; font-size: 11px; line-height: 1.5; }
+.feedback { margin: 18px 0; color: #cbb080; font-size: 13px; }
+.feedback.error { color: #e29f91; }
+.details-area { margin-top: 52px; border-top: 1px solid #414044; }
+.details-area > details { border-bottom: 1px solid #414044; padding: 0 3px; }
+summary { cursor: pointer; padding: 16px 0; color: #d8d3c8; font-size: 13px; }
+summary:hover { color: #eacb98; }
+.settings-form { padding: 3px 0 25px; display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.settings-form label { color: #bdb8ae; font-size: 12px; }
+.settings-form input, .settings-form textarea { width: 100%; padding: 10px 11px; color: #ebe7de; background: #25262b; border: 1px solid #535257; border-radius: 2px; line-height: 1.6; }
+.settings-form textarea { resize: vertical; }
+.settings-form button { align-self: flex-start; padding: 8px 15px; color: #f1e5d1; background: #33312d; border: 1px solid #8b7657; border-radius: 2px; font-size: 12px; }
+.form-pair { display: grid; grid-template-columns: 1fr 110px; gap: 12px; }
+.form-pair label { display: flex; flex-direction: column; gap: 7px; }
+.nested { margin: 5px 0; border: 1px solid #424146; padding: 0 12px; }
+.nested summary { color: #b2aa9e; }
+.nested textarea { margin: 0 0 12px; font-family: Consolas, monospace; font-size: 12px; }
+.minor, .memory-list, .event-list { color: #b8b3a9; font-size: 12px; line-height: 1.8; }
+.details-area h3 { font-size: 14px; font-weight: 500; }
+.memory-list, .event-list { padding-left: 20px; margin-bottom: 22px; }
+.memory-list li, .event-list li { margin-bottom: 8px; overflow-wrap: anywhere; }
+.event-list span { color: #d0b588; margin-right: 8px; }
+@media (max-width: 600px) {
+	.topbar { padding: 14px 20px; flex-wrap: wrap; }
+	.reader { width: min(100% - 32px, 760px); padding-top: 27px; }
+	.scene { min-height: 200px; font-size: 16px; line-height: 1.9; }
+	.suggestion-list button { min-height: 48px; }
+}
