@@ -1,7 +1,7 @@
 import type { ActionId, Character, EventRecord, MemoryRecord, ScenarioConfig, WorldState } from '$lib/game/types';
 
 const baseUrl = (process.env.NEWERA_LLM_BASE_URL || 'http://localhost:1234/v1').replace(/\/$/, '');
-export const llmModel = process.env.NEWERA_LLM_MODEL || 'gemma4-31b-qat-uncensored-hauhaucs-balanced-mtp';
+export const llmModel = process.env.NEWERA_LLM_MODEL || 'gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-mtp';
 export const embeddingModel = process.env.NEWERA_EMBEDDING_MODEL || 'text-embedding-qwen3-embedding-0.6b';
 
 export interface WorldBeat {

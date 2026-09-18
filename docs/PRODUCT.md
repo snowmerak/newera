@@ -22,6 +22,6 @@ JSON 모듈을 설치하면 세계관 또는 성인 등장인물을 적용할 �
 
 이전 버전이 `사건 요약 + 장면 전체`를 기억으로 저장한 항목은 읽을 때 사건 요약만 사용한다. 저장된 원본과 슬롯은 수정하지 않는다. 화면의 기억 목록은 새 방식의 구체적 기억만 보여주고, 이전 턴은 행동 기록에서 확인할 수 있다.
 
-기본 모델 서버는 `http://localhost:1234/v1`이며 채팅 모델은 `gemma4-31b-qat-uncensored-hauhaucs-balanced-mtp`, 임베딩 모델은 `text-embedding-qwen3-embedding-0.6b`다. 채팅 요청에 `max_tokens`를 지정하지 않는다.
+기본 모델 서버는 `http://localhost:1234/v1`이며 채팅 모델은 `gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-mtp`, 임베딩 모델은 `text-embedding-qwen3-embedding-0.6b`다. 채팅 요청에 `max_tokens`를 지정하지 않는다.
 
 현재 수치·행동 목록은 작은 예시다. 행동별 대사와 인물 고유의 일정, 다인 장면, 세계 규칙을 실제 계산식으로 확장하는 작업은 남아 있다. 입력한 era 규칙 텍스트는 현재 LLM의 판단 자료이며, 코드의 행동 조건과 수치 계산식을 자동으로 변경하지는 않는다.

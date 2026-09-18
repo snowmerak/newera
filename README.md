@@ -18,7 +18,7 @@ npm run dev
 | 변수 | 기본값 |
 | --- | --- |
 | `NEWERA_LLM_BASE_URL` | `http://localhost:1234/v1` |
-| `NEWERA_LLM_MODEL` | `gemma4-31b-qat-uncensored-hauhaucs-balanced-mtp` |
+| `NEWERA_LLM_MODEL` | `gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-mtp` |
 | `NEWERA_EMBEDDING_MODEL` | `text-embedding-qwen3-embedding-0.6b` |
 | `NEWERA_LLM_TIMEOUT_MS` | `180000` |
 | `NEWERA_DATA_DIR` | 프로젝트의 `data` 폴더 |
