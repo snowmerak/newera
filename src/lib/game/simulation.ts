@@ -1,4 +1,4 @@
-import type { BaseStats, Character, CustomState } from './types';
+import { clampBase, clampCount, clampPercent, relationTo, type BaseStats, type Character, type CustomState } from './types.ts';
 
 export type SimulationActionId = 'conversation';
 export type Outcome = 'negative' | 'neutral' | 'positive';
@@ -14,7 +14,10 @@ export interface Situation {
 export interface SourceEffect {
 	energy: number;
 	rapport: number;
+	comfort: number;
+	tension: number;
 	trust: number;
+	affection: number;
 }
 
 export interface SemanticEvent {
@@ -63,7 +66,7 @@ export interface ActionDefinition {
 	description: string;
 	preconditions: (context: ActionContext) => string | null;
 	costs: (context: ActionContext) => Pick<SourceEffect, 'energy'>;
-	resolve: (context: ActionContext) => Pick<SourceEffect, 'rapport' | 'trust'>;
+	resolve: (context: ActionContext) => Omit<SourceEffect, 'energy'>;
 }
 
 export interface ActionResult {
@@ -80,12 +83,21 @@ export const SIMULATION_ACTIONS: Record<SimulationActionId, ActionDefinition> = 
 		description: '상대와 이야기를 나누며 관계를 쌓는다. 체력 2 소모.',
 		preconditions: ({ state }) => state.player.energy < 2 ? '기력이 부족합니다.' : null,
 		costs: () => ({ energy: -2 }),
-		resolve: ({ target }) => ({
-			rapport: Math.max(0, 2 + Math.floor(target.abl.conversation / 2)
-				+ Math.floor(target.talent.openness / 40)
-				- (target.talent.pride >= 75 && target.relation.trust < 3 ? 2 : 0)),
-			trust: 1 + (target.abl.empathy >= 3 ? 1 : 0) + (target.talent.empathy >= 70 ? 1 : 0)
-		})
+		resolve: ({ target }) => {
+			const relation = relationTo(target);
+			const pridePenalty = target.talent.pride >= 75 && relation.trust < 25 ? 2 : 0;
+			const rapport = Math.max(-3, 2 + Math.floor(target.abl.conversation / 2)
+				+ Math.floor(target.talent.openness / 30) + Math.floor(relation.affection / 25)
+				+ Math.floor(target.palam.comfort / 25) - Math.floor(target.palam.tension / 25) - pridePenalty);
+			const comfort = 1 + Math.floor(target.abl.empathy / 2) + Math.floor(relation.trust / 30)
+				- Math.floor(target.palam.tension / 30);
+			return {
+				rapport, comfort,
+				tension: pridePenalty ? 2 : comfort > 1 ? -1 : 0,
+				trust: rapport >= 2 ? 1 : 0,
+				affection: rapport >= 5 ? 1 : 0
+			};
+		}
 	}
 };
 
@@ -125,28 +137,39 @@ export function resolveAction(state: SimulationState, actionId: SimulationAction
 	const definition = SIMULATION_ACTIONS[actionId];
 	const context: ActionContext = { state, actorId: 'player', target };
 	const source: SourceEffect = { ...definition.costs(context), ...definition.resolve(context) };
-	const player = { ...state.player, energy: state.player.energy + source.energy };
-	const relationTrust = target.relation.trust + (source.trust > 0 ? 1 : 0);
+	const player = clampBase({ ...state.player, energy: state.player.energy + source.energy });
+	const previousRelation = relationTo(target);
+	const relation = {
+		...previousRelation,
+		trust: clampPercent(previousRelation.trust + source.trust),
+		affection: clampPercent(previousRelation.affection + source.affection)
+	};
 	const mark = [...target.mark];
 	if (!mark.includes('firstConversation')) mark.push('firstConversation');
-	if (relationTrust >= 10 && !mark.includes('becameFriend')) mark.push('becameFriend');
+	if (relation.trust >= 10 && !mark.includes('becameFriend')) mark.push('becameFriend');
 	const acquiredMarks = mark.filter((value) => !target.mark.includes(value));
 	const updated: Character = {
 		...target,
-		palam: { ...target.palam, rapport: target.palam.rapport + source.rapport, trust: target.palam.trust + source.trust },
-		exp: { ...target.exp, conversation: target.exp.conversation + 1 },
-		relation: { ...target.relation, trust: relationTrust },
+		palam: { ...target.palam,
+			rapport: clampPercent(target.palam.rapport + source.rapport),
+			comfort: clampPercent(target.palam.comfort + source.comfort),
+			tension: clampPercent(target.palam.tension + source.tension)
+		},
+		exp: { ...target.exp, social: clampCount(target.exp.social + 1) },
+		relations: { ...target.relations, player: relation },
 		mark
 	};
 	const changes: StateChange[] = [
 		{ path: 'player.BASE.energy', before: state.player.energy, after: player.energy },
 		{ path: `${target.name}.PALAM.rapport`, before: target.palam.rapport, after: updated.palam.rapport },
-		{ path: `${target.name}.PALAM.trust`, before: target.palam.trust, after: updated.palam.trust },
-		{ path: `${target.name}.EXP.conversation`, before: target.exp.conversation, after: updated.exp.conversation },
-		{ path: `${target.name}.RELATION.trust`, before: target.relation.trust, after: updated.relation.trust }
+		{ path: `${target.name}.PALAM.comfort`, before: target.palam.comfort, after: updated.palam.comfort },
+		{ path: `${target.name}.PALAM.tension`, before: target.palam.tension, after: updated.palam.tension },
+		{ path: `${target.name}.EXP.social`, before: target.exp.social, after: updated.exp.social },
+		{ path: `${target.name}.RELATION.player.trust`, before: previousRelation.trust, after: relation.trust },
+		{ path: `${target.name}.RELATION.player.affection`, before: previousRelation.affection, after: relation.affection }
 	];
 	if (acquiredMarks.length) changes.push({ path: `${target.name}.MARK`, before: [...target.mark], after: [...mark] });
-	const score = source.rapport + source.trust;
+	const score = source.rapport + source.comfort - Math.max(0, source.tension);
 	const event: SemanticEvent = {
 		type: actionId, actorId: 'player', targetId: target.id,
 		outcome: score >= 5 ? 'positive' : score >= 2 ? 'neutral' : 'negative',

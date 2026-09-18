@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ACTIONS, actionReason, applyEffects, calculateSource, eventSummary } from '$lib/game/actions';
-import { DEFAULT_TALENT, type ActionId, type Character, type EventRecord, type MemoryRecord, type Proposal, type Source, type WorldState } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type Character, type CharacterStatsInput, type EventRecord, type MemoryRecord, type Proposal, type Source, type WorldState } from '$lib/game/types';
 import {
 	getCharacter,
 	getEffectiveScenarioConfig,
@@ -142,30 +142,34 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	}
 
 	const beat = await generateWorldBeat({ world, config: llmConfig, characters, recentEvents: view.events, intent, targetId });
+	// An idle world beat, rest, a long gap or a move begins a fresh scene.
+	const sceneChanged = beat.location !== world.location || request.kind === 'advance' || actionId === 'rest'
+		|| beat.minutes >= 60 || world.minute + beat.minutes >= 1440;
 	const focus = beat.focusCharacterId ? characters.find((character) => character.id === beat.focusCharacterId) ?? null : null;
+	const sceneFocus = focus && sceneChanged ? { ...focus, palam: { ...DEFAULT_PALAM } } : focus;
 	const mode = request.kind === 'advance' || ((request.kind === 'act' || request.kind === 'free') && actionId === 'rest')
 		? 'idle' as const
 		: request.kind === 'accept' ? 'accept-proposal' as const
 		: request.kind === 'decline' ? 'decline-proposal' as const
 		: 'player-action' as const;
-	const response = focus
+	const response = sceneFocus
 		? await generateCharacterTurn({
-			character: focus,
-			memories: await memoryContext(focus, `${beat.situation} ${intent ?? ''}`),
+			character: sceneFocus,
+			memories: await memoryContext(sceneFocus, `${beat.situation} ${intent ?? ''}`),
 			config: llmConfig,
 			beat,
 			intent,
 			mode,
-			recentInteractions: view.events.filter((event) => event.characterId === focus.id).slice(0, 5),
-			availableActions: (Object.keys(ACTIONS) as ActionId[]).filter((id) => id !== 'rest' && !actionReason(id, player, focus))
+			recentInteractions: view.events.filter((event) => event.characterId === sceneFocus.id).slice(0, 5),
+			availableActions: (Object.keys(ACTIONS) as ActionId[]).filter((id) => id !== 'rest' && !actionReason(id, player, sceneFocus))
 		})
 		: null;
 	const accepted = request.kind === 'accept' || actionId === 'rest' ||
 		((request.kind === 'act' || request.kind === 'free') && (focus ? response?.accepted === true : request.kind === 'free'));
-	const source: Source = actionId && accepted ? calculateSource(actionId, focus) : {};
+	const source: Source = actionId && accepted ? calculateSource(actionId, sceneFocus) : {};
 	const effects = actionId && accepted
-		? applyEffects(actionId, player, focus, source)
-		: { player, character: focus, changes: {} as Record<string, number> };
+		? applyEffects(actionId, player, sceneFocus, source)
+		: { player, character: sceneFocus, changes: {} as Record<string, number> };
 	const minutes = actionId && accepted ? Math.max(ACTIONS[actionId].duration, beat.minutes) : beat.minutes;
 	const nextWorld = advanceTime(world, minutes, beat.location);
 	let proposal: Proposal | null = null;
@@ -201,6 +205,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	const committed = withTransaction(() => {
 		updateWorld(nextWorld);
 		updatePlayer(effects.player);
+		if (sceneChanged) for (const character of characters) updateCharacter({ ...character, palam: { ...DEFAULT_PALAM } });
 		if (effects.character && accepted && actionId !== 'rest') updateCharacter(effects.character);
 		updateScenarioConfig({ ...config, worldMemory: beat.worldMemory, pendingProposal: proposal, playerSuggestions: null });
 		const eventId = insertEvent(event);
@@ -274,7 +279,7 @@ export function saveScenarioSettings(worldSetting: string, eraRules: string): Pr
 	});
 }
 
-export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> & Partial<Pick<Character, 'talent'>> }): Promise<string> {
+export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: CharacterStatsInput; marks?: string[] }): Promise<string> {
 	return runExclusive(() => {
 		const name = input.name.trim();
 		const profile = input.profile.trim();
@@ -286,16 +291,20 @@ export function saveCharacterSettings(input: { id: string; name: string; age: nu
 			id: randomUUID(), name, age: input.age, portrait: '', introduction: '', profile,
 			base: { energy: 20, maxEnergy: 20 }, trait: [],
 			talent: { ...DEFAULT_TALENT },
-			abl: { conversation: 1, empathy: 1, seduction: 1 },
-			exp: { conversation: 0, empathy: 0, seduction: 0 },
-			mark: [], relation: { affection: 0, trust: 0, desire: 0 },
-			palam: { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }
+			abl: { ...DEFAULT_ABL },
+			exp: { ...DEFAULT_EXP },
+			mark: [], relations: { player: { ...DEFAULT_RELATION } },
+			palam: { ...DEFAULT_PALAM }
 		};
-		const stats = input.stats ? { ...input.stats, talent: input.stats.talent ?? character.talent } : character;
+		const stats = input.stats ? {
+			base: input.stats.base, talent: input.stats.talent ?? character.talent,
+			abl: input.stats.abl, exp: input.stats.exp, palam: input.stats.palam,
+			relations: { ...character.relations, player: input.stats.relation }
+		} : character;
 		if (stats.base.maxEnergy < 1 || stats.base.energy > stats.base.maxEnergy) {
 			throw new Error('BASE 체력 값을 확인해 주세요.');
 		}
-		updateCharacter({ ...character, ...stats, name, age: input.age, profile, introduction: profile.split('\n')[0] });
+		updateCharacter({ ...character, ...stats, mark: input.marks ?? character.mark, name, age: input.age, profile, introduction: profile.split('\n')[0] });
 		const config = getGameView().config;
 		if (config.playerSuggestions) updateScenarioConfig({ ...config, playerSuggestions: null });
 		return character.id;

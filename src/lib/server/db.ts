@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_TALENT } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, clampBase, normalizeAbl, normalizeExp, normalizeMarks, normalizePalam, normalizeRelations, normalizeTalent } from '$lib/game/types';
 import type {
 	BaseStats,
 	Character,
@@ -36,10 +36,6 @@ function parse<T>(value: unknown): T {
 }
 
 function characterFromRow(row: Row): Character {
-	const abl = parse<Partial<Character['abl']>>(row.abl_json);
-	const exp = parse<Partial<Character['exp']>>(row.exp_json);
-	const relation = parse<Partial<Character['relation']>>(row.relation_json);
-	const palam = parse<Partial<Character['palam']>>(row.palam_json);
 	return {
 		id: String(row.id),
 		moduleId: row.module_id ? String(row.module_id) : null,
@@ -48,20 +44,46 @@ function characterFromRow(row: Row): Character {
 		portrait: String(row.portrait),
 		introduction: String(row.introduction),
 		profile: String(row.profile ?? row.introduction),
-		base: parse(row.base_json),
+		base: clampBase(parse(row.base_json)),
 		trait: parse(row.trait_json),
-		talent: { ...DEFAULT_TALENT, ...(row.talent_json ? parse<Character['talent']>(row.talent_json) : {}) },
-		abl: { conversation: abl.conversation ?? 1, empathy: abl.empathy ?? 1, seduction: abl.seduction ?? 1 },
-		exp: { conversation: exp.conversation ?? 0, empathy: exp.empathy ?? 0, seduction: exp.seduction ?? 0 },
-		mark: parse(row.mark_json),
-		relation: { affection: relation.affection ?? 0, trust: relation.trust ?? 0, desire: relation.desire ?? 0 },
-		palam: {
-			rapport: palam.rapport ?? 0,
-			trust: palam.trust ?? 0,
-			arousal: palam.arousal ?? 0,
-			pleasure: palam.pleasure ?? 0
-		}
+		talent: normalizeTalent(row.talent_json ? parse(row.talent_json) : null),
+		abl: normalizeAbl(parse(row.abl_json)),
+		exp: normalizeExp(parse(row.exp_json)),
+		mark: normalizeMarks(parse(row.mark_json)),
+		relations: normalizeRelations(parse(row.relation_json)),
+		palam: normalizePalam(parse(row.palam_json))
 	};
+}
+
+function migrateCharacterRow(row: Row): Row {
+	const character = characterFromRow(row);
+	return {
+		...row,
+		base_json: JSON.stringify(character.base),
+		talent_json: JSON.stringify(character.talent),
+		abl_json: JSON.stringify(character.abl),
+		exp_json: JSON.stringify(character.exp),
+		mark_json: JSON.stringify(character.mark),
+		relation_json: JSON.stringify(character.relations),
+		palam_json: JSON.stringify(character.palam)
+	};
+}
+
+function migrateStoredManifest(manifest: ModuleManifest): ModuleManifest {
+	return { ...manifest, characters: manifest.characters.map((character) => {
+		const legacy = character as Character & { relation?: unknown };
+		const { relation: oldRelation, ...rest } = legacy;
+		return {
+			...rest,
+			base: clampBase(character.base ?? { energy: 20, maxEnergy: 20 }),
+			talent: normalizeTalent(character.talent),
+			abl: normalizeAbl(character.abl),
+			exp: normalizeExp(character.exp),
+			mark: normalizeMarks(character.mark),
+			relations: normalizeRelations(character.relations ?? oldRelation),
+			palam: normalizePalam(character.palam)
+		};
+	}) };
 }
 
 function eventFromRow(row: Row): EventRecord {
@@ -266,6 +288,19 @@ export function getDb(): DatabaseSync {
 				SELECT ?, slot, saved_at, turn, snapshot_json FROM save_slots`).run(id);
 		});
 	}
+	withTransaction(() => {
+		updatePlayer(getPlayer());
+		for (const row of db.prepare('SELECT id, manifest_json FROM modules').all() as Row[]) {
+			const migrated = migrateStoredManifest(parse<ModuleManifest>(row.manifest_json));
+			db.prepare('UPDATE modules SET manifest_json = ? WHERE id = ?').run(JSON.stringify(migrated), row.id as string);
+		}
+		for (const row of db.prepare('SELECT * FROM characters').all() as Row[]) {
+			const migrated = migrateCharacterRow(row);
+			db.prepare(`UPDATE characters SET base_json = ?, talent_json = ?, abl_json = ?, exp_json = ?, mark_json = ?, relation_json = ?, palam_json = ? WHERE id = ?`)
+				.run(migrated.base_json as string, migrated.talent_json as string, migrated.abl_json as string,
+					migrated.exp_json as string, migrated.mark_json as string, migrated.relation_json as string, migrated.palam_json as string, row.id as string);
+		}
+	});
 	return db;
 }
 
@@ -284,12 +319,12 @@ function seed(): void {
 				profile: '서연은 망원동의 독립 서점에서 일한다. 말수가 적지만 관찰력이 좋고, 친해진 사람에게는 자기 생각을 솔직하게 털어놓는다.',
 				base: { energy: 20, maxEnergy: 20 },
 				trait: ['차분함', '섬세함'],
-				talent: { pride: 45, openness: 65, empathy: 75, assertiveness: 40 },
-				abl: { conversation: 1, empathy: 2, seduction: 1 },
-				exp: { conversation: 0, empathy: 15, seduction: 0 },
+				talent: { ...DEFAULT_TALENT, pride: 45, openness: 65, assertiveness: 40 },
+				abl: { ...DEFAULT_ABL, empathy: 2 },
+				exp: { ...DEFAULT_EXP, social: 15 },
 				mark: [],
-				relation: { affection: 3, trust: 2, desire: 0 },
-				palam: { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }
+				relations: { player: { ...DEFAULT_RELATION, affection: 3, trust: 2 } },
+				palam: { ...DEFAULT_PALAM }
 			},
 			{
 				id: 'jieun',
@@ -300,12 +335,12 @@ function seed(): void {
 				profile: '지은은 프리랜서 편집자다. 상대의 말보다 행동을 오래 기억하며, 먼저 다가갈 때에도 자신의 기준을 분명히 한다.',
 				base: { energy: 18, maxEnergy: 18 },
 				trait: ['신중함', '관찰력'],
-				talent: { pride: 65, openness: 45, empathy: 60, assertiveness: 70 },
-				abl: { conversation: 1, empathy: 1, seduction: 1 },
-				exp: { conversation: 0, empathy: 0, seduction: 0 },
+				talent: { ...DEFAULT_TALENT, pride: 65, openness: 45, assertiveness: 70 },
+				abl: { ...DEFAULT_ABL },
+				exp: { ...DEFAULT_EXP },
 				mark: [],
-				relation: { affection: 1, trust: 1, desire: 0 },
-				palam: { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }
+				relations: { player: { ...DEFAULT_RELATION, affection: 1, trust: 1 } },
+				palam: { ...DEFAULT_PALAM }
 			}
 		];
 		characters.forEach((character, index) => updateCharacter(character, index));
@@ -345,13 +380,14 @@ export function updateWorld(world: WorldState): void {
 export function getPlayer(): BaseStats {
 	const row = one('SELECT energy, max_energy FROM player_state WHERE id = 1');
 	if (!row) throw new Error('플레이어 상태를 찾을 수 없습니다.');
-	return { energy: Number(row.energy), maxEnergy: Number(row.max_energy) };
+	return clampBase({ energy: Number(row.energy), maxEnergy: Number(row.max_energy) });
 }
 
 export function updatePlayer(player: BaseStats): void {
+	const bounded = clampBase(player);
 	getDb()
 		.prepare('UPDATE player_state SET energy = ?, max_energy = ? WHERE id = 1')
-		.run(player.energy, player.maxEnergy);
+		.run(bounded.energy, bounded.maxEnergy);
 }
 
 export function getCharacter(id: string): Character | null {
@@ -367,7 +403,9 @@ export function getCharacters(): Character[] {
 }
 
 function getModuleRows(): Row[] {
-	return rows('SELECT * FROM modules ORDER BY name, id');
+	return rows('SELECT * FROM modules ORDER BY name, id').map((row) => ({
+		...row, manifest_json: JSON.stringify(migrateStoredManifest(parse<ModuleManifest>(row.manifest_json)))
+	}));
 }
 
 export function getInstalledModules(): InstalledModule[] {
@@ -464,7 +502,7 @@ export function setModuleEnabled(id: string, enabled: boolean): void {
 	withTransaction(() => {
 		const row = one('SELECT * FROM modules WHERE id = ?', id);
 		if (!row) throw new Error('설치된 모듈을 찾을 수 없습니다.');
-		const manifest = parse<ModuleManifest>(row.manifest_json);
+		const manifest = migrateStoredManifest(parse<ModuleManifest>(row.manifest_json));
 		if (enabled && manifest.world) {
 			for (const other of getModuleRows()) {
 				if (other.id !== id && parse<ModuleManifest>(other.manifest_json).world) {
@@ -516,6 +554,13 @@ export function updateScenarioConfig(config: ScenarioConfig): void {
 }
 
 export function updateCharacter(character: Character, sortOrder?: number): void {
+	const bounded: Character = {
+		...character,
+		base: clampBase(character.base), talent: normalizeTalent(character.talent),
+		abl: normalizeAbl(character.abl), exp: normalizeExp(character.exp),
+		mark: normalizeMarks(character.mark), relations: normalizeRelations(character.relations),
+		palam: normalizePalam(character.palam)
+	};
 	const order = sortOrder ?? Number(one('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM characters')?.next_order ?? 0);
 	getDb()
 		.prepare(`
@@ -533,22 +578,22 @@ export function updateCharacter(character: Character, sortOrder?: number): void 
 				talent_json=excluded.talent_json
 		`)
 		.run(
-			character.id,
-			character.moduleId ?? null,
+			bounded.id,
+			bounded.moduleId ?? null,
 			order,
-			character.name,
-			character.age,
-			character.portrait,
-			character.introduction,
-			character.profile,
-			JSON.stringify(character.base),
-			JSON.stringify(character.trait),
-			JSON.stringify(character.abl),
-			JSON.stringify(character.exp),
-			JSON.stringify(character.mark),
-			JSON.stringify(character.relation),
-			JSON.stringify(character.palam),
-			JSON.stringify(character.talent ?? DEFAULT_TALENT)
+			bounded.name,
+			bounded.age,
+			bounded.portrait,
+			bounded.introduction,
+			bounded.profile,
+			JSON.stringify(bounded.base),
+			JSON.stringify(bounded.trait),
+			JSON.stringify(bounded.abl),
+			JSON.stringify(bounded.exp),
+			JSON.stringify(bounded.mark),
+			JSON.stringify(bounded.relations),
+			JSON.stringify(bounded.palam),
+			JSON.stringify(bounded.talent)
 		);
 }
 
@@ -825,13 +870,26 @@ function checkedSnapshot(value: unknown, full: boolean): Snapshot {
 	return value as Snapshot;
 }
 
+function migrateSnapshot(snapshot: Snapshot): Snapshot {
+	return { ...snapshot,
+		player: snapshot.player.map((row) => {
+			const bounded = clampBase({ energy: Number(row.energy), maxEnergy: Number(row.max_energy) });
+			return { ...row, energy: bounded.energy, max_energy: bounded.maxEnergy };
+		}),
+		characters: snapshot.characters.map(migrateCharacterRow),
+		modules: snapshot.modules?.map((row) => ({
+			...row, manifest_json: JSON.stringify(migrateStoredManifest(parse<ModuleManifest>(row.manifest_json)))
+		}))
+	};
+}
+
 export function exportLoreJson(id: string): string {
 	const lore = one('SELECT title, state_json FROM lores WHERE id = ?', id);
 	if (!lore) throw new Error('내보낼 로어를 찾을 수 없습니다.');
-	const state = id === activeLoreId() ? captureSnapshot() : checkedSnapshot(parse(lore.state_json), true);
+	const state = migrateSnapshot(id === activeLoreId() ? captureSnapshot() : checkedSnapshot(parse(lore.state_json), true));
 	const saves = rows('SELECT slot, saved_at, turn, snapshot_json FROM lore_save_slots WHERE lore_id = ? ORDER BY slot', id)
 		.map((row) => ({ slot: Number(row.slot), savedAt: String(row.saved_at), turn: Number(row.turn),
-			state: parse<Snapshot>(row.snapshot_json) }));
+			state: migrateSnapshot(parse<Snapshot>(row.snapshot_json)) }));
 	return JSON.stringify({ format: 'newera-lore', version: 1, title: String(lore.title), state, saves }, null, 2);
 }
 
@@ -845,13 +903,13 @@ export function importLoreJson(raw: string): string {
 		!Array.isArray(bundle.saves) || bundle.saves.length > 3) {
 		throw new Error('지원하지 않는 로어 파일입니다.');
 	}
-	const state = checkedSnapshot(bundle.state, true);
+	const state = migrateSnapshot(checkedSnapshot(bundle.state, true));
 	const saves = bundle.saves.map((entry: unknown) => {
 		if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('저장 슬롯 형식이 올바르지 않습니다.');
 		const save = entry as Record<string, unknown>;
 		if (!Number.isInteger(save.slot) || Number(save.slot) < 1 || Number(save.slot) > 3 ||
 			!Number.isInteger(save.turn) || typeof save.savedAt !== 'string') throw new Error('저장 슬롯 형식이 올바르지 않습니다.');
-		return { slot: Number(save.slot), turn: Number(save.turn), savedAt: save.savedAt, state: checkedSnapshot(save.state, false) };
+		return { slot: Number(save.slot), turn: Number(save.turn), savedAt: save.savedAt, state: migrateSnapshot(checkedSnapshot(save.state, false)) };
 	});
 	if (new Set(saves.map((save) => save.slot)).size !== saves.length) throw new Error('중복된 저장 슬롯이 있습니다.');
 	const id = randomUUID();
@@ -884,6 +942,7 @@ export function saveGame(slot: number): void {
 }
 
 function restoreSnapshot(snapshot: Snapshot): void {
+	snapshot = migrateSnapshot(snapshot);
 		const db = getDb();
 		db.exec('DELETE FROM memories; DELETE FROM events; DELETE FROM characters; DELETE FROM player_state; DELETE FROM world_state;');
 		if (snapshot.modules) {

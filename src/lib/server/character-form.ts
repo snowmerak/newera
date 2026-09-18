@@ -1,4 +1,17 @@
-import type { Character } from '$lib/game/types';
+import { STANDARD_MARKS, type CharacterStatsInput } from '$lib/game/types';
+
+const EDITABLE_MARKS = ['firstConversation', 'becameFriend', ...STANDARD_MARKS];
+
+export function characterMarks(body: FormData): string[] | undefined {
+	if (!body.has('mark.present')) return undefined;
+	const selected = EDITABLE_MARKS.filter((mark) => body.has(`mark.${mark}`));
+	const raw = String(body.get('mark.custom') ?? '');
+	const custom = raw.split(/[\n,]/).map((mark) => mark.trim()).filter(Boolean);
+	if (custom.some((mark) => mark.length > 100) || selected.length + custom.length > 30) {
+		throw new Error('MARK는 최대 30개, 각 100자 이하여야 합니다.');
+	}
+	return [...new Set([...selected, ...custom])];
+}
 
 export function nonnegativeInteger(body: FormData, key: string): number {
 	const raw = body.get(key);
@@ -8,21 +21,32 @@ export function nonnegativeInteger(body: FormData, key: string): number {
 	return Number(raw);
 }
 
-export function characterStats(body: FormData): (Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> & Partial<Pick<Character, 'talent'>>) | undefined {
+export function characterStats(body: FormData): CharacterStatsInput | undefined {
 	// Older callers can still create a character with the default stats.
 	if (![...body.keys()].some((key) => /^(base|talent|abl|exp|relation|palam)\./.test(key))) return undefined;
 	const number = (key: string) => nonnegativeInteger(body, key);
+	const percent = (key: string) => {
+		const value = number(key);
+		if (value > 100) throw new Error(`${key}는 0~100으로 입력해 주세요.`);
+		return value;
+	};
 	const talent = [...body.keys()].some((key) => key.startsWith('talent.')) ? {
-		pride: number('talent.pride'), openness: number('talent.openness'),
-		empathy: number('talent.empathy'), assertiveness: number('talent.assertiveness')
+		pride: percent('talent.pride'), openness: percent('talent.openness'),
+		libido: percent('talent.libido'), modesty: percent('talent.modesty'),
+		assertiveness: percent('talent.assertiveness'), receptiveness: percent('talent.receptiveness'),
+		curiosity: percent('talent.curiosity')
 	} : undefined;
-	if (talent && Object.values(talent).some((value) => value > 100)) throw new Error('TALENT는 0~100으로 입력해 주세요.');
+	const base = { energy: number('base.energy'), maxEnergy: number('base.maxEnergy') };
+	if (base.maxEnergy < 1 || base.energy > base.maxEnergy) throw new Error('BASE 체력 값을 확인해 주세요.');
 	return {
-		base: { energy: number('base.energy'), maxEnergy: number('base.maxEnergy') },
+		base,
 		...(talent ? { talent } : {}),
-		abl: { conversation: number('abl.conversation'), empathy: number('abl.empathy'), seduction: number('abl.seduction') },
-		exp: { conversation: number('exp.conversation'), empathy: number('exp.empathy'), seduction: number('exp.seduction') },
-		relation: { affection: number('relation.affection'), trust: number('relation.trust'), desire: number('relation.desire') },
-		palam: { rapport: number('palam.rapport'), trust: number('palam.trust'), arousal: number('palam.arousal'), pleasure: number('palam.pleasure') }
+		abl: { conversation: number('abl.conversation'), empathy: number('abl.empathy'), seduction: number('abl.seduction'), intimacy: number('abl.intimacy') },
+		exp: { social: number('exp.social'), romantic: number('exp.romantic'), seduction: number('exp.seduction'), intimacy: number('exp.intimacy') },
+		relation: { affection: percent('relation.affection'), trust: percent('relation.trust'), desire: percent('relation.desire'),
+			attachment: percent('relation.attachment'), jealousy: percent('relation.jealousy'), resentment: percent('relation.resentment') },
+		palam: { rapport: percent('palam.rapport'), comfort: percent('palam.comfort'), arousal: percent('palam.arousal'),
+			pleasure: percent('palam.pleasure'), embarrassment: percent('palam.embarrassment'), tension: percent('palam.tension'),
+			frustration: percent('palam.frustration'), satisfaction: percent('palam.satisfaction') }
 	};
 }

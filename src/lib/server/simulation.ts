@@ -1,6 +1,6 @@
 import { createSimulation, resolveAction, selectActiveCharacter } from '$lib/game/simulation';
 import { renderSemanticEvent } from '$lib/game/simulation-renderer';
-import type { Character, EventRecord } from '$lib/game/types';
+import type { Character, CharacterStatsInput, EventRecord } from '$lib/game/types';
 import { getGameView, insertEvent, updateCharacter, updatePlayer, updateScenarioConfig, updateWorld, withTransaction } from './db';
 import { advanceTime, runExclusive } from './game';
 
@@ -34,10 +34,9 @@ export function performConversation(targetId: string): Promise<EventRecord> {
 
 export function editSimulationCharacter(input: {
 	id: string;
-	stats: Pick<Character, 'base' | 'abl' | 'exp' | 'relation' | 'palam'> & Partial<Pick<Character, 'talent'>>;
+	stats: CharacterStatsInput;
 	playerEnergy: number;
-	firstConversation: boolean;
-	becameFriend: boolean;
+	marks?: string[];
 }): Promise<void> {
 	return runExclusive(() => {
 		const view = getGameView();
@@ -47,11 +46,13 @@ export function editSimulationCharacter(input: {
 		if (!Number.isSafeInteger(input.playerEnergy) || input.playerEnergy < 0 || input.playerEnergy > view.player.maxEnergy) {
 			throw new Error('플레이어 체력 값을 확인해 주세요.');
 		}
-		const marks = character.mark.filter((mark) => mark !== 'firstConversation' && mark !== 'becameFriend');
-		if (input.firstConversation) marks.push('firstConversation');
-		if (input.becameFriend) marks.push('becameFriend');
 		withTransaction(() => {
-			updateCharacter({ ...character, ...input.stats, talent: input.stats.talent ?? character.talent, mark: marks });
+			updateCharacter({ ...character,
+				base: input.stats.base, talent: input.stats.talent ?? character.talent,
+				abl: input.stats.abl, exp: input.stats.exp, palam: input.stats.palam,
+				relations: { ...character.relations, player: input.stats.relation },
+				mark: input.marks ?? character.mark
+			});
 			updatePlayer({ ...view.player, energy: input.playerEnergy });
 			updateScenarioConfig({ ...view.config, pendingProposal: null, playerSuggestions: null });
 		});

@@ -1,4 +1,4 @@
-import { DEFAULT_TALENT, type Character } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, normalizeExp, normalizeMarks, normalizePalam, type Character, type RelationStats } from '$lib/game/types';
 
 export interface ModuleManifest {
 	schemaVersion: 1;
@@ -23,14 +23,14 @@ function text(value: unknown, label: string, maximum: number, required = true): 
 	return value.trim();
 }
 
-function numbers<T extends Record<string, number>>(value: unknown, label: string, defaults: T): T {
+function numbers<T extends Record<string, number>>(value: unknown, label: string, defaults: T, maximum?: number): T {
 	const supplied = value === undefined ? {} : object(value, label);
 	const result: Record<string, number> = { ...defaults };
 	for (const key of Object.keys(defaults)) {
 		if (supplied[key] === undefined) continue;
 		const number = supplied[key];
-		if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 0) {
-			throw new Error(`${label}.${key}는 0 이상의 정수여야 합니다.`);
+		if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 0 || (maximum !== undefined && number > maximum)) {
+			throw new Error(`${label}.${key}는 0${maximum === undefined ? ' 이상의' : `~${maximum} 사이의`} 정수여야 합니다.`);
 		}
 		result[key] = number;
 	}
@@ -80,8 +80,23 @@ export function parseModuleManifest(raw: string): ModuleManifest {
 		const profile = text(source.profile, `characters[${index}].profile`, 20_000);
 		const base = numbers(source.base, 'BASE', { energy: 20, maxEnergy: 20 }) as Character['base'];
 		if (base.maxEnergy < 1 || base.energy > base.maxEnergy) throw new Error('BASE 체력 값을 확인해 주세요.');
-		const talent = numbers(source.talent, 'TALENT', { ...DEFAULT_TALENT });
-		if (Object.values(talent).some((value) => value > 100)) throw new Error('TALENT는 0~100으로 입력해 주세요.');
+		const talent = numbers(source.talent, 'TALENT', { ...DEFAULT_TALENT }, 100);
+		const expInput = source.exp === undefined ? {} : object(source.exp, 'EXP');
+		const exp = 'social' in expInput || 'romantic' in expInput || 'intimacy' in expInput
+			? numbers(source.exp, 'EXP', { ...DEFAULT_EXP })
+			: normalizeExp(numbers(source.exp, 'EXP', { conversation: 0, empathy: 0, seduction: 0 }));
+		const palamInput = source.palam === undefined ? {} : object(source.palam, 'PALAM');
+		const palam = 'comfort' in palamInput
+			? numbers(source.palam, 'PALAM', { ...DEFAULT_PALAM }, 100)
+			: normalizePalam(numbers(source.palam, 'PALAM', { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }, 100));
+		const relations: Record<string, RelationStats> = {};
+		if (source.relations !== undefined) {
+			for (const [targetId, value] of Object.entries(object(source.relations, 'RELATION'))) {
+				if (!/^[a-z0-9][a-z0-9._:-]*$/.test(targetId)) throw new Error('RELATION 대상 ID를 확인해 주세요.');
+				relations[targetId] = numbers(value, `RELATION.${targetId}`, { ...DEFAULT_RELATION }, 100);
+			}
+		}
+		relations.player ??= numbers(source.relation, 'RELATION.player', { ...DEFAULT_RELATION }, 100);
 		return {
 			id: `mod:${id}:${localId}`, moduleId: id,
 			name: text(source.name, `characters[${index}].name`, 100), age,
@@ -89,11 +104,11 @@ export function parseModuleManifest(raw: string): ModuleManifest {
 			introduction: text(source.introduction, `characters[${index}].introduction`, 500, false) || profile.split('\n')[0],
 			profile, base, talent,
 			trait: strings(source.trait, 'TRAIT'),
-			abl: numbers(source.abl, 'ABL', { conversation: 1, empathy: 1, seduction: 1 }) as Character['abl'],
-			exp: numbers(source.exp, 'EXP', { conversation: 0, empathy: 0, seduction: 0 }) as Character['exp'],
-			mark: strings(source.mark, 'MARK'),
-			relation: numbers(source.relation, 'RELATION', { affection: 0, trust: 0, desire: 0 }) as Character['relation'],
-			palam: numbers(source.palam, 'PALAM', { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }) as Character['palam']
+			abl: numbers(source.abl, 'ABL', { ...DEFAULT_ABL }),
+			exp,
+			mark: normalizeMarks(strings(source.mark, 'MARK')),
+			relations,
+			palam
 		};
 	});
 	if (!world && characters.length === 0) throw new Error('세계관이나 등장인물을 하나 이상 넣어 주세요.');

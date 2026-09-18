@@ -185,7 +185,7 @@ export async function generateWorldBeat(input: {
 				age: character.age,
 				profile: character.profile,
 				trait: character.trait,
-				relation: character.relation,
+				relationToPlayer: character.relations.player,
 				mark: character.mark
 			})),
 			recentEvents: input.recentEvents.slice(0, 8).map((event) => event.summary),

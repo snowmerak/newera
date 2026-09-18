@@ -134,7 +134,7 @@
 					<p class="minor">플레이어 체력 {data.player.energy}/{data.player.maxEnergy}</p>
 					{#if selected}
 						<h3>{selected.name}</h3>
-						<p class="minor">{selected.trait.join(' · ')} · 호감 {selected.relation.affection} · 신뢰 {selected.relation.trust} · 욕망 {selected.relation.desire}</p>
+						<p class="minor">{selected.trait.join(' · ')} · 호감 {selected.relations.player.affection} · 신뢰 {selected.relations.player.trust} · 욕망 {selected.relations.player.desire}</p>
 						{#if visibleMemories.length}
 							<ul class="memory-list">{#each visibleMemories as memory}<li>{memory.summary}</li>{/each}</ul>
 						{:else}<p class="minor">기록된 구체적 기억은 아직 없습니다. 이전 행동은 아래 기록에서 볼 수 있습니다.</p>{/if}

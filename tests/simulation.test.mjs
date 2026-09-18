@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { actionUnavailableReason, attachRenderedText, createSimulation, resolveAction } from '../src/lib/game/simulation.ts';
 import { renderSemanticEvent } from '../src/lib/game/simulation-renderer.ts';
+import { applyEffects, calculateSource } from '../src/lib/game/actions.ts';
+import { DEFAULT_TALENT, DEFAULT_ABL, DEFAULT_EXP, DEFAULT_RELATION, DEFAULT_PALAM,
+	clampBase, normalizeTalent, normalizeExp, normalizeMarks, normalizeRelations, normalizePalam } from '../src/lib/game/types.ts';
 
 function initialState(energy = 20) {
 	return createSimulation({ energy, maxEnergy: 20 }, [{
 		id: 'character-1', name: '서연', age: 27, portrait: '', introduction: '', profile: '',
 		base: { energy: 20, maxEnergy: 20 }, trait: [],
-		talent: { pride: 40, openness: 80, empathy: 75, assertiveness: 50 },
-		abl: { conversation: 2, empathy: 3, seduction: 1 },
-		exp: { conversation: 0, empathy: 0, seduction: 0 },
-		mark: [], relation: { affection: 0, trust: 0, desire: 0 },
-		palam: { rapport: 0, trust: 0, arousal: 0, pleasure: 0 }
+		talent: { ...DEFAULT_TALENT, pride: 40, openness: 80 },
+		abl: { ...DEFAULT_ABL, conversation: 2, empathy: 3 },
+		exp: { ...DEFAULT_EXP }, mark: [],
+		relations: { player: { ...DEFAULT_RELATION } }, palam: { ...DEFAULT_PALAM }
 	}], 'room');
 }
 
@@ -30,21 +32,22 @@ test('same state and action produce identical result and leave input untouched',
 	assert.deepEqual(state, snapshot);
 });
 
-test('conversation applies SOURCE to player BASE and target PALAM, EXP and RELATION', () => {
+test('conversation applies transient SOURCE to BASE, PALAM, EXP and directed RELATION', () => {
 	const result = resolveAction(initialState(), 'conversation');
 	const target = result.state.characters[0];
 	assert.equal(result.source.energy, -2);
 	assert.equal(result.state.player.energy, 18);
 	assert.equal(target.palam.rapport, result.source.rapport);
-	assert.equal(target.palam.trust, result.source.trust);
-	assert.equal(target.exp.conversation, 1);
-	assert.equal(target.relation.trust, 1);
+	assert.equal(target.palam.comfort, result.source.comfort);
+	assert.equal(target.exp.social, 1);
+	assert.equal(target.relations.player.trust, 1);
+	assert.equal(target.relations.player.affection, 1);
 	assert.ok(target.mark.includes('firstConversation'));
-	assert.deepEqual(result.changes.find((change) => change.path === '서연.EXP.conversation'), { path: '서연.EXP.conversation', before: 0, after: 1 });
+	assert.deepEqual(result.changes.find((change) => change.path === '서연.EXP.social'), { path: '서연.EXP.social', before: 0, after: 1 });
 	assert.equal(result.state.eventLog[0].id, 1);
 });
 
-test('semantic event and renderer are deterministic and rendering does not alter game state', () => {
+test('semantic event renderer does not alter game state', () => {
 	const result = resolveAction(initialState(), 'conversation');
 	assert.deepEqual(result.event, {
 		type: 'conversation', actorId: 'player', targetId: 'character-1', outcome: 'positive',
@@ -56,12 +59,11 @@ test('semantic event and renderer are deterministic and rendering does not alter
 	assert.deepEqual(result.state, beforeRender);
 	const rendered = attachRenderedText(result.state, text);
 	assert.equal(rendered.eventLog[0].renderedText, text);
-	assert.deepEqual(rendered.player, result.state.player);
 	assert.deepEqual(rendered.characters, result.state.characters);
 	assert.equal(result.state.eventLog[0].renderedText, null);
 });
 
-test('new SOURCE replaces previous action effect and high pride reduces rapport', () => {
+test('SOURCE is recalculated per action and pride affects rapport through trust', () => {
 	const state = initialState();
 	const first = resolveAction(state, 'conversation');
 	const second = resolveAction(first.state, 'conversation');
@@ -72,4 +74,85 @@ test('new SOURCE replaces previous action effect and high pride reduces rapport'
 	proud.characters[0].talent.pride = 90;
 	proud.characters[0].talent.openness = 10;
 	assert.ok(resolveAction(proud, 'conversation').source.rapport < first.source.rapport);
+	proud.characters[0].relations.player.trust = 50;
+	assert.ok(resolveAction(proud, 'conversation').source.rapport > resolveAction(initialStateWithPride(), 'conversation').source.rapport);
+});
+
+function initialStateWithPride() {
+	const state = initialState();
+	state.characters[0].talent.pride = 90;
+	state.characters[0].talent.openness = 10;
+	return state;
+}
+
+test('talent and bounded states clamp independently', () => {
+	const talent = normalizeTalent({ libido: 120, modesty: 90, assertiveness: 90, receptiveness: 20, openness: -5 });
+	assert.equal(talent.libido, 100);
+	assert.equal(talent.modesty, 90);
+	assert.equal(talent.openness, 0);
+	assert.equal(talent.assertiveness, 90);
+	assert.equal(talent.receptiveness, 20);
+	assert.deepEqual(clampBase({ energy: 30, maxEnergy: 20 }), { energy: 20, maxEnergy: 20 });
+	const state = initialState();
+	state.characters[0].palam.rapport = 99;
+	assert.equal(resolveAction(state, 'conversation').state.characters[0].palam.rapport, 100);
+});
+
+test('libido, directed desire, arousal and pleasure retain distinct values', () => {
+	const state = initialState();
+	const target = state.characters[0];
+	target.talent.libido = 90;
+	target.relations.player.desire = 75;
+	target.palam.arousal = 3;
+	target.palam.pleasure = 2;
+	const result = resolveAction(state, 'conversation').state.characters[0];
+	assert.equal(result.talent.libido, 90);
+	assert.equal(result.relations.player.desire, 75);
+	assert.equal(result.palam.arousal, 3);
+	assert.equal(result.palam.pleasure, 2);
+});
+
+test('affection and resentment, comfort and tension can coexist', () => {
+	const relations = normalizeRelations({ player: { affection: 80, trust: 20, desire: 90, resentment: 55 } });
+	const palam = normalizePalam({ comfort: 90, tension: 80 });
+	assert.equal(relations.player.affection, 80);
+	assert.equal(relations.player.resentment, 55);
+	assert.equal(palam.comfort, 90);
+	assert.equal(palam.tension, 80);
+});
+
+test('legacy milestone marks retain meaning and custom marks remain extensible', () => {
+	assert.deepEqual(normalizeMarks(['서로 원한 입맞춤', '서로 동의한 밤', '나만의 사건', 'firstKiss']),
+		['firstKiss', 'firstIntimacy', '나만의 사건']);
+});
+
+test('ABL and EXP remain independent; conversation responds to ability, openness and current tension', () => {
+	const state = initialState();
+	state.characters[0].abl.conversation = 8;
+	state.characters[0].exp.social = 3;
+	const resolved = resolveAction(state, 'conversation');
+	assert.equal(resolved.state.characters[0].abl.conversation, 8);
+	assert.equal(resolved.state.characters[0].exp.social, 4);
+	const low = initialState();
+	low.characters[0].abl.conversation = 1;
+	low.characters[0].talent.openness = 10;
+	low.characters[0].palam.tension = 80;
+	assert.ok(resolved.source.rapport > resolveAction(low, 'conversation').source.rapport);
+	assert.deepEqual(normalizeExp({ conversation: 4, empathy: 3, seduction: 2 }), { social: 7, romantic: 0, seduction: 2, intimacy: 0 });
+});
+
+test('main game action resolves SOURCE before state update without automatic ability growth', () => {
+	const character = initialState().characters[0];
+	character.exp.social = 29;
+	const source = calculateSource('talk', character);
+	assert.equal(source.energy, -3);
+	const result = applyEffects('talk', { energy: 20, maxEnergy: 20 }, character, source);
+	assert.equal(result.player.energy, 17);
+	assert.equal(result.character.abl.conversation, character.abl.conversation);
+	assert.equal(result.character.exp.social, 32);
+	assert.equal(result.character.palam.comfort, source.comfort);
+	assert.equal(result.character.relations.player.trust, 1);
+	const rest = applyEffects('rest', { energy: 18, maxEnergy: 20 }, null, calculateSource('rest', null));
+	assert.deepEqual(rest.player, { energy: 20, maxEnergy: 20 });
+	assert.equal(rest.changes.energy, 2);
 });

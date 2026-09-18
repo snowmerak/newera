@@ -116,6 +116,9 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(managementPage.includes('로어 가져오기'));
 		assert.ok(managementPage.includes('로어 삭제'));
 		assert.ok(managementPage.includes('내보내기'));
+		assert.ok(managementPage.includes('name="talent.libido"'));
+		assert.ok(managementPage.includes('name="relation.resentment"'));
+		assert.ok(managementPage.includes('name="mark.firstKiss"'));
 		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
 		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
 		await post('advance');
@@ -127,25 +130,33 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			db.prepare('UPDATE characters SET trait_json = ?, mark_json = ? WHERE id = ?').run('["작가"]', '["첫 만남"]', harinId);
 			const fixedFields = {
 				'base.energy': '17', 'base.maxEnergy': '24',
-				'talent.pride': '61', 'talent.openness': '73', 'talent.empathy': '82', 'talent.assertiveness': '45',
-				'abl.conversation': '4', 'abl.empathy': '3', 'abl.seduction': '2',
-				'exp.conversation': '9', 'exp.empathy': '8', 'exp.seduction': '7',
-				'relation.affection': '12', 'relation.trust': '11', 'relation.desire': '4',
-				'palam.rapport': '6', 'palam.trust': '5', 'palam.arousal': '3', 'palam.pleasure': '2'
+				'talent.pride': '61', 'talent.openness': '73', 'talent.libido': '90', 'talent.modesty': '90',
+				'talent.assertiveness': '90', 'talent.receptiveness': '20', 'talent.curiosity': '82',
+				'abl.conversation': '4', 'abl.empathy': '3', 'abl.seduction': '2', 'abl.intimacy': '8',
+				'exp.social': '17', 'exp.romantic': '3', 'exp.seduction': '7', 'exp.intimacy': '1',
+				'relation.affection': '80', 'relation.trust': '11', 'relation.desire': '90',
+				'relation.attachment': '12', 'relation.jealousy': '14', 'relation.resentment': '55',
+				'palam.rapport': '6', 'palam.comfort': '5', 'palam.arousal': '3', 'palam.pleasure': '2',
+				'palam.embarrassment': '4', 'palam.tension': '9', 'palam.frustration': '1', 'palam.satisfaction': '8'
 			};
 			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields });
 			const harinStats = db.prepare('SELECT base_json, trait_json, talent_json, abl_json, exp_json, mark_json, relation_json, palam_json FROM characters WHERE id = ?').get(harinId);
 			assert.deepEqual(JSON.parse(harinStats.base_json), { energy: 17, maxEnergy: 24 });
-			assert.deepEqual(JSON.parse(harinStats.talent_json), { pride: 61, openness: 73, empathy: 82, assertiveness: 45 });
-			assert.deepEqual(JSON.parse(harinStats.abl_json), { conversation: 4, empathy: 3, seduction: 2 });
-			assert.deepEqual(JSON.parse(harinStats.exp_json), { conversation: 9, empathy: 8, seduction: 7 });
-			assert.deepEqual(JSON.parse(harinStats.relation_json), { affection: 12, trust: 11, desire: 4 });
-			assert.deepEqual(JSON.parse(harinStats.palam_json), { rapport: 6, trust: 5, arousal: 3, pleasure: 2 });
+			assert.deepEqual(JSON.parse(harinStats.talent_json), { pride: 61, openness: 73, libido: 90, modesty: 90, assertiveness: 90, receptiveness: 20, curiosity: 82 });
+			assert.deepEqual(JSON.parse(harinStats.abl_json), { conversation: 4, empathy: 3, seduction: 2, intimacy: 8 });
+			assert.deepEqual(JSON.parse(harinStats.exp_json), { social: 17, romantic: 3, seduction: 7, intimacy: 1 });
+			assert.deepEqual(JSON.parse(harinStats.relation_json).player, { affection: 80, trust: 11, desire: 90, attachment: 12, jealousy: 14, resentment: 55 });
+			assert.deepEqual(JSON.parse(harinStats.palam_json), { rapport: 6, comfort: 5, arousal: 3, pleasure: 2, embarrassment: 4, tension: 9, frustration: 1, satisfaction: 8 });
 			assert.deepEqual(JSON.parse(harinStats.trait_json), ['작가']);
 			assert.deepEqual(JSON.parse(harinStats.mark_json), ['첫 만남']);
+			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields,
+				'mark.present': '1', 'mark.firstDate': 'on', 'mark.custom': '첫 만남, 독자 만남' });
+			assert.deepEqual(JSON.parse(db.prepare('SELECT mark_json FROM characters WHERE id = ?').get(harinId).mark_json), ['firstDate', '첫 만남', '독자 만남']);
 			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'base.energy': '25' }, true);
 			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'abl.conversation': '' }, true);
 			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'talent.pride': '101' }, true);
+			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'relation.resentment': '101' }, true);
+			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'palam.tension': '101' }, true);
 			assert.deepEqual(JSON.parse(db.prepare('SELECT base_json FROM characters WHERE id = ?').get(harinId).base_json), { energy: 17, maxEnergy: 24 });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'advance');
 			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '망원동에 비가 내린다.');
@@ -188,7 +199,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('advance');
 			await post('load', { slot: '1' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 61, openness: 73, empathy: 82, assertiveness: 45 });
+			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 61, openness: 73, libido: 90, modesty: 90, assertiveness: 90, receptiveness: 20, curiosity: 82 });
 			assert.ok(modelCalls.filter((call) => call.kind === 'world').length >= 3);
 			assert.ok(modelCalls.filter((call) => call.kind === 'character').length >= 3);
 			assert.ok(modelCalls.some((call) => call.kind === 'suggest'));
@@ -201,6 +212,9 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const invalidTalentModule = JSON.parse(characterModule);
 			invalidTalentModule.characters[0].talent.pride = 101;
 			await postModule('invalid-talent.json', JSON.stringify(invalidTalentModule), true);
+			const invalidRelationModule = JSON.parse(characterModule);
+			invalidRelationModule.characters[0].relations.player.resentment = 101;
+			await postModule('invalid-relation.json', JSON.stringify(invalidRelationModule), true);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
 			await postModule('character.json', characterModule);
 			await postModule('world.json', worldModule);
@@ -275,7 +289,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(modelCalls.length, modelCallsBeforeSimulation);
 			assert.equal(db.prepare('SELECT energy FROM player_state').get().energy, 18);
 			assert.equal(db.prepare('SELECT turn FROM world_state').get().turn, 1);
-			assert.equal(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(doheeId).exp_json).conversation, 10);
+			assert.equal(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(doheeId).exp_json).social, 18);
 			assert.ok(JSON.parse(db.prepare('SELECT mark_json FROM characters WHERE id = ?').get(doheeId).mark_json).includes('firstConversation'));
 			const simulatedEvent = db.prepare('SELECT action_id, renderer, semantic_json, state_changes_json, narrative FROM events ORDER BY id DESC LIMIT 1').get();
 			assert.equal(simulatedEvent.action_id, 'conversation');
@@ -291,6 +305,12 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT energy FROM player_state').get().energy, 18);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 1);
 			assert.equal(db.prepare('SELECT semantic_json FROM events').get().semantic_json, simulatedEvent.semantic_json);
+			const sceneRapport = JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport;
+			assert.ok(sceneRapport > 0);
+			await post('advance');
+			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport, 0);
+			await post('load', { slot: '1' });
+			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport, sceneRapport);
 			await post('switchLore', { id: originalLoreId });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
@@ -333,10 +353,33 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const originalBundle = await (await fetch(`${base}/lores/export/${originalLoreId}`)).text();
 			assert.equal(JSON.parse(originalBundle).state.modules.length, 3);
 			const legacyTalentBundle = JSON.parse(originalBundle);
-			for (const character of legacyTalentBundle.state.characters) delete character.talent_json;
+			const makeLegacy = (character) => {
+				delete character.talent_json;
+				if (character.id === harinId) {
+					character.abl_json = JSON.stringify({ conversation: 4, empathy: 3, seduction: 2 });
+					character.exp_json = JSON.stringify({ conversation: 9, empathy: 8, seduction: 7 });
+					character.relation_json = JSON.stringify({ affection: 80, trust: 11, desire: 90 });
+					character.palam_json = JSON.stringify({ rapport: 6, trust: 5, arousal: 3, pleasure: 2 });
+				}
+			};
+			for (const character of legacyTalentBundle.state.characters) makeLegacy(character);
 			for (const save of legacyTalentBundle.saves) {
-				for (const character of save.state.characters) delete character.talent_json;
+				for (const character of save.state.characters) makeLegacy(character);
 			}
+			const makeLegacyManifest = (module) => {
+				if (module.id !== 'example.harin') return;
+				const manifest = JSON.parse(module.manifest_json);
+				const character = manifest.characters[0];
+				character.talent = { pride: 72, openness: 58, empathy: 55, assertiveness: 64 };
+				character.abl = { conversation: 2, empathy: 1, seduction: 1 };
+				character.exp = { conversation: 4, empathy: 3, seduction: 2 };
+				character.relation = { affection: 8, trust: 7, desire: 3 };
+				delete character.relations;
+				character.palam = { rapport: 1, trust: 2, arousal: 0, pleasure: 0 };
+				module.manifest_json = JSON.stringify(manifest);
+			};
+			legacyTalentBundle.state.modules.forEach(makeLegacyManifest);
+			for (const save of legacyTalentBundle.saves) save.state.modules?.forEach(makeLegacyManifest);
 			const originalFile = new FormData();
 			originalFile.append('loreFile', new Blob([JSON.stringify(legacyTalentBundle)], { type: 'application/json' }), 'original.json');
 			const originalImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: originalFile });
@@ -344,9 +387,18 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.ok(!(await originalImport.text()).includes('"type":"failure"'));
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, JSON.parse(originalBundle).state.events.length);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 50, openness: 50, empathy: 50, assertiveness: 50 });
+			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 50, openness: 50, libido: 50, modesty: 50, assertiveness: 50, receptiveness: 50, curiosity: 50 });
+			assert.deepEqual(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(harinId).exp_json), { social: 17, romantic: 0, seduction: 7, intimacy: 0 });
+			assert.equal(JSON.parse(db.prepare('SELECT relation_json FROM characters WHERE id = ?').get(harinId).relation_json).player.resentment, 0);
+			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(harinId).palam_json).comfort, 5);
+			assert.equal(JSON.parse(db.prepare('SELECT abl_json FROM characters WHERE id = ?').get(harinId).abl_json).intimacy, 1);
+			const migratedManifest = JSON.parse(db.prepare("SELECT manifest_json FROM modules WHERE id = 'example.harin'").get().manifest_json);
+			assert.equal(migratedManifest.characters[0].exp.social, 7);
+			assert.equal(migratedManifest.characters[0].relations.player.trust, 7);
 			const importedOriginalId = db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedOriginalId).n, 2);
+			const migratedSave = JSON.parse(db.prepare('SELECT snapshot_json FROM lore_save_slots WHERE lore_id = ? AND slot = 1').get(importedOriginalId).snapshot_json);
+			assert.equal(JSON.parse(migratedSave.characters.find((character) => character.id === harinId).exp_json).social, 17);
 			const badBundle = JSON.parse(originalBundle);
 			badBundle.state.characters[0].age = 19;
 			const invalidFile = new FormData();
@@ -354,6 +406,20 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const invalidImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: invalidFile });
 			assert.ok((await invalidImport.text()).includes('"type":"failure"'));
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 3);
+			const legacyModule = JSON.parse(characterModule);
+			legacyModule.id = 'example.legacy-character';
+			legacyModule.characters[0].id = 'legacy';
+			legacyModule.characters[0].abl = { conversation: 3, empathy: 2, seduction: 1 };
+			legacyModule.characters[0].exp = { conversation: 4, empathy: 3, seduction: 2 };
+			legacyModule.characters[0].relation = { affection: 80, trust: 20, desire: 90 };
+			delete legacyModule.characters[0].relations;
+			legacyModule.characters[0].palam = { rapport: 4, trust: 6, arousal: 2, pleasure: 1 };
+			await postModule('legacy-character.json', JSON.stringify(legacyModule));
+			const legacyRow = db.prepare("SELECT abl_json, exp_json, relation_json, palam_json FROM characters WHERE id = 'mod:example.legacy-character:legacy'").get();
+			assert.equal(JSON.parse(legacyRow.abl_json).intimacy, 1);
+			assert.equal(JSON.parse(legacyRow.exp_json).social, 7);
+			assert.equal(JSON.parse(legacyRow.relation_json).player.affection, 80);
+			assert.equal(JSON.parse(legacyRow.palam_json).comfort, 6);
 		} finally {
 			db.close();
 		}

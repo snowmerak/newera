@@ -1,4 +1,4 @@
-import type { ActionId, BaseStats, Character, Source } from './types';
+import { clampBase, clampCount, clampPercent, relationTo, type ActionId, type BaseStats, type Character, type Source } from './types.ts';
 
 export const PLAYER_AGE = 25;
 
@@ -74,17 +74,18 @@ export function actionReason(
 	if (action.category === 'adult' && (PLAYER_AGE < 20 || character.age < 20)) {
 		return '성인 인물에게만 가능한 행동입니다';
 	}
-	if (actionId === 'flirt' && character.relation.trust < 2) return '신뢰 2 필요';
+	const relation = relationTo(character);
+	if (actionId === 'flirt' && relation.trust < 2) return '신뢰 2 필요';
 	if (
 		actionId === 'kiss' &&
-		(character.relation.affection < 5 || character.relation.trust < 4 || character.relation.desire < 3)
+		(relation.affection < 5 || relation.trust < 4 || relation.desire < 3)
 	) return '호감 5 · 신뢰 4 · 욕망 3 필요';
 	if (actionId === 'intimacy') {
-		if (!character.mark.includes('서로 원한 입맞춤')) return '먼저 입맞춤이 필요합니다';
+		if (!character.mark.includes('firstKiss') && !character.mark.includes('서로 원한 입맞춤')) return '먼저 입맞춤이 필요합니다';
 		if (
-			character.relation.affection < 8 ||
-			character.relation.trust < 7 ||
-			character.relation.desire < 9
+			relation.affection < 8 ||
+			relation.trust < 7 ||
+			relation.desire < 9
 		) return '호감 8 · 신뢰 7 · 욕망 9 필요';
 	}
 	return null;
@@ -95,25 +96,31 @@ export function canPerform(actionId: ActionId, player: BaseStats, character: Cha
 }
 
 export function calculateSource(actionId: ActionId, character: Character | null): Source {
-	if (actionId === 'rest') return { recovery: 12 };
+	if (actionId === 'rest') return { energy: 12, recovery: 12 };
 	if (!character) throw new Error('상대를 선택해 주세요.');
+	const relation = relationTo(character);
+	const energy = -ACTIONS[actionId].energyCost;
 	switch (actionId) {
 		case 'talk':
 			return {
-				rapport: 2 + character.abl.conversation + (character.trait.includes('사교적') ? 1 : 0),
-				trust: 1
+				energy,
+				rapport: Math.max(-2, 2 + character.abl.conversation + Math.floor(character.talent.openness / 30)
+					+ Math.floor(relation.affection / 25) + Math.floor(character.palam.comfort / 25)
+					- Math.floor(character.palam.tension / 25) - (character.talent.pride >= 75 && relation.trust < 25 ? 2 : 0)),
+				comfort: 1 + Math.floor(character.abl.empathy / 2), trust: 1
 			};
 		case 'listen':
 			return {
-				rapport: 1,
-				trust: 2 + character.abl.empathy + (character.trait.includes('신중함') ? 1 : 0)
+				energy,
+				rapport: 1 + Math.floor(character.talent.receptiveness / 50),
+				comfort: 2 + character.abl.empathy, trust: 2
 			};
 		case 'flirt':
-			return { rapport: 1, desire: 3 + character.abl.seduction, arousal: 2 };
+			return { energy, rapport: 1, desire: 3 + character.abl.seduction, arousal: 2 };
 		case 'kiss':
-			return { rapport: 2, trust: 1, desire: 4, arousal: 4, pleasure: 2 };
+			return { energy, rapport: 2, trust: 1, desire: 4, arousal: 4, pleasure: 2 };
 		case 'intimacy':
-			return { rapport: 3, trust: 2, desire: 6, arousal: 6, pleasure: 8 };
+			return { energy, rapport: 3, trust: 2, desire: 6, arousal: 6, pleasure: 8 };
 	}
 }
 
@@ -124,48 +131,50 @@ export function applyEffects(
 	source: Source
 ): { player: BaseStats; character: Character | null; changes: Record<string, number> } {
 	if (actionId === 'rest') {
-		const restored = Math.min(source.recovery ?? 0, player.maxEnergy - player.energy);
+		const updatedPlayer = clampBase({ ...player, energy: player.energy + (source.energy ?? source.recovery ?? 0) });
 		return {
-			player: { ...player, energy: player.energy + restored },
+			player: updatedPlayer,
 			character,
-			changes: { energy: restored }
+			changes: { energy: updatedPlayer.energy - player.energy }
 		};
 	}
 	if (!character) throw new Error('상대를 선택해 주세요.');
-	const expKey = actionId === 'talk' ? 'conversation' : actionId === 'listen' ? 'empathy' : 'seduction';
+	const expKey = actionId === 'talk' || actionId === 'listen' ? 'social'
+		: actionId === 'flirt' ? 'seduction' : actionId === 'kiss' ? 'romantic' : 'intimacy';
 	const expGain = actionId === 'intimacy' ? 8 : actionId === 'kiss' ? 5 : 3;
-	const nextExp = character.exp[expKey] + expGain;
-	const nextAbl = Math.max(character.abl[expKey], Math.floor(nextExp / 15) + 1);
-	const affectionGain = source.rapport ? Math.max(1, Math.floor(source.rapport / 2)) : 0;
+	const nextExp = clampCount(character.exp[expKey] + expGain);
+	const affectionGain = (source.rapport ?? 0) > 0 ? Math.max(1, Math.floor(source.rapport! / 2)) : 0;
 	const trustGain = source.trust ? Math.max(1, Math.floor(source.trust / 2)) : 0;
 	const desireGain = source.desire ? Math.max(1, Math.ceil(source.desire / 2)) : 0;
+	const relation = relationTo(character);
 	const nextMark = [...character.mark];
-	if (actionId === 'kiss' && !nextMark.includes('서로 원한 입맞춤')) nextMark.push('서로 원한 입맞춤');
-	if (actionId === 'intimacy' && !nextMark.includes('서로 동의한 밤')) nextMark.push('서로 동의한 밤');
-	if (character.relation.trust + trustGain >= 10 && !nextMark.includes('서로에게 익숙해짐')) {
+	if (actionId === 'kiss' && !nextMark.includes('firstKiss')) nextMark.push('firstKiss');
+	if (actionId === 'intimacy' && !nextMark.includes('firstIntimacy')) nextMark.push('firstIntimacy');
+	if (relation.trust + trustGain >= 10 && !nextMark.includes('서로에게 익숙해짐')) {
 		nextMark.push('서로에게 익숙해짐');
 	}
 	return {
-		player: { ...player, energy: player.energy - ACTIONS[actionId].energyCost },
+		player: clampBase({ ...player, energy: player.energy + (source.energy ?? 0) }),
 		character: {
 			...character,
 			exp: { ...character.exp, [expKey]: nextExp },
-			abl: { ...character.abl, [expKey]: nextAbl },
-			relation: {
-				affection: character.relation.affection + affectionGain,
-				trust: character.relation.trust + trustGain,
-				desire: character.relation.desire + desireGain
-			},
+			relations: { ...character.relations, player: {
+				...relation,
+				affection: clampPercent(relation.affection + affectionGain),
+				trust: clampPercent(relation.trust + trustGain),
+				desire: clampPercent(relation.desire + desireGain)
+			} },
 			palam: {
-				rapport: character.palam.rapport + (source.rapport ?? 0),
-				trust: character.palam.trust + (source.trust ?? 0),
-				arousal: character.palam.arousal + (source.arousal ?? 0),
-				pleasure: character.palam.pleasure + (source.pleasure ?? 0)
+				...character.palam,
+				rapport: clampPercent(character.palam.rapport + (source.rapport ?? 0)),
+				comfort: clampPercent(character.palam.comfort + (source.comfort ?? 0)),
+				arousal: clampPercent(character.palam.arousal + (source.arousal ?? 0)),
+				pleasure: clampPercent(character.palam.pleasure + (source.pleasure ?? 0))
 			},
 			mark: nextMark
 		},
 		changes: {
-			energy: -ACTIONS[actionId].energyCost,
+			energy: clampBase({ ...player, energy: player.energy + (source.energy ?? 0) }).energy - player.energy,
 			...(source.rapport ? { rapport: source.rapport } : {}),
 			...(source.trust ? { trust: source.trust } : {}),
 			...(source.desire ? { desire: source.desire } : {}),

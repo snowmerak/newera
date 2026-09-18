@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getGameView } from '$lib/server/db';
-import { characterStats, nonnegativeInteger } from '$lib/server/character-form';
+import { characterMarks, characterStats, nonnegativeInteger } from '$lib/server/character-form';
 import { editSimulationCharacter, performConversation } from '$lib/server/simulation';
 
 export const load: PageServerLoad = () => {
@@ -27,8 +27,7 @@ export const actions: Actions = {
 			await editSimulationCharacter({
 				id: String(body.get('id') ?? ''), stats,
 				playerEnergy: nonnegativeInteger(body, 'player.energy'),
-				firstConversation: body.has('mark.firstConversation'),
-				becameFriend: body.has('mark.becameFriend')
+				marks: characterMarks(body)
 			});
 			return { message: '인물 수치를 현재 로어에 저장했습니다.', level: 'success' as const };
 		} catch (error) {

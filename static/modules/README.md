@@ -22,12 +22,12 @@
       "introduction": "선택 사항인 짧은 소개",
       "trait": ["성격"],
       "base": { "energy": 20, "maxEnergy": 20 },
-      "talent": { "pride": 50, "openness": 50, "empathy": 50, "assertiveness": 50 },
-      "abl": { "conversation": 1, "empathy": 1, "seduction": 1 },
-      "exp": { "conversation": 0, "empathy": 0, "seduction": 0 },
-      "mark": [],
-      "relation": { "affection": 0, "trust": 0, "desire": 0 },
-      "palam": { "rapport": 0, "trust": 0, "arousal": 0, "pleasure": 0 }
+      "talent": { "pride": 50, "openness": 50, "libido": 50, "modesty": 50, "assertiveness": 50, "receptiveness": 50, "curiosity": 50 },
+      "abl": { "conversation": 1, "empathy": 1, "seduction": 1, "intimacy": 1 },
+      "exp": { "social": 0, "romantic": 0, "seduction": 0, "intimacy": 0 },
+      "mark": ["firstDate"],
+      "relations": { "player": { "affection": 0, "trust": 0, "desire": 0, "attachment": 0, "jealousy": 0, "resentment": 0 } },
+      "palam": { "rapport": 0, "comfort": 0, "arousal": 0, "pleasure": 0, "embarrassment": 0, "tension": 0, "frustration": 0, "satisfaction": 0 }
     }
   ]
 }
@@ -36,7 +36,9 @@
 - `world`와 `characters` 중 하나만 넣어도 됩니다. 함께 넣으면 한 모듈로 적용됩니다.
 - 모듈 ID와 인물 ID는 영문 소문자, 숫자, `.`, `_`, `-`를 사용합니다. 인물의 실제 ID는 `mod:<모듈 ID>:<인물 ID>`로 만들어집니다.
 - 인물은 20세 이상이어야 합니다. `profile`, `name`, `age`, `id`가 필수입니다. 스탯을 생략하면 기본값이 적용됩니다.
-- `talent`의 네 고정 수치는 0~100입니다. 생략하면 각 50이 적용됩니다. JSON은 모듈 설치 형식이고, 일반 인물 편집은 `/lores`의 입력칸을 사용합니다.
+- `talent`, `relations`의 각 관계, `palam`은 0~100입니다. `abl`과 `exp`는 0 이상의 정수이며 상한이 없습니다. `base.energy`는 `base.maxEnergy`를 넘을 수 없습니다.
+- `relations`는 이 인물에서 대상 ID로 향하는 관계입니다. `player`는 플레이어를 뜻합니다. 옛 모듈의 단일 `relation` 객체, `exp.conversation`/`exp.empathy`, `palam.trust`는 가져올 때 새 수치로 변환됩니다.
+- `mark`는 첫 데이트·첫 입맞춤 같은 사건의 문자열 목록이며 사용자 정의 태그도 허용합니다. JSON은 모듈 설치 형식이고, 일반 인물 편집은 `/lores`의 입력칸을 사용합니다.
 - 세계관 모듈은 하나만 켤 수 있습니다. 적용 중에는 기본 세계관 대신 모듈의 `setting`을 사용하고, `eraRules`는 기본 규칙에 추가됩니다. 인물 전용 모듈은 여러 개를 동시에 켤 수 있습니다.
 - 모듈을 꺼도 인물의 스탯, 사건, 기억은 남습니다. 다시 켜면 기존 진행을 이어갑니다. 같은 ID의 새 파일로 업데이트하면 프로필 등 기본 설명을 갱신하고 진행 수치는 유지합니다.
 - 저장 슬롯은 당시 켜져 있던 모듈 목록도 기억합니다. 설치된 모듈 목록 자체는 슬롯 불러오기로 지워지지 않습니다.
