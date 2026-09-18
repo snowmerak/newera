@@ -97,6 +97,10 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 		assert.ok(ready, 'app did not start');
+		const firstPage = await (await fetch(base)).text();
+		assert.ok(firstPage.includes('세계관과 등장인물 로어'));
+		assert.ok(firstPage.includes('data-lore-id="world:base"'));
+		assert.ok(firstPage.includes('data-lore-id="character:seoyeon"'));
 		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
 		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
 		await post('advance');
@@ -158,7 +162,10 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await postModule('world.json', worldModule);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
 			assert.equal(db.prepare("SELECT module_id FROM characters WHERE id = 'mod:example.harin:harin'").get().module_id, 'example.harin');
-			assert.ok((await (await fetch(base)).text()).includes('value="mod:example.harin:harin"'));
+			const modulePage = await (await fetch(base)).text();
+			assert.ok(modulePage.includes('value="mod:example.harin:harin"'));
+			assert.ok(modulePage.includes('data-lore-id="world:example.rainy-mangwon"'));
+			assert.ok(modulePage.includes('data-lore-id="character:mod:example.harin:harin"'));
 			await post('advance');
 			assert.ok(modelCalls.findLast((call) => call.kind === 'world').input.worldSetting.includes('며칠째 늦여름 비'));
 			await post('act', { actionId: 'talk', targetId: 'mod:example.harin:harin' });
@@ -177,7 +184,11 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await postModule('another-world.json', JSON.stringify({ schemaVersion: 1, id: 'example.other-world', name: '다른 세계', version: '1.0.0', world: { setting: '다른 도시' } }));
 			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.rainy-mangwon'").get().enabled, 0);
 			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.harin'").get().enabled, 1);
-			await post('toggleModule', { id: 'example.rainy-mangwon', enabled: '1' });
+			await post('selectWorld', { id: '' });
+			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.other-world'").get().enabled, 0);
+			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.harin'").get().enabled, 1);
+			await post('selectWorld', { id: 'example.rainy-mangwon' });
+			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.rainy-mangwon'").get().enabled, 1);
 			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.other-world'").get().enabled, 0);
 			await post('save', { slot: '2' });
 			await post('toggleModule', { id: 'example.harin', enabled: '0' });
@@ -188,6 +199,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('load', { slot: '1' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 0);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
+			assert.ok((await (await fetch(base)).text()).includes('data-lore-id="character:mod:example.harin:harin"'));
 		} finally {
 			db.close();
 		}

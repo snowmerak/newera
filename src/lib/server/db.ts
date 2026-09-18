@@ -4,12 +4,14 @@ import { DatabaseSync } from 'node:sqlite';
 import type {
 	BaseStats,
 	Character,
+	CharacterLore,
 	EventRecord,
 	GameView,
 	InstalledModule,
 	MemoryRecord,
 	ScenarioConfig,
 	SaveSlot,
+	WorldLore,
 	WorldState
 } from '$lib/game/types';
 import { parseModuleManifest, type ModuleManifest } from './modules';
@@ -333,6 +335,39 @@ export function getInstalledModules(): InstalledModule[] {
 	});
 }
 
+export function getWorldLore(): WorldLore[] {
+	const config = getScenarioConfig();
+	const modules = getModuleRows().map((row) => ({ row, manifest: parse<ModuleManifest>(row.manifest_json) }))
+		.filter(({ manifest }) => manifest.world);
+	return [
+		{
+			id: null, name: '기본 세계관', description: '직접 작성한 세계관',
+			setting: config.worldSetting, eraRules: config.eraRules,
+			active: !modules.some(({ row }) => Number(row.enabled) === 1)
+		},
+		...modules.map(({ row, manifest }) => ({
+			id: manifest.id, name: manifest.name, description: manifest.description,
+			setting: manifest.world!.setting, eraRules: manifest.world!.eraRules ?? '',
+			active: Number(row.enabled) === 1
+		}))
+	];
+}
+
+export function getCharacterLore(): CharacterLore[] {
+	const modules = getModuleRows().map((row) => ({ row, manifest: parse<ModuleManifest>(row.manifest_json) }));
+	const moduleCharacters = new Map(modules.flatMap(({ manifest }) => manifest.characters.map((character) => [character.id, character] as const)));
+	const activeIds = new Set(modules.filter(({ row }) => Number(row.enabled) === 1)
+		.flatMap(({ manifest }) => manifest.characters.map((character) => character.id)));
+	const stored = rows('SELECT * FROM characters ORDER BY sort_order, id')
+		.filter((row) => !row.module_id || moduleCharacters.has(String(row.id)))
+		.map(characterFromRow);
+	const storedIds = new Set(stored.map((character) => character.id));
+	const missing = [...moduleCharacters.values()].filter((character) => !storedIds.has(character.id));
+	return [...stored, ...missing].map((character) => ({
+		character, active: !character.moduleId || activeIds.has(character.id)
+	}));
+}
+
 export function getEffectiveScenarioConfig(): ScenarioConfig {
 	const config = getScenarioConfig();
 	const activeWorld = getModuleRows().find((row) => Number(row.enabled) === 1 && parse<ModuleManifest>(row.manifest_json).world);
@@ -394,6 +429,20 @@ export function setModuleEnabled(id: string, enabled: boolean): void {
 		if (enabled) ensureModuleCharacters(manifest, false);
 		const config = getScenarioConfig();
 		updateScenarioConfig({ ...config, worldMemory: manifest.world ? '' : config.worldMemory, pendingProposal: null, playerSuggestions: null });
+	});
+}
+
+export function selectWorldModule(id: string | null): void {
+	withTransaction(() => {
+		const modules = getModuleRows().map((row) => ({ row, manifest: parse<ModuleManifest>(row.manifest_json) }));
+		const selected = id ? modules.find(({ manifest }) => manifest.id === id && manifest.world) : null;
+		if (id && !selected) throw new Error('선택한 세계관을 찾을 수 없습니다.');
+		for (const { manifest } of modules) {
+			if (manifest.world) getDb().prepare('UPDATE modules SET enabled = ? WHERE id = ?').run(manifest.id === id ? 1 : 0, manifest.id);
+		}
+		if (selected) ensureModuleCharacters(selected.manifest, false);
+		const config = getScenarioConfig();
+		updateScenarioConfig({ ...config, worldMemory: '', pendingProposal: null, playerSuggestions: null });
 	});
 }
 
@@ -562,6 +611,8 @@ export function getGameView(): GameView {
 		player: getPlayer(),
 		characters,
 		modules: getInstalledModules(),
+		worldLore: getWorldLore(),
+		characterLore: getCharacterLore(),
 		events: latestEvents,
 		memories,
 		saves,

@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getGameView, installModule, loadGame, saveGame, setModuleEnabled } from '$lib/server/db';
+import { getGameView, installModule, loadGame, saveGame, selectWorldModule, setModuleEnabled } from '$lib/server/db';
 import { advanceWorld, performAction, performFreeAction, respondToProposal, runExclusive, saveCharacterSettings, saveScenarioSettings, suggestPlayerActions } from '$lib/server/game';
 
 export const load: PageServerLoad = () => getGameView();
@@ -103,6 +103,15 @@ export const actions: Actions = {
 			return { message: enabled === '1' ? '모듈을 적용했습니다.' : '모듈을 껐습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : '모듈 상태를 바꾸지 못했습니다.', level: 'error' as const });
+		}
+	},
+	selectWorld: async ({ request }) => {
+		const body = await request.formData();
+		try {
+			await runExclusive(() => selectWorldModule(String(body.get('id') ?? '') || null));
+			return { message: '세계관을 적용했습니다.', level: 'success' as const };
+		} catch (error) {
+			return fail(400, { message: error instanceof Error ? error.message : '세계관을 적용하지 못했습니다.', level: 'error' as const });
 		}
 	},
 	save: async ({ request }) => {

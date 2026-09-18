@@ -32,6 +32,20 @@ export interface InstalledModule {
 	characterCount: number;
 }
 
+export interface WorldLore {
+	id: string | null;
+	name: string;
+	description: string;
+	setting: string;
+	eraRules: string;
+	active: boolean;
+}
+
+export interface CharacterLore {
+	character: Character;
+	active: boolean;
+}
+
 export interface WorldState {
 	turn: number;
 	day: number;
@@ -106,6 +120,8 @@ export interface GameView {
 	player: BaseStats;
 	characters: Character[];
 	modules: InstalledModule[];
+	worldLore: WorldLore[];
+	characterLore: CharacterLore[];
 	events: EventRecord[];
 	memories: Array<Pick<MemoryRecord, 'id' | 'eventId' | 'characterId' | 'summary' | 'isDetail' | 'createdTurn'>>;
 	saves: SaveSlot[];
