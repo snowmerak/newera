@@ -98,14 +98,15 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		}
 		assert.ok(ready, 'app did not start');
 		const firstPage = await (await fetch(base)).text();
-		assert.ok(firstPage.includes('세계관과 등장인물 로어'));
-		assert.ok(firstPage.includes('data-lore-id="world:base"'));
-		assert.ok(firstPage.includes('data-lore-id="character:seoyeon"'));
+		assert.ok(firstPage.includes('aria-label="로어 목록"'));
+		assert.ok(firstPage.includes('>망원동</button>'));
+		assert.ok(!firstPage.includes('data-lore-id='));
 		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
 		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
 		await post('advance');
 		const db = new DatabaseSync(join(dataDirectory, 'newera.sqlite'));
 		try {
+			const originalLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'advance');
 			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '망원동에 비가 내린다.');
@@ -164,8 +165,8 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare("SELECT module_id FROM characters WHERE id = 'mod:example.harin:harin'").get().module_id, 'example.harin');
 			const modulePage = await (await fetch(base)).text();
 			assert.ok(modulePage.includes('value="mod:example.harin:harin"'));
-			assert.ok(modulePage.includes('data-lore-id="world:example.rainy-mangwon"'));
-			assert.ok(modulePage.includes('data-lore-id="character:mod:example.harin:harin"'));
+			assert.ok(modulePage.includes('세계관 모듈'));
+			assert.ok(!modulePage.includes('data-lore-id='));
 			await post('advance');
 			assert.ok(modelCalls.findLast((call) => call.kind === 'world').input.worldSetting.includes('며칠째 늦여름 비'));
 			await post('act', { actionId: 'talk', targetId: 'mod:example.harin:harin' });
@@ -199,7 +200,41 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('load', { slot: '1' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 0);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
-			assert.ok((await (await fetch(base)).text()).includes('data-lore-id="character:mod:example.harin:harin"'));
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(originalLoreId).n, 2);
+
+			await post('createLore', { title: '비밀의 저택', worldSetting: '외딴 저택의 밤', eraRules: '방을 탐색하고 인물의 의지를 존중한다' });
+			const secondLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
+			assert.notEqual(secondLoreId, originalLoreId);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 2);
+			assert.equal(db.prepare('SELECT turn FROM world_state').get().turn, 0);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 0);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 0);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
+			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '외딴 저택의 밤');
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(secondLoreId).n, 0);
+			const secondPage = await (await fetch(base)).text();
+			assert.ok(secondPage.includes('>망원동</button>'));
+			assert.ok(secondPage.includes('>비밀의 저택</button>'));
+			assert.ok(secondPage.includes('저장 슬롯 0/3'));
+			await post('load', { slot: '2' }, true);
+			await post('character', { name: '도희', age: '30', profile: '저택의 관리인이다.' });
+			await post('save', { slot: '1' });
+			await post('switchLore', { id: originalLoreId });
+			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
+			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '비가 잦은 망원동');
+			assert.ok((await (await fetch(base)).text()).includes('저장 슬롯 2/3'));
+			await post('load', { slot: '2' });
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
+			await post('switchLore', { id: secondLoreId });
+			assert.equal(db.prepare('SELECT name FROM characters').get().name, '도희');
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
+			assert.ok((await (await fetch(base)).text()).includes('저장 슬롯 1/3'));
+			await post('renameLore', { title: '저택의 밤' });
+			assert.equal(db.prepare('SELECT title FROM lores WHERE id = ?').get(secondLoreId).title, '저택의 밤');
+			await post('switchLore', { id: 'missing-lore' }, true);
+			assert.equal(db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id, secondLoreId);
 		} finally {
 			db.close();
 		}
@@ -211,6 +246,65 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		await new Promise((resolve) => modelServer.close(resolve));
 		if (dataDirectory.startsWith(`${tmpdir()}${process.platform === 'win32' ? '\\' : '/'}`)) {
 			rmSync(dataDirectory, { recursive: true, force: true });
+		}
+	}
+});
+
+test('existing progress and legacy save slots become the first lore', async () => {
+	const legacyDirectory = mkdtempSync(join(tmpdir(), 'newera-migration-'));
+	const path = join(legacyDirectory, 'newera.sqlite');
+	const oldSnapshot = {
+		world: [{ id: 1, turn: 4, day: 1, minute: 900, location: '예전 저장 장소' }],
+		player: [{ id: 1, energy: 17, max_energy: 24 }],
+		characters: [], events: [], memories: []
+	};
+	const db = new DatabaseSync(path);
+	db.exec(`CREATE TABLE world_state (id INTEGER PRIMARY KEY, turn INTEGER, day INTEGER, minute INTEGER, location TEXT);
+		CREATE TABLE player_state (id INTEGER PRIMARY KEY, energy INTEGER, max_energy INTEGER);
+		CREATE TABLE save_slots (slot INTEGER PRIMARY KEY, saved_at TEXT, turn INTEGER, snapshot_json TEXT);`);
+	db.prepare('INSERT INTO world_state VALUES (1, 9, 2, 1080, ?)').run('현재 진행 장소');
+	db.prepare('INSERT INTO player_state VALUES (1, 12, 24)').run();
+	db.prepare('INSERT INTO save_slots VALUES (2, ?, 4, ?)').run('2026-09-19T00:00:00.000Z', JSON.stringify(oldSnapshot));
+	db.close();
+	const appPort = await freePort();
+	const base = `http://127.0.0.1:${appPort}`;
+	const app = spawn(process.execPath, ['build/index.js'], {
+		cwd: process.cwd(),
+		env: { ...process.env, PORT: String(appPort), HOST: '127.0.0.1', ORIGIN: base, NEWERA_DATA_DIR: legacyDirectory },
+		stdio: 'pipe'
+	});
+	try {
+		let ready = false;
+		for (let attempt = 0; attempt < 60; attempt += 1) {
+			if (app.exitCode !== null) throw new Error(`서버가 종료됐습니다: ${app.exitCode}`);
+			try { ready = (await fetch(base)).ok; } catch { /* starting */ }
+			if (ready) break;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assert.ok(ready, 'app did not start');
+		const migrated = new DatabaseSync(path);
+		try {
+			assert.equal(migrated.prepare('SELECT title FROM lores').get().title, '기존 로어');
+			assert.equal(migrated.prepare('SELECT turn FROM world_state').get().turn, 9);
+			assert.equal(migrated.prepare('SELECT energy FROM player_state').get().energy, 12);
+			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lore_save_slots').get().n, 1);
+			assert.equal(migrated.prepare('SELECT count(*) AS n FROM save_slots').get().n, 1);
+			const response = await fetch(`${base}/?/load`, { method: 'POST', headers: { Origin: base }, body: new URLSearchParams({ slot: '2' }) });
+			assert.equal(response.status, 200);
+			assert.ok(!(await response.text()).includes('"type":"failure"'));
+			assert.equal(migrated.prepare('SELECT turn FROM world_state').get().turn, 4);
+			assert.equal(migrated.prepare('SELECT energy FROM player_state').get().energy, 17);
+			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lores').get().n, 1);
+		} finally {
+			migrated.close();
+		}
+	} finally {
+		if (app.exitCode === null) {
+			app.kill();
+			await once(app, 'exit');
+		}
+		if (legacyDirectory.startsWith(`${tmpdir()}${process.platform === 'win32' ? '\\' : '/'}`)) {
+			rmSync(legacyDirectory, { recursive: true, force: true });
 		}
 	}
 });

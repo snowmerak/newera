@@ -1,11 +1,40 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getGameView, installModule, loadGame, saveGame, selectWorldModule, setModuleEnabled } from '$lib/server/db';
+import { createLore, getGameView, installModule, loadGame, renameLore, saveGame, selectWorldModule, setModuleEnabled, switchLore } from '$lib/server/db';
 import { advanceWorld, performAction, performFreeAction, respondToProposal, runExclusive, saveCharacterSettings, saveScenarioSettings, suggestPlayerActions } from '$lib/server/game';
 
 export const load: PageServerLoad = () => getGameView();
 
 export const actions: Actions = {
+	createLore: async ({ request }) => {
+		const body = await request.formData();
+		try {
+			await runExclusive(() => createLore(
+				String(body.get('title') ?? ''), String(body.get('worldSetting') ?? ''), String(body.get('eraRules') ?? '')
+			));
+			return { message: '새 로어를 만들었습니다.', level: 'success' as const };
+		} catch (error) {
+			return fail(400, { message: error instanceof Error ? error.message : '로어를 만들지 못했습니다.', level: 'error' as const });
+		}
+	},
+	switchLore: async ({ request }) => {
+		const body = await request.formData();
+		try {
+			await runExclusive(() => switchLore(String(body.get('id') ?? '')));
+			return { message: '로어를 전환했습니다.', level: 'success' as const };
+		} catch (error) {
+			return fail(400, { message: error instanceof Error ? error.message : '로어를 전환하지 못했습니다.', level: 'error' as const });
+		}
+	},
+	renameLore: async ({ request }) => {
+		const body = await request.formData();
+		try {
+			await runExclusive(() => renameLore(String(body.get('title') ?? '')));
+			return { message: '로어 제목을 바꿨습니다.', level: 'success' as const };
+		} catch (error) {
+			return fail(400, { message: error instanceof Error ? error.message : '제목을 바꾸지 못했습니다.', level: 'error' as const });
+		}
+	},
 	advance: async () => {
 		try {
 			await advanceWorld();

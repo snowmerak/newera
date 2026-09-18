@@ -94,6 +94,12 @@ export interface SaveSlot {
 	turn: number;
 }
 
+export interface LoreSummary {
+	id: string;
+	title: string;
+	active: boolean;
+}
+
 export interface Proposal {
 	characterId: string;
 	actionId: Exclude<ActionId, 'rest'>;
@@ -115,6 +121,8 @@ export interface ScenarioConfig {
 }
 
 export interface GameView {
+	lore: LoreSummary;
+	lores: LoreSummary[];
 	world: WorldState;
 	config: ScenarioConfig;
 	player: BaseStats;

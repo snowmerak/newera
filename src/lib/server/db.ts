@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,6 +9,7 @@ import type {
 	EventRecord,
 	GameView,
 	InstalledModule,
+	LoreSummary,
 	MemoryRecord,
 	ScenarioConfig,
 	SaveSlot,
@@ -184,6 +186,24 @@ export function getDb(): DatabaseSync {
 			turn INTEGER NOT NULL,
 			snapshot_json TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS lores (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			state_json TEXT,
+			created_at TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS lore_meta (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			active_lore_id TEXT NOT NULL REFERENCES lores(id)
+		);
+		CREATE TABLE IF NOT EXISTS lore_save_slots (
+			lore_id TEXT NOT NULL REFERENCES lores(id),
+			slot INTEGER NOT NULL,
+			saved_at TEXT NOT NULL,
+			turn INTEGER NOT NULL,
+			snapshot_json TEXT NOT NULL,
+			PRIMARY KEY (lore_id, slot)
+		);
 		CREATE TABLE IF NOT EXISTS modules (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -216,12 +236,23 @@ export function getDb(): DatabaseSync {
 		db.exec('ALTER TABLE scenario_config ADD COLUMN player_suggestions_json TEXT');
 	}
 	database = db;
-	if (!one('SELECT id FROM world_state WHERE id = 1')) seed();
+	const hadWorld = Boolean(one('SELECT id FROM world_state WHERE id = 1'));
+	if (!hadWorld) seed();
 	db.prepare(`INSERT OR IGNORE INTO scenario_config (id, world_setting, era_rules)
 		VALUES (1, ?, ?)`).run(
 		'현대 서울의 망원동. 성인들이 각자의 일상과 욕망을 지닌 채 같은 동네에서 살아간다.',
 		'era의 BASE·TRAIT·ABL·EXP·MARK·RELATION과 SOURCE·PALAM을 따른다. 인물은 자기 사정과 의지로 행동하며 세계는 플레이어가 가만히 있어도 진행된다.'
 	);
+	if (!one('SELECT id FROM lore_meta WHERE id = 1')) {
+		withTransaction(() => {
+			const id = randomUUID();
+			db.prepare('INSERT INTO lores (id, title, state_json, created_at) VALUES (?, ?, NULL, ?)')
+				.run(id, hadWorld ? '기존 로어' : '망원동', new Date().toISOString());
+			db.prepare('INSERT INTO lore_meta (id, active_lore_id) VALUES (1, ?)').run(id);
+			db.prepare(`INSERT INTO lore_save_slots (lore_id, slot, saved_at, turn, snapshot_json)
+				SELECT ?, slot, saved_at, turn, snapshot_json FROM save_slots`).run(id);
+		});
+	}
 	return db;
 }
 
@@ -575,6 +606,65 @@ export function searchMemoryIds(characterId: string, query: string, limit = 12):
 	}
 }
 
+function activeLoreId(): string {
+	const row = one('SELECT active_lore_id FROM lore_meta WHERE id = 1');
+	if (!row) throw new Error('현재 로어를 찾을 수 없습니다.');
+	return String(row.active_lore_id);
+}
+
+export function getLores(): LoreSummary[] {
+	const activeId = activeLoreId();
+	return rows('SELECT id, title FROM lores ORDER BY created_at, id').map((row) => ({
+		id: String(row.id), title: String(row.title), active: row.id === activeId
+	}));
+}
+
+export function renameLore(title: string): void {
+	const clean = title.trim();
+	if (!clean || clean.length > 80) throw new Error('로어 제목은 1~80자로 입력해 주세요.');
+	getDb().prepare('UPDATE lores SET title = ? WHERE id = ?').run(clean, activeLoreId());
+}
+
+function activateLore(id: string): void {
+	const current = activeLoreId();
+	if (id === current) return;
+	const target = one('SELECT state_json FROM lores WHERE id = ?', id);
+	if (!target) throw new Error('선택한 로어를 찾을 수 없습니다.');
+	if (!target.state_json) throw new Error('선택한 로어의 진행을 찾을 수 없습니다.');
+	getDb().prepare('UPDATE lores SET state_json = ? WHERE id = ?').run(JSON.stringify(captureSnapshot()), current);
+	restoreSnapshot(parse<Snapshot>(target.state_json));
+	getDb().prepare('UPDATE lores SET state_json = NULL WHERE id = ?').run(id);
+	getDb().prepare('UPDATE lore_meta SET active_lore_id = ? WHERE id = 1').run(id);
+}
+
+export function switchLore(id: string): void {
+	withTransaction(() => activateLore(id));
+}
+
+export function createLore(title: string, worldSetting: string, eraRules: string): string {
+	const cleanTitle = title.trim();
+	const cleanWorld = worldSetting.trim();
+	const cleanRules = eraRules.trim();
+	if (!cleanTitle || cleanTitle.length > 80) throw new Error('로어 제목은 1~80자로 입력해 주세요.');
+	if (!cleanWorld || cleanWorld.length > 20_000 || !cleanRules || cleanRules.length > 10_000) {
+		throw new Error('세계관과 era 규칙을 입력해 주세요.');
+	}
+	const id = randomUUID();
+	const snapshot: Snapshot = {
+		world: [{ id: 1, turn: 0, day: 1, minute: 18 * 60, location: '시작 장소' }],
+		player: [{ id: 1, energy: 24, max_energy: 24 }],
+		config: [{ id: 1, world_setting: cleanWorld, era_rules: cleanRules,
+			world_memory: '', pending_proposal_json: null, player_suggestions_json: null }],
+		characters: [], events: [], memories: [], modules: [], enabledModuleIds: []
+	};
+	withTransaction(() => {
+		getDb().prepare('INSERT INTO lores (id, title, state_json, created_at) VALUES (?, ?, ?, ?)')
+			.run(id, cleanTitle, JSON.stringify(snapshot), new Date().toISOString());
+		activateLore(id);
+	});
+	return id;
+}
+
 export function getGameView(): GameView {
 	const latestEvents = rows('SELECT * FROM events ORDER BY id DESC LIMIT 30').map(eventFromRow);
 	const characters = getCharacters();
@@ -602,10 +692,13 @@ export function getGameView(): GameView {
 			createdTurn: Number(row.created_turn)
 		})
 	);
-	const saves: SaveSlot[] = rows('SELECT slot, saved_at, turn FROM save_slots ORDER BY slot').map(
+	const saves: SaveSlot[] = rows('SELECT slot, saved_at, turn FROM lore_save_slots WHERE lore_id = ? ORDER BY slot', activeLoreId()).map(
 		(row) => ({ slot: Number(row.slot), savedAt: String(row.saved_at), turn: Number(row.turn) })
 	);
+	const lores = getLores();
 	return {
+		lore: lores.find((lore) => lore.active)!,
+		lores,
 		world: getWorld(),
 		config,
 		player: getPlayer(),
@@ -618,7 +711,7 @@ export function getGameView(): GameView {
 		saves,
 		latestNarrative:
 			latestEvents[0]?.narrative ??
-			'해가 저물고 창밖으로 서울의 불빛이 하나둘 켜진다. 성인인 당신과 이곳의 사람들은 서로의 마음과 욕망을 아직 알아가는 중이다.',
+			`아직 첫 장면이 시작되지 않았다.\n\n${config.worldSetting}`,
 		latestRenderer: latestEvents[0]?.renderer ?? 'template'
 	};
 }
@@ -630,38 +723,50 @@ interface Snapshot {
 	characters: Row[];
 	events: Row[];
 	memories: Row[];
+	modules?: Row[];
 	enabledModuleIds?: string[];
 }
 
-export function saveGame(slot: number): void {
-	if (!Number.isInteger(slot) || slot < 1 || slot > 3) throw new Error('저장 슬롯이 올바르지 않습니다.');
-	const snapshot: Snapshot = {
+function captureSnapshot(): Snapshot {
+	return {
 		world: rows('SELECT * FROM world_state'),
 		config: rows('SELECT * FROM scenario_config'),
 		player: rows('SELECT * FROM player_state'),
 		characters: rows('SELECT * FROM characters ORDER BY sort_order'),
 		events: rows('SELECT * FROM events ORDER BY id'),
 		memories: rows('SELECT * FROM memories ORDER BY id'),
+		modules: getModuleRows(),
 		enabledModuleIds: rows('SELECT id FROM modules WHERE enabled = 1').map((row) => String(row.id))
 	};
-	getDb()
-		.prepare(`
-			INSERT INTO save_slots (slot, saved_at, turn, snapshot_json)
-			VALUES (?, ?, ?, ?)
-			ON CONFLICT(slot) DO UPDATE SET
-				saved_at=excluded.saved_at, turn=excluded.turn, snapshot_json=excluded.snapshot_json
-		`)
-		.run(slot, new Date().toISOString(), getWorld().turn, JSON.stringify(snapshot));
 }
 
-export function loadGame(slot: number): void {
+export function saveGame(slot: number): void {
 	if (!Number.isInteger(slot) || slot < 1 || slot > 3) throw new Error('저장 슬롯이 올바르지 않습니다.');
-	const row = one('SELECT snapshot_json FROM save_slots WHERE slot = ?', slot);
-	if (!row) throw new Error('이 슬롯에는 저장된 게임이 없습니다.');
-	const snapshot = parse<Snapshot>(row.snapshot_json);
 	withTransaction(() => {
+		// A slot records progress and the selected modules. Installed packages belong to the lore itself.
+		const { modules: _modules, ...snapshot } = captureSnapshot();
+		getDb().prepare(`
+			INSERT INTO lore_save_slots (lore_id, slot, saved_at, turn, snapshot_json)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(lore_id, slot) DO UPDATE SET
+				saved_at=excluded.saved_at, turn=excluded.turn, snapshot_json=excluded.snapshot_json
+		`)
+		.run(activeLoreId(), slot, new Date().toISOString(), getWorld().turn, JSON.stringify(snapshot));
+	});
+}
+
+function restoreSnapshot(snapshot: Snapshot): void {
 		const db = getDb();
 		db.exec('DELETE FROM memories; DELETE FROM events; DELETE FROM characters; DELETE FROM player_state; DELETE FROM world_state;');
+		if (snapshot.modules) {
+			db.prepare('DELETE FROM modules').run();
+			for (const value of snapshot.modules) {
+				db.prepare('INSERT INTO modules (id, name, version, manifest_json, enabled) VALUES (?, ?, ?, ?, ?)').run(
+					value.id as string, value.name as string, value.version as string,
+					value.manifest_json as string, value.enabled as number
+				);
+			}
+		}
 		for (const value of snapshot.world) {
 			db.prepare('INSERT INTO world_state VALUES (?, ?, ?, ?, ?)').run(
 				value.id as number,
@@ -739,11 +844,20 @@ export function loadGame(slot: number): void {
 		} else {
 			db.prepare('UPDATE scenario_config SET pending_proposal_json = NULL, player_suggestions_json = NULL WHERE id = 1').run();
 		}
-		db.prepare('UPDATE modules SET enabled = 0').run();
-		for (const id of snapshot.enabledModuleIds ?? []) {
-			db.prepare('UPDATE modules SET enabled = 1 WHERE id = ?').run(id);
-			const module = one('SELECT manifest_json FROM modules WHERE id = ?', id);
-			if (module) ensureModuleCharacters(parse<ModuleManifest>(module.manifest_json), false);
+		if (!snapshot.modules) {
+			db.prepare('UPDATE modules SET enabled = 0').run();
+			for (const id of snapshot.enabledModuleIds ?? []) {
+				db.prepare('UPDATE modules SET enabled = 1 WHERE id = ?').run(id);
 		}
-	});
+		}
+		for (const module of getModuleRows().filter((row) => Number(row.enabled) === 1)) {
+			ensureModuleCharacters(parse<ModuleManifest>(module.manifest_json), false);
+		}
+}
+
+export function loadGame(slot: number): void {
+	if (!Number.isInteger(slot) || slot < 1 || slot > 3) throw new Error('저장 슬롯이 올바르지 않습니다.');
+	const row = one('SELECT snapshot_json FROM lore_save_slots WHERE lore_id = ? AND slot = ?', activeLoreId(), slot);
+	if (!row) throw new Error('이 로어의 슬롯에는 저장된 게임이 없습니다.');
+	withTransaction(() => restoreSnapshot(parse<Snapshot>(row.snapshot_json)));
 }
