@@ -100,9 +100,9 @@
 				</form>
 				<div class="or-label">또는 먼저 행동한다</div>
 				<div class="target-row">
-					<label for="target">상대</label>
+					<label for="target">행동할 인물</label>
 					<select id="target" value={targetId} onchange={(event) => (selectedId = event.currentTarget.value)}>
-						<option value="">세계·장소</option>
+						<option value="">지정 안 함</option>
 						{#each data.characters as character}<option value={character.id}>{character.name}</option>{/each}
 					</select>
 				</div>
@@ -121,10 +121,10 @@
 				<form method="POST" action="?/freeAct" use:enhance={submit} class="free-action-form">
 					<input type="hidden" name="targetId" value={targetId} />
 					<label for="free-action">직접 행동 입력</label>
-					<textarea id="free-action" name="text" rows="3" required placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '이 세계에서 하고 싶은 행동을 적어 주세요'}></textarea>
+					<textarea id="free-action" name="text" rows="3" required placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '예: 주변을 살핀다, 다른 장소로 이동한다'}></textarea>
 					<button disabled={busy}>행동한다</button>
 				</form>
-				<p class="action-hint">era 행동에 해당하면 조건과 수치가 적용됩니다. 그 외 행동도 장면으로 진행됩니다.</p>
+				<p class="action-hint">인물을 지정하지 않으면 이동·탐색·휴식 같은 행동을 할 수 있습니다. era 행동에 해당하면 조건과 수치가 적용됩니다.</p>
 			</section>
 			{#if busy}<p class="feedback">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
 			{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
