@@ -77,7 +77,9 @@ function eventFromRow(row: Row): EventRecord {
 		source: parse(row.source_json),
 		changes: parse(row.changes_json),
 		narrative: String(row.narrative),
-		renderer: String(row.renderer) as EventRecord['renderer']
+		renderer: String(row.renderer) as EventRecord['renderer'],
+		semanticEvent: row.semantic_json ? parse(row.semantic_json) : null,
+		stateChanges: row.state_changes_json ? parse(row.state_changes_json) : []
 	};
 }
 
@@ -155,7 +157,9 @@ export function getDb(): DatabaseSync {
 			source_json TEXT NOT NULL,
 			changes_json TEXT NOT NULL,
 			narrative TEXT NOT NULL,
-			renderer TEXT NOT NULL
+			renderer TEXT NOT NULL,
+			semantic_json TEXT,
+			state_changes_json TEXT
 		);
 		CREATE TABLE IF NOT EXISTS memories (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,6 +238,9 @@ export function getDb(): DatabaseSync {
 	if (!characterColumns.some((column) => column.name === 'talent_json')) {
 		db.exec('ALTER TABLE characters ADD COLUMN talent_json TEXT NOT NULL DEFAULT \'{"pride":50,"openness":50,"empathy":50,"assertiveness":50}\'');
 	}
+	const eventColumns = db.prepare('PRAGMA table_info(events)').all() as Row[];
+	if (!eventColumns.some((column) => column.name === 'semantic_json')) db.exec('ALTER TABLE events ADD COLUMN semantic_json TEXT');
+	if (!eventColumns.some((column) => column.name === 'state_changes_json')) db.exec('ALTER TABLE events ADD COLUMN state_changes_json TEXT');
 	const configColumns = db.prepare('PRAGMA table_info(scenario_config)').all() as Row[];
 	if (!configColumns.some((column) => column.name === 'world_memory')) {
 		db.exec("ALTER TABLE scenario_config ADD COLUMN world_memory TEXT NOT NULL DEFAULT ''");
@@ -550,8 +557,8 @@ export function insertEvent(event: Omit<EventRecord, 'id'>): number {
 		.prepare(`
 			INSERT INTO events (
 				turn, day, minute, location, action_id, character_id,
-				summary, source_json, changes_json, narrative, renderer
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				summary, source_json, changes_json, narrative, renderer, semantic_json, state_changes_json
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		.run(
 			event.turn,
@@ -564,7 +571,9 @@ export function insertEvent(event: Omit<EventRecord, 'id'>): number {
 			JSON.stringify(event.source),
 			JSON.stringify(event.changes),
 			event.narrative,
-			event.renderer
+			event.renderer,
+			event.semanticEvent ? JSON.stringify(event.semanticEvent) : null,
+			event.stateChanges ? JSON.stringify(event.stateChanges) : null
 		);
 	return Number(result.lastInsertRowid);
 }
@@ -926,7 +935,9 @@ function restoreSnapshot(snapshot: Snapshot): void {
 			);
 		}
 		for (const value of snapshot.events) {
-			db.prepare('INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+			db.prepare(`INSERT INTO events (id, turn, day, minute, location, action_id, character_id,
+				summary, source_json, changes_json, narrative, renderer, semantic_json, state_changes_json)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
 				value.id as number,
 				value.turn as number,
 				value.day as number,
@@ -938,7 +949,9 @@ function restoreSnapshot(snapshot: Snapshot): void {
 				value.source_json as string,
 				value.changes_json as string,
 				value.narrative as string,
-				value.renderer as string
+				value.renderer as string,
+				(value.semantic_json ?? null) as string | null,
+				(value.state_changes_json ?? null) as string | null
 			);
 		}
 		for (const value of snapshot.memories) {

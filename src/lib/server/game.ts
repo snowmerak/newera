@@ -32,7 +32,7 @@ export async function runExclusive<T>(operation: () => Promise<T> | T): Promise<
 	}
 }
 
-function advanceTime(world: WorldState, minutes: number, location: string): WorldState {
+export function advanceTime(world: WorldState, minutes: number, location: string): WorldState {
 	const total = world.minute + minutes;
 	return {
 		turn: world.turn + 1,

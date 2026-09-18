@@ -1,3 +1,5 @@
+import type { SemanticEvent, StateChange } from './simulation';
+
 export type ActionId = 'talk' | 'listen' | 'flirt' | 'kiss' | 'intimacy' | 'rest';
 
 export interface BaseStats {
@@ -65,6 +67,7 @@ export interface WorldState {
 }
 
 export interface Source {
+	energy?: number;
 	rapport?: number;
 	trust?: number;
 	desire?: number;
@@ -79,13 +82,15 @@ export interface EventRecord {
 	day: number;
 	minute: number;
 	location: string;
-	actionId: ActionId | 'advance' | 'decline' | 'custom';
+	actionId: ActionId | 'conversation' | 'advance' | 'decline' | 'custom';
 	characterId: string | null;
 	summary: string;
 	source: Source;
 	changes: Record<string, number>;
 	narrative: string;
 	renderer: 'template' | 'llm';
+	semanticEvent?: SemanticEvent | null;
+	stateChanges?: StateChange[];
 }
 
 export interface MemoryRecord {
