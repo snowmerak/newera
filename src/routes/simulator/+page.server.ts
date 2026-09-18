@@ -1,12 +1,12 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getGameView } from '$lib/server/db';
-import { characterMarks, characterStats, nonnegativeInteger } from '$lib/server/character-form';
+import { characterMarks, characterStats } from '$lib/server/character-form';
 import { editSimulationCharacter, performConversation } from '$lib/server/simulation';
 
 export const load: PageServerLoad = () => {
-	const { lore, world, player, characters, events } = getGameView();
-	return { lore, world, player, characters, simulationEvents: events.filter((event) => event.semanticEvent?.type === 'conversation').reverse() };
+	const { lore, world, characters, events } = getGameView();
+	return { lore, world, characters, simulationEvents: events.filter((event) => event.semanticEvent?.type === 'conversation').reverse() };
 };
 
 export const actions: Actions = {
@@ -26,7 +26,6 @@ export const actions: Actions = {
 			if (!stats) throw new Error('인물 수치를 입력해 주세요.');
 			await editSimulationCharacter({
 				id: String(body.get('id') ?? ''), stats,
-				playerEnergy: nonnegativeInteger(body, 'player.energy'),
 				marks: characterMarks(body)
 			});
 			return { message: '인물 수치를 현재 로어에 저장했습니다.', level: 'success' as const };

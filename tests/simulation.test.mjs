@@ -6,8 +6,8 @@ import { applyEffects, calculateSource } from '../src/lib/game/actions.ts';
 import { DEFAULT_TALENT, DEFAULT_ABL, DEFAULT_EXP, DEFAULT_RELATION, DEFAULT_PALAM,
 	clampBase, normalizeTalent, normalizeExp, normalizeMarks, normalizeRelations, normalizePalam } from '../src/lib/game/types.ts';
 
-function initialState(energy = 20) {
-	return createSimulation({ energy, maxEnergy: 20 }, [{
+function initialState() {
+	return createSimulation([{
 		id: 'character-1', name: '서연', age: 27, portrait: '', introduction: '', profile: '',
 		base: { energy: 20, maxEnergy: 20 }, trait: [],
 		talent: { ...DEFAULT_TALENT, pride: 40, openness: 80 },
@@ -17,11 +17,13 @@ function initialState(energy = 20) {
 	}], 'room');
 }
 
-test('energy precondition rejects conversation without changing state', () => {
-	const state = initialState(1);
-	assert.equal(actionUnavailableReason(state, 'conversation'), '기력이 부족합니다.');
-	assert.throws(() => resolveAction(state, 'conversation'), /기력이 부족/);
-	assert.equal(state.player.energy, 1);
+test('conversation has no player stamina requirement', () => {
+	const state = initialState();
+	assert.equal(actionUnavailableReason(state, 'conversation'), null);
+	const result = resolveAction(state, 'conversation');
+	assert.ok(!('player' in result.state));
+	assert.ok(!('energy' in result.source));
+	assert.ok(result.changes.every((change) => change.path !== 'player.BASE.energy'));
 	assert.equal(state.eventLog.length, 0);
 });
 
@@ -32,11 +34,10 @@ test('same state and action produce identical result and leave input untouched',
 	assert.deepEqual(state, snapshot);
 });
 
-test('conversation applies transient SOURCE to BASE, PALAM, EXP and directed RELATION', () => {
+test('conversation applies transient SOURCE to PALAM, EXP and directed RELATION', () => {
 	const result = resolveAction(initialState(), 'conversation');
 	const target = result.state.characters[0];
-	assert.equal(result.source.energy, -2);
-	assert.equal(result.state.player.energy, 18);
+	assert.deepEqual(target.base, { energy: 20, maxEnergy: 20 });
 	assert.equal(target.palam.rapport, result.source.rapport);
 	assert.equal(target.palam.comfort, result.source.comfort);
 	assert.equal(target.exp.social, 1);
@@ -67,7 +68,7 @@ test('SOURCE is recalculated per action and pride affects rapport through trust'
 	const state = initialState();
 	const first = resolveAction(state, 'conversation');
 	const second = resolveAction(first.state, 'conversation');
-	assert.equal(second.source.energy, -2);
+	assert.ok(!('energy' in second.source));
 	assert.equal(second.state.eventLog.length, 2);
 	assert.equal(second.state.eventLog[1].id, 2);
 	const proud = initialState();
@@ -145,14 +146,12 @@ test('main game action resolves SOURCE before state update without automatic abi
 	const character = initialState().characters[0];
 	character.exp.social = 29;
 	const source = calculateSource('talk', character);
-	assert.equal(source.energy, -3);
-	const result = applyEffects('talk', { energy: 20, maxEnergy: 20 }, character, source);
-	assert.equal(result.player.energy, 17);
+	assert.ok(!('energy' in source));
+	const result = applyEffects('talk', character, source);
 	assert.equal(result.character.abl.conversation, character.abl.conversation);
 	assert.equal(result.character.exp.social, 32);
 	assert.equal(result.character.palam.comfort, source.comfort);
 	assert.equal(result.character.relations.player.trust, 1);
-	const rest = applyEffects('rest', { energy: 18, maxEnergy: 20 }, null, calculateSource('rest', null));
-	assert.deepEqual(rest.player, { energy: 20, maxEnergy: 20 });
-	assert.equal(rest.changes.energy, 2);
+	const rest = applyEffects('rest', null, calculateSource('rest', null));
+	assert.deepEqual(rest, { character: null, changes: {} });
 });

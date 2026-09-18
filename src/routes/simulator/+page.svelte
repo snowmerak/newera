@@ -11,7 +11,7 @@
 	let busy = $state(false);
 	let activeId = $derived(data.characters.some((character) => character.id === selectedId) ? selectedId : (data.characters[0]?.id ?? ''));
 	let simulation = $derived.by(() => {
-		const state = createSimulation(data.player, data.characters, data.world.location);
+		const state = createSimulation(data.characters, data.world.location);
 		return activeId ? selectActiveCharacter(state, activeId) : state;
 	});
 	let active = $derived(data.characters.find((character) => character.id === activeId) ?? null);
@@ -65,9 +65,9 @@
 						<p class="minor">SemanticEvent · {last.semanticEvent?.type} / {last.semanticEvent?.outcome} / {last.semanticEvent?.actorId} → {last.semanticEvent?.targetId}</p>
 						{#if last.source.comfort === undefined}<p class="minor">이 사건은 이전 수치 규칙으로 기록되었습니다.</p>{/if}
 						<h3>SOURCE · 이번 행동</h3>
-						<dl class="sim-effects"><dt>energy</dt><dd>{last.source.energy ?? '—'}</dd><dt>rapport</dt><dd>{last.source.rapport ?? '—'}</dd><dt>comfort</dt><dd>{last.source.comfort ?? '—'}</dd><dt>tension</dt><dd>{last.source.tension ?? '—'}</dd><dt>trust</dt><dd>{last.source.trust ?? '—'}</dd><dt>affection</dt><dd>{last.source.affection ?? '—'}</dd></dl>
+						<dl class="sim-effects"><dt>rapport</dt><dd>{last.source.rapport ?? '—'}</dd><dt>comfort</dt><dd>{last.source.comfort ?? '—'}</dd><dt>tension</dt><dd>{last.source.tension ?? '—'}</dd><dt>trust</dt><dd>{last.source.trust ?? '—'}</dd><dt>affection</dt><dd>{last.source.affection ?? '—'}</dd></dl>
 						<h3>State Changes</h3>
-						<ul class="sim-changes">{#each last.stateChanges ?? [] as change}<li><code>{change.path}</code><span>{Array.isArray(change.before) ? change.before.join(', ') || '없음' : change.before} → {Array.isArray(change.after) ? change.after.join(', ') || '없음' : change.after}</span></li>{/each}</ul>
+						<ul class="sim-changes">{#each (last.stateChanges ?? []).filter((change) => change.path !== 'player.BASE.energy') as change}<li><code>{change.path}</code><span>{Array.isArray(change.before) ? change.before.join(', ') || '없음' : change.before} → {Array.isArray(change.after) ? change.after.join(', ') || '없음' : change.after}</span></li>{/each}</ul>
 					{:else}<p class="minor">행동을 실행하면 SOURCE와 실제 상태 변화를 볼 수 있습니다.</p>{/if}
 				</section>
 				<section class="sim-card" aria-label="이벤트 기록">
@@ -76,8 +76,8 @@
 							<strong>#{entry.id} · 대화한다</strong>
 							<span>{entry.semanticEvent?.actorId} → {entry.characterId} · {entry.semanticEvent?.type} / {entry.semanticEvent?.outcome}</span>
 							<p>{entry.narrative}</p>
-							<small>SOURCE energy {entry.source.energy ?? '—'}, rapport {entry.source.rapport ?? '—'}, comfort {entry.source.comfort ?? '—'}, tension {entry.source.tension ?? '—'}, trust {entry.source.trust ?? '—'}</small>
-							<details><summary>상태 변화 {entry.stateChanges?.length ?? 0}개</summary><ul class="sim-changes">{#each entry.stateChanges ?? [] as change}<li><code>{change.path}</code><span>{Array.isArray(change.before) ? change.before.join(', ') || '없음' : change.before} → {Array.isArray(change.after) ? change.after.join(', ') || '없음' : change.after}</span></li>{/each}</ul></details>
+							<small>SOURCE rapport {entry.source.rapport ?? '—'}, comfort {entry.source.comfort ?? '—'}, tension {entry.source.tension ?? '—'}, trust {entry.source.trust ?? '—'}</small>
+							<details><summary>상태 변화 {(entry.stateChanges ?? []).filter((change) => change.path !== 'player.BASE.energy').length}개</summary><ul class="sim-changes">{#each (entry.stateChanges ?? []).filter((change) => change.path !== 'player.BASE.energy') as change}<li><code>{change.path}</code><span>{Array.isArray(change.before) ? change.before.join(', ') || '없음' : change.before} → {Array.isArray(change.after) ? change.after.join(', ') || '없음' : change.after}</span></li>{/each}</ul></details>
 						</li>{/each}</ol>
 					{:else}<p class="minor">아직 기록이 없습니다.</p>{/if}
 				</section>
@@ -85,10 +85,9 @@
 			<aside class="sim-inspector" aria-label="캐릭터 에디터와 인스펙터">
 				<details open><summary>Character Editor / Inspector</summary>
 					{#if active}
-						<h2>{active.name}</h2><p class="minor">플레이어 BASE: 체력 {data.player.energy}/{data.player.maxEnergy}</p>
+						<h2>{active.name}</h2>
 						{#key active.id}<form method="POST" action="?/edit" use:enhance={submit} class="settings-form">
 							<input type="hidden" name="id" value={active.id} />
-							<label>플레이어 체력<input name="player.energy" type="number" min="0" max={data.player.maxEnergy} required value={data.player.energy} /></label>
 							<CharacterStatsFields stats={active} />
 							<CharacterMarksFields marks={active.mark} />
 							<p class="minor">TRAIT: {active.trait.join(' · ') || '없음'}</p>

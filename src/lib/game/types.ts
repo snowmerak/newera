@@ -133,7 +133,6 @@ export interface WorldState {
 }
 
 export interface Source {
-	energy?: number;
 	rapport?: number;
 	comfort?: number;
 	tension?: number;
@@ -142,7 +141,6 @@ export interface Source {
 	desire?: number;
 	arousal?: number;
 	pleasure?: number;
-	recovery?: number;
 }
 
 export interface EventRecord {
@@ -210,7 +208,6 @@ export interface GameView {
 	lores: LoreSummary[];
 	world: WorldState;
 	config: ScenarioConfig;
-	player: BaseStats;
 	characters: Character[];
 	modules: InstalledModule[];
 	worldLore: WorldLore[];

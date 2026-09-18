@@ -1,4 +1,4 @@
-import { clampBase, clampCount, clampPercent, relationTo, type BaseStats, type Character, type CustomState } from './types.ts';
+import { clampCount, clampPercent, relationTo, type Character, type CustomState } from './types.ts';
 
 export type SimulationActionId = 'conversation';
 export type Outcome = 'negative' | 'neutral' | 'positive';
@@ -12,7 +12,6 @@ export interface Situation {
 }
 
 export interface SourceEffect {
-	energy: number;
 	rapport: number;
 	comfort: number;
 	tension: number;
@@ -47,7 +46,6 @@ export interface SimulationLogEntry {
 }
 
 export interface SimulationState {
-	player: BaseStats;
 	characters: Character[];
 	situation: Situation;
 	cflag: CustomState;
@@ -65,8 +63,7 @@ export interface ActionDefinition {
 	label: string;
 	description: string;
 	preconditions: (context: ActionContext) => string | null;
-	costs: (context: ActionContext) => Pick<SourceEffect, 'energy'>;
-	resolve: (context: ActionContext) => Omit<SourceEffect, 'energy'>;
+	resolve: (context: ActionContext) => SourceEffect;
 }
 
 export interface ActionResult {
@@ -80,9 +77,8 @@ export const SIMULATION_ACTIONS: Record<SimulationActionId, ActionDefinition> = 
 	conversation: {
 		id: 'conversation',
 		label: '대화한다',
-		description: '상대와 이야기를 나누며 관계를 쌓는다. 체력 2 소모.',
-		preconditions: ({ state }) => state.player.energy < 2 ? '기력이 부족합니다.' : null,
-		costs: () => ({ energy: -2 }),
+		description: '상대와 이야기를 나누며 관계를 쌓는다.',
+		preconditions: () => null,
 		resolve: ({ target }) => {
 			const relation = relationTo(target);
 			const pridePenalty = target.talent.pride >= 75 && relation.trust < 25 ? 2 : 0;
@@ -101,9 +97,8 @@ export const SIMULATION_ACTIONS: Record<SimulationActionId, ActionDefinition> = 
 	}
 };
 
-export function createSimulation(player: BaseStats, characters: Character[], location: string): SimulationState {
+export function createSimulation(characters: Character[], location: string): SimulationState {
 	return {
-		player: { ...player },
 		characters: structuredClone(characters),
 		situation: {
 			id: 'current-scene', location,
@@ -136,8 +131,7 @@ export function resolveAction(state: SimulationState, actionId: SimulationAction
 	const target = state.characters.find((character) => character.id === state.situation.activeCharacterId)!;
 	const definition = SIMULATION_ACTIONS[actionId];
 	const context: ActionContext = { state, actorId: 'player', target };
-	const source: SourceEffect = { ...definition.costs(context), ...definition.resolve(context) };
-	const player = clampBase({ ...state.player, energy: state.player.energy + source.energy });
+	const source: SourceEffect = definition.resolve(context);
 	const previousRelation = relationTo(target);
 	const relation = {
 		...previousRelation,
@@ -160,7 +154,6 @@ export function resolveAction(state: SimulationState, actionId: SimulationAction
 		mark
 	};
 	const changes: StateChange[] = [
-		{ path: 'player.BASE.energy', before: state.player.energy, after: player.energy },
 		{ path: `${target.name}.PALAM.rapport`, before: target.palam.rapport, after: updated.palam.rapport },
 		{ path: `${target.name}.PALAM.comfort`, before: target.palam.comfort, after: updated.palam.comfort },
 		{ path: `${target.name}.PALAM.tension`, before: target.palam.tension, after: updated.palam.tension },
@@ -180,7 +173,7 @@ export function resolveAction(state: SimulationState, actionId: SimulationAction
 		source: { ...source }, event, changes, renderedText: null
 	};
 	return {
-		state: { ...state, player, characters: state.characters.map((character) => character.id === target.id ? updated : character), eventLog: [...state.eventLog, entry] },
+		state: { ...state, characters: state.characters.map((character) => character.id === target.id ? updated : character), eventLog: [...state.eventLog, entry] },
 		source, event, changes
 	};
 }

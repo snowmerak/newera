@@ -76,7 +76,7 @@
 		<main class="reader">
 			<div class="lore-heading"><div><p class="eyebrow">PLAYING LORE</p><h1>{data.lore.title}</h1></div><a href="/lores">설정 관리 →</a></div>
 			<section class="session-panel" aria-label="현재 세션">
-				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴 · 체력 {data.player.energy}/{data.player.maxEnergy}</small></div>
+				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴</small></div>
 			</section>
 			<div class="scene-meta"><span>TURN {data.world.turn}</span><span>{data.world.day}일차 · {timeLabel(data.world.minute)}</span><span>{data.world.location}</span></div>
 			<article class="scene" aria-label="현재 장면">
@@ -131,7 +131,6 @@
 
 			<div class="details-area">
 				<details><summary>상태와 기억</summary>
-					<p class="minor">플레이어 체력 {data.player.energy}/{data.player.maxEnergy}</p>
 					{#if selected}
 						<h3>{selected.name}</h3>
 						<p class="minor">{selected.trait.join(' · ')} · 호감 {selected.relations.player.affection} · 신뢰 {selected.relations.player.trust} · 욕망 {selected.relations.player.desire}</p>

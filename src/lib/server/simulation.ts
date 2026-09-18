@@ -1,13 +1,13 @@
 import { createSimulation, resolveAction, selectActiveCharacter } from '$lib/game/simulation';
 import { renderSemanticEvent } from '$lib/game/simulation-renderer';
-import type { Character, CharacterStatsInput, EventRecord } from '$lib/game/types';
-import { getGameView, insertEvent, updateCharacter, updatePlayer, updateScenarioConfig, updateWorld, withTransaction } from './db';
+import type { CharacterStatsInput, EventRecord } from '$lib/game/types';
+import { getGameView, insertEvent, updateCharacter, updateScenarioConfig, updateWorld, withTransaction } from './db';
 import { advanceTime, runExclusive } from './game';
 
 export function performConversation(targetId: string): Promise<EventRecord> {
 	return runExclusive(() => {
 		const view = getGameView();
-		const initial = selectActiveCharacter(createSimulation(view.player, view.characters, view.world.location), targetId);
+		const initial = selectActiveCharacter(createSimulation(view.characters, view.world.location), targetId);
 		const result = resolveAction(initial, 'conversation');
 		const target = result.state.characters.find((character) => character.id === targetId)!;
 		const nextWorld = advanceTime(view.world, 20, view.world.location);
@@ -23,7 +23,6 @@ export function performConversation(targetId: string): Promise<EventRecord> {
 		};
 		const id = withTransaction(() => {
 			updateWorld(nextWorld);
-			updatePlayer(result.state.player);
 			updateCharacter(target);
 			updateScenarioConfig({ ...view.config, pendingProposal: null, playerSuggestions: null });
 			return insertEvent(event);
@@ -35,7 +34,6 @@ export function performConversation(targetId: string): Promise<EventRecord> {
 export function editSimulationCharacter(input: {
 	id: string;
 	stats: CharacterStatsInput;
-	playerEnergy: number;
 	marks?: string[];
 }): Promise<void> {
 	return runExclusive(() => {
@@ -43,9 +41,6 @@ export function editSimulationCharacter(input: {
 		const character = view.characters.find((candidate) => candidate.id === input.id);
 		if (!character) throw new Error('인물을 찾을 수 없습니다.');
 		if (input.stats.base.maxEnergy < 1 || input.stats.base.energy > input.stats.base.maxEnergy) throw new Error('BASE 체력 값을 확인해 주세요.');
-		if (!Number.isSafeInteger(input.playerEnergy) || input.playerEnergy < 0 || input.playerEnergy > view.player.maxEnergy) {
-			throw new Error('플레이어 체력 값을 확인해 주세요.');
-		}
 		withTransaction(() => {
 			updateCharacter({ ...character,
 				base: input.stats.base, talent: input.stats.talent ?? character.talent,
@@ -53,7 +48,6 @@ export function editSimulationCharacter(input: {
 				relations: { ...character.relations, player: input.stats.relation },
 				mark: input.marks ?? character.mark
 			});
-			updatePlayer({ ...view.player, energy: input.playerEnergy });
 			updateScenarioConfig({ ...view.config, pendingProposal: null, playerSuggestions: null });
 		});
 	});

@@ -1,4 +1,4 @@
-import { clampBase, clampCount, clampPercent, relationTo, type ActionId, type BaseStats, type Character, type Source } from './types.ts';
+import { clampCount, clampPercent, relationTo, type ActionId, type Character, type Source } from './types.ts';
 
 export const PLAYER_AGE = 25;
 
@@ -7,7 +7,6 @@ type ActionDefinition = {
 	detail: string;
 	category: 'adult' | 'social' | 'rest';
 	duration: number;
-	energyCost: number;
 	needsTarget: boolean;
 };
 
@@ -17,7 +16,6 @@ export const ACTIONS: Record<ActionId, ActionDefinition> = {
 		detail: '상대의 반응을 살피며 유혹한다.',
 		category: 'adult',
 		duration: 20,
-		energyCost: 3,
 		needsTarget: true
 	},
 	kiss: {
@@ -25,7 +23,6 @@ export const ACTIONS: Record<ActionId, ActionDefinition> = {
 		detail: '서로 원할 때 한 걸음 더 가까워진다.',
 		category: 'adult',
 		duration: 15,
-		energyCost: 3,
 		needsTarget: true
 	},
 	intimacy: {
@@ -33,7 +30,6 @@ export const ACTIONS: Record<ActionId, ActionDefinition> = {
 		detail: '서로 동의한 성인 관계로 이어진다.',
 		category: 'adult',
 		duration: 90,
-		energyCost: 7,
 		needsTarget: true
 	},
 	talk: {
@@ -41,7 +37,6 @@ export const ACTIONS: Record<ActionId, ActionDefinition> = {
 		detail: '대화를 나누며 서로를 조금 더 알아간다.',
 		category: 'social',
 		duration: 20,
-		energyCost: 3,
 		needsTarget: true
 	},
 	listen: {
@@ -49,26 +44,22 @@ export const ACTIONS: Record<ActionId, ActionDefinition> = {
 		detail: '서두르지 않고 상대의 말을 듣는다.',
 		category: 'social',
 		duration: 25,
-		energyCost: 2,
 		needsTarget: true
 	},
 	rest: {
 		title: '잠시 쉰다',
-		detail: '호흡을 고르고 체력을 회복한다.',
+		detail: '잠시 쉬며 시간을 보낸다.',
 		category: 'rest',
 		duration: 45,
-		energyCost: 0,
 		needsTarget: false
 	}
 };
 
 export function actionReason(
 	actionId: ActionId,
-	player: BaseStats,
 	character: Character | null
 ): string | null {
 	const action = ACTIONS[actionId];
-	if (player.energy < action.energyCost) return '체력이 부족합니다';
 	if (!action.needsTarget) return null;
 	if (!character) return '상대를 선택해 주세요';
 	if (action.category === 'adult' && (PLAYER_AGE < 20 || character.age < 20)) {
@@ -91,19 +82,17 @@ export function actionReason(
 	return null;
 }
 
-export function canPerform(actionId: ActionId, player: BaseStats, character: Character | null): boolean {
-	return actionReason(actionId, player, character) === null;
+export function canPerform(actionId: ActionId, character: Character | null): boolean {
+	return actionReason(actionId, character) === null;
 }
 
 export function calculateSource(actionId: ActionId, character: Character | null): Source {
-	if (actionId === 'rest') return { energy: 12, recovery: 12 };
+	if (actionId === 'rest') return {};
 	if (!character) throw new Error('상대를 선택해 주세요.');
 	const relation = relationTo(character);
-	const energy = -ACTIONS[actionId].energyCost;
 	switch (actionId) {
 		case 'talk':
 			return {
-				energy,
 				rapport: Math.max(-2, 2 + character.abl.conversation + Math.floor(character.talent.openness / 30)
 					+ Math.floor(relation.affection / 25) + Math.floor(character.palam.comfort / 25)
 					- Math.floor(character.palam.tension / 25) - (character.talent.pride >= 75 && relation.trust < 25 ? 2 : 0)),
@@ -111,32 +100,25 @@ export function calculateSource(actionId: ActionId, character: Character | null)
 			};
 		case 'listen':
 			return {
-				energy,
 				rapport: 1 + Math.floor(character.talent.receptiveness / 50),
 				comfort: 2 + character.abl.empathy, trust: 2
 			};
 		case 'flirt':
-			return { energy, rapport: 1, desire: 3 + character.abl.seduction, arousal: 2 };
+			return { rapport: 1, desire: 3 + character.abl.seduction, arousal: 2 };
 		case 'kiss':
-			return { energy, rapport: 2, trust: 1, desire: 4, arousal: 4, pleasure: 2 };
+			return { rapport: 2, trust: 1, desire: 4, arousal: 4, pleasure: 2 };
 		case 'intimacy':
-			return { energy, rapport: 3, trust: 2, desire: 6, arousal: 6, pleasure: 8 };
+			return { rapport: 3, trust: 2, desire: 6, arousal: 6, pleasure: 8 };
 	}
 }
 
 export function applyEffects(
 	actionId: ActionId,
-	player: BaseStats,
 	character: Character | null,
 	source: Source
-): { player: BaseStats; character: Character | null; changes: Record<string, number> } {
+): { character: Character | null; changes: Record<string, number> } {
 	if (actionId === 'rest') {
-		const updatedPlayer = clampBase({ ...player, energy: player.energy + (source.energy ?? source.recovery ?? 0) });
-		return {
-			player: updatedPlayer,
-			character,
-			changes: { energy: updatedPlayer.energy - player.energy }
-		};
+		return { character, changes: {} };
 	}
 	if (!character) throw new Error('상대를 선택해 주세요.');
 	const expKey = actionId === 'talk' || actionId === 'listen' ? 'social'
@@ -154,7 +136,6 @@ export function applyEffects(
 		nextMark.push('서로에게 익숙해짐');
 	}
 	return {
-		player: clampBase({ ...player, energy: player.energy + (source.energy ?? 0) }),
 		character: {
 			...character,
 			exp: { ...character.exp, [expKey]: nextExp },
@@ -174,7 +155,6 @@ export function applyEffects(
 			mark: nextMark
 		},
 		changes: {
-			energy: clampBase({ ...player, energy: player.energy + (source.energy ?? 0) }).energy - player.energy,
 			...(source.rapport ? { rapport: source.rapport } : {}),
 			...(source.trust ? { trust: source.trust } : {}),
 			...(source.desire ? { desire: source.desire } : {}),
@@ -186,7 +166,7 @@ export function applyEffects(
 }
 
 export function eventSummary(actionId: ActionId, character: Character | null): string {
-	if (actionId === 'rest') return '플레이어가 잠시 쉬며 체력을 회복했다.';
+	if (actionId === 'rest') return '플레이어가 잠시 쉬며 시간을 보냈다.';
 	if (!character) throw new Error('상대를 선택해 주세요.');
 	switch (actionId) {
 		case 'talk': return `플레이어가 ${character.name}과 오늘 하루에 대해 이야기했다.`;

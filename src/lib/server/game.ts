@@ -11,7 +11,6 @@ import {
 	searchMemoryIds,
 	updateCharacter,
 	updateMemoryEmbedding,
-	updatePlayer,
 	updateScenarioConfig,
 	updateWorld,
 	withTransaction
@@ -101,7 +100,7 @@ type TurnRequest =
 
 async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	const view = getGameView();
-	const { world, player, characters, config } = view;
+	const { world, characters, config } = view;
 	const llmConfig = getEffectiveScenarioConfig();
 	let actionId: ActionId | null = null;
 	let targetId: string | null = null;
@@ -120,14 +119,14 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		actionId = interpreted.actionId;
 		targetId = interpreted.targetId;
 		if (actionId) {
-			const reason = actionReason(actionId, player, targetId ? getCharacter(targetId) : null);
+			const reason = actionReason(actionId, targetId ? getCharacter(targetId) : null);
 			if (reason) throw new Error(reason);
 		}
 	}
 	if (request.kind === 'act') {
 		actionId = request.actionId;
 		targetId = ACTIONS[actionId].needsTarget ? request.targetId : null;
-		const reason = actionReason(actionId, player, targetId ? getCharacter(targetId) : null);
+		const reason = actionReason(actionId, targetId ? getCharacter(targetId) : null);
 		if (reason) throw new Error(reason);
 		intent = ACTIONS[actionId].title;
 	} else if (request.kind === 'accept' || request.kind === 'decline') {
@@ -136,7 +135,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		intent = `${config.pendingProposal.text} — 플레이어가 ${request.kind === 'accept' ? '수락' : '거절'}함`;
 		if (request.kind === 'accept') {
 			actionId = config.pendingProposal.actionId;
-			const reason = actionReason(actionId, player, getCharacter(targetId));
+			const reason = actionReason(actionId, getCharacter(targetId));
 			if (reason) throw new Error(reason);
 		}
 	}
@@ -161,19 +160,19 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 			intent,
 			mode,
 			recentInteractions: view.events.filter((event) => event.characterId === sceneFocus.id).slice(0, 5),
-			availableActions: (Object.keys(ACTIONS) as ActionId[]).filter((id) => id !== 'rest' && !actionReason(id, player, sceneFocus))
+			availableActions: (Object.keys(ACTIONS) as ActionId[]).filter((id) => id !== 'rest' && !actionReason(id, sceneFocus))
 		})
 		: null;
 	const accepted = request.kind === 'accept' || actionId === 'rest' ||
 		((request.kind === 'act' || request.kind === 'free') && (focus ? response?.accepted === true : request.kind === 'free'));
 	const source: Source = actionId && accepted ? calculateSource(actionId, sceneFocus) : {};
 	const effects = actionId && accepted
-		? applyEffects(actionId, player, sceneFocus, source)
-		: { player, character: sceneFocus, changes: {} as Record<string, number> };
+		? applyEffects(actionId, sceneFocus, source)
+		: { character: sceneFocus, changes: {} as Record<string, number> };
 	const minutes = actionId && accepted ? Math.max(ACTIONS[actionId].duration, beat.minutes) : beat.minutes;
 	const nextWorld = advanceTime(world, minutes, beat.location);
 	let proposal: Proposal | null = null;
-	if (mode === 'idle' && focus && response?.proposal && !actionReason(response.proposal.actionId, effects.player, effects.character)) {
+	if (mode === 'idle' && focus && response?.proposal && !actionReason(response.proposal.actionId, effects.character)) {
 		proposal = { characterId: focus.id, ...response.proposal };
 	}
 	const summary = request.kind === 'free' && intent
@@ -204,7 +203,6 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	const memorySummary = focus ? response?.memory ?? null : null;
 	const committed = withTransaction(() => {
 		updateWorld(nextWorld);
-		updatePlayer(effects.player);
 		if (sceneChanged) for (const character of characters) updateCharacter({ ...character, palam: { ...DEFAULT_PALAM } });
 		if (effects.character && accepted && actionId !== 'rest') updateCharacter(effects.character);
 		updateScenarioConfig({ ...config, worldMemory: beat.worldMemory, pendingProposal: proposal, playerSuggestions: null });
@@ -241,7 +239,7 @@ export function suggestPlayerActions(targetId: string): Promise<string[]> {
 		const character = targetId ? view.characters.find((candidate) => candidate.id === targetId) ?? null : null;
 		if (targetId && !character) throw new Error('선택한 인물을 찾을 수 없습니다.');
 		const availableActions = (Object.keys(ACTIONS) as ActionId[])
-			.filter((id) => !actionReason(id, view.player, character))
+			.filter((id) => !actionReason(id, character))
 			.map((id) => ({ id, title: ACTIONS[id].title }));
 		const options = await generatePlayerSuggestions({
 			world: view.world,

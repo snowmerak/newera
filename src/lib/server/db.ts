@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_ABL, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, clampBase, normalizeAbl, normalizeExp, normalizeMarks, normalizePalam, normalizeRelations, normalizeTalent } from '$lib/game/types';
 import type {
-	BaseStats,
 	Character,
 	CharacterLore,
 	EventRecord,
@@ -143,11 +142,6 @@ export function getDb(): DatabaseSync {
 			day INTEGER NOT NULL,
 			minute INTEGER NOT NULL,
 			location TEXT NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS player_state (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			energy INTEGER NOT NULL,
-			max_energy INTEGER NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS characters (
 			id TEXT PRIMARY KEY,
@@ -289,7 +283,6 @@ export function getDb(): DatabaseSync {
 		});
 	}
 	withTransaction(() => {
-		updatePlayer(getPlayer());
 		for (const row of db.prepare('SELECT id, manifest_json FROM modules').all() as Row[]) {
 			const migrated = migrateStoredManifest(parse<ModuleManifest>(row.manifest_json));
 			db.prepare('UPDATE modules SET manifest_json = ? WHERE id = ?').run(JSON.stringify(migrated), row.id as string);
@@ -308,7 +301,6 @@ function seed(): void {
 	const db = getDb();
 	withTransaction(() => {
 		db.prepare('INSERT INTO world_state VALUES (1, 0, 1, 18 * 60 + 20, ?)').run('서울 · 망원동');
-		db.prepare('INSERT INTO player_state VALUES (1, 24, 24)').run();
 		const characters: Character[] = [
 			{
 				id: 'seoyeon',
@@ -375,19 +367,6 @@ export function updateWorld(world: WorldState): void {
 	getDb()
 		.prepare('UPDATE world_state SET turn = ?, day = ?, minute = ?, location = ? WHERE id = 1')
 		.run(world.turn, world.day, world.minute, world.location);
-}
-
-export function getPlayer(): BaseStats {
-	const row = one('SELECT energy, max_energy FROM player_state WHERE id = 1');
-	if (!row) throw new Error('플레이어 상태를 찾을 수 없습니다.');
-	return clampBase({ energy: Number(row.energy), maxEnergy: Number(row.max_energy) });
-}
-
-export function updatePlayer(player: BaseStats): void {
-	const bounded = clampBase(player);
-	getDb()
-		.prepare('UPDATE player_state SET energy = ?, max_energy = ? WHERE id = 1')
-		.run(bounded.energy, bounded.maxEnergy);
 }
 
 export function getCharacter(id: string): Character | null {
@@ -717,7 +696,6 @@ export function createLore(title: string, worldSetting: string, eraRules: string
 	const id = randomUUID();
 	const snapshot: Snapshot = {
 		world: [{ id: 1, turn: 0, day: 1, minute: 18 * 60, location: '시작 장소' }],
-		player: [{ id: 1, energy: 24, max_energy: 24 }],
 		config: [{ id: 1, world_setting: cleanWorld, era_rules: cleanRules,
 			world_memory: '', pending_proposal_json: null, player_suggestions_json: null }],
 		characters: [], events: [], memories: [], modules: [], enabledModuleIds: []
@@ -779,7 +757,6 @@ export function getGameView(): GameView {
 		lores,
 		world: getWorld(),
 		config,
-		player: getPlayer(),
 		characters,
 		modules: getInstalledModules(),
 		worldLore: getWorldLore(),
@@ -797,7 +774,8 @@ export function getGameView(): GameView {
 interface Snapshot {
 	world: Row[];
 	config?: Row[];
-	player: Row[];
+	/** Accepted only while importing older snapshots; current snapshots omit it. */
+	player?: Row[];
 	characters: Row[];
 	events: Row[];
 	memories: Row[];
@@ -809,7 +787,6 @@ function captureSnapshot(): Snapshot {
 	return {
 		world: rows('SELECT * FROM world_state'),
 		config: rows('SELECT * FROM scenario_config'),
-		player: rows('SELECT * FROM player_state'),
 		characters: rows('SELECT * FROM characters ORDER BY sort_order'),
 		events: rows('SELECT * FROM events ORDER BY id'),
 		memories: rows('SELECT * FROM memories ORDER BY id'),
@@ -821,22 +798,20 @@ function captureSnapshot(): Snapshot {
 function checkedSnapshot(value: unknown, full: boolean): Snapshot {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('로어 진행 데이터가 올바르지 않습니다.');
 	const snapshot = value as Record<string, unknown>;
-	const required = ['world', 'player', 'characters', 'events', 'memories'];
+	const required = ['world', 'characters', 'events', 'memories'];
 	if (full) required.push('config', 'modules');
 	for (const key of required) {
 		if (!Array.isArray(snapshot[key]) || (snapshot[key] as unknown[]).some((row) => !row || typeof row !== 'object' || Array.isArray(row))) {
 			throw new Error(`로어의 ${key} 데이터가 올바르지 않습니다.`);
 		}
 	}
-	if ((snapshot.world as Row[]).length !== 1 || (snapshot.player as Row[]).length !== 1) {
-		throw new Error('로어의 세계와 플레이어 상태가 올바르지 않습니다.');
+	if ((snapshot.world as Row[]).length !== 1) {
+		throw new Error('로어의 세계 상태가 올바르지 않습니다.');
 	}
 	const world = (snapshot.world as Row[])[0];
-	const player = (snapshot.player as Row[])[0];
 	if (world.id !== 1 || !Number.isInteger(world.turn) || !Number.isInteger(world.day) ||
-		!Number.isInteger(world.minute) || typeof world.location !== 'string' ||
-		player.id !== 1 || !Number.isInteger(player.energy) || !Number.isInteger(player.max_energy)) {
-		throw new Error('로어의 세계와 플레이어 상태가 올바르지 않습니다.');
+		!Number.isInteger(world.minute) || typeof world.location !== 'string') {
+		throw new Error('로어의 세계 상태가 올바르지 않습니다.');
 	}
 	if (snapshot.config !== undefined) {
 		if (!Array.isArray(snapshot.config) || snapshot.config.length !== 1 ||
@@ -871,11 +846,8 @@ function checkedSnapshot(value: unknown, full: boolean): Snapshot {
 }
 
 function migrateSnapshot(snapshot: Snapshot): Snapshot {
-	return { ...snapshot,
-		player: snapshot.player.map((row) => {
-			const bounded = clampBase({ energy: Number(row.energy), maxEnergy: Number(row.max_energy) });
-			return { ...row, energy: bounded.energy, max_energy: bounded.maxEnergy };
-		}),
+	const { player: _legacyPlayer, ...current } = snapshot;
+	return { ...current,
 		characters: snapshot.characters.map(migrateCharacterRow),
 		modules: snapshot.modules?.map((row) => ({
 			...row, manifest_json: JSON.stringify(migrateStoredManifest(parse<ModuleManifest>(row.manifest_json)))
@@ -944,7 +916,7 @@ export function saveGame(slot: number): void {
 function restoreSnapshot(snapshot: Snapshot): void {
 	snapshot = migrateSnapshot(snapshot);
 		const db = getDb();
-		db.exec('DELETE FROM memories; DELETE FROM events; DELETE FROM characters; DELETE FROM player_state; DELETE FROM world_state;');
+		db.exec('DELETE FROM memories; DELETE FROM events; DELETE FROM characters; DELETE FROM world_state;');
 		if (snapshot.modules) {
 			db.prepare('DELETE FROM modules').run();
 			for (const value of snapshot.modules) {
@@ -961,13 +933,6 @@ function restoreSnapshot(snapshot: Snapshot): void {
 				value.day as number,
 				value.minute as number,
 				value.location as string
-			);
-		}
-		for (const value of snapshot.player) {
-			db.prepare('INSERT INTO player_state VALUES (?, ?, ?)').run(
-				value.id as number,
-				value.energy as number,
-				value.max_energy as number
 			);
 		}
 		for (const value of snapshot.characters) {
