@@ -3,6 +3,7 @@ import { ACTIONS, actionReason, applyEffects, calculateSource, eventSummary } fr
 import type { ActionId, Character, EventRecord, MemoryRecord, Proposal, Source, WorldState } from '$lib/game/types';
 import {
 	getCharacter,
+	getEffectiveScenarioConfig,
 	getGameView,
 	getMemories,
 	insertEvent,
@@ -101,6 +102,7 @@ type TurnRequest =
 async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	const view = getGameView();
 	const { world, player, characters, config } = view;
+	const llmConfig = getEffectiveScenarioConfig();
 	let actionId: ActionId | null = null;
 	let targetId: string | null = null;
 	let intent: string | null = null;
@@ -139,7 +141,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		}
 	}
 
-	const beat = await generateWorldBeat({ world, config, characters, recentEvents: view.events, intent, targetId });
+	const beat = await generateWorldBeat({ world, config: llmConfig, characters, recentEvents: view.events, intent, targetId });
 	const focus = beat.focusCharacterId ? characters.find((character) => character.id === beat.focusCharacterId) ?? null : null;
 	const mode = request.kind === 'advance' || ((request.kind === 'act' || request.kind === 'free') && actionId === 'rest')
 		? 'idle' as const
@@ -150,7 +152,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		? await generateCharacterTurn({
 			character: focus,
 			memories: await memoryContext(focus, `${beat.situation} ${intent ?? ''}`),
-			config,
+			config: llmConfig,
 			beat,
 			intent,
 			mode,
@@ -238,7 +240,7 @@ export function suggestPlayerActions(targetId: string): Promise<string[]> {
 			.map((id) => ({ id, title: ACTIONS[id].title }));
 		const options = await generatePlayerSuggestions({
 			world: view.world,
-			config: view.config,
+			config: getEffectiveScenarioConfig(),
 			character,
 			characters: view.characters,
 			currentScene: view.latestNarrative,

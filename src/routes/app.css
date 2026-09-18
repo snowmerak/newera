@@ -52,6 +52,13 @@ summary:hover { color: #eacb98; }
 .settings-form input, .settings-form textarea { width: 100%; padding: 10px 11px; color: #ebe7de; background: #25262b; border: 1px solid #535257; border-radius: 2px; line-height: 1.6; }
 .settings-form textarea { resize: vertical; }
 .settings-form button { align-self: flex-start; padding: 8px 15px; color: #f1e5d1; background: #33312d; border: 1px solid #8b7657; border-radius: 2px; font-size: 12px; }
+.details-area a { color: #d5bd91; }
+.module-list { list-style: none; margin: 8px 0 24px; padding: 0; border-top: 1px solid #414044; }
+.module-list li { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 0; border-bottom: 1px solid #414044; font-size: 12px; }
+.module-list strong { color: #eee7dc; font-weight: 600; }
+.module-list span, .module-list p { color: #aaa49b; }
+.module-list p { margin: 5px 0 0; line-height: 1.5; }
+.module-list button { min-width: 52px; padding: 6px 9px; color: #e8dcc9; background: #302d29; border: 1px solid #806d50; }
 .form-pair { display: grid; grid-template-columns: 1fr 110px; gap: 12px; }
 .form-pair label { display: flex; flex-direction: column; gap: 7px; }
 .nested { margin: 5px 0; border: 1px solid #424146; padding: 0 12px; }

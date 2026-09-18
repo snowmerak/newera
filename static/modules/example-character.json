@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "example.harin",
+  "name": "하린",
+  "version": "1.0.0",
+  "description": "동네에 사는 성인 작가 하린을 추가합니다.",
+  "characters": [
+    {
+      "id": "harin",
+      "name": "하린",
+      "age": 28,
+      "introduction": "마감이 끝난 날에는 동네를 천천히 걷는다.",
+      "profile": "하린은 망원동에 사는 28세 작가다. 새로운 이야기의 소재를 찾으려고 동네 사람들의 일상을 관찰한다. 친해진 사람에게는 자신의 초고를 보여주지만, 작품에 관한 비판에는 쉽게 방어적이 된다.",
+      "trait": ["호기심", "자존심"],
+      "base": { "energy": 20, "maxEnergy": 20 },
+      "abl": { "conversation": 2, "empathy": 1, "seduction": 1 },
+      "relation": { "affection": 0, "trust": 0, "desire": 0 }
+    }
+  ]
+}

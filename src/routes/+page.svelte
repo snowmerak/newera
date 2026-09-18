@@ -117,7 +117,31 @@
 
 		<div class="details-area">
 			<details>
+				<summary>모듈 · 세계관과 등장인물</summary>
+				<p class="minor">JSON 파일을 설치하면 즉시 적용됩니다. 세계관 모듈은 한 번에 하나, 인물 모듈은 여러 개를 켤 수 있습니다. 끈 인물의 진행과 기억은 보존됩니다.</p>
+				<form method="POST" action="?/installModule" enctype="multipart/form-data" use:enhance={submit} class="settings-form">
+					<label for="module-file">모듈 파일</label>
+					<input id="module-file" type="file" name="moduleFile" accept=".json,application/json" required />
+					<button disabled={busy}>설치하고 적용</button>
+				</form>
+				<p class="minor"><a href="/modules/example-world.json" download>세계관 예시</a> · <a href="/modules/example-character.json" download>인물 예시</a> · <a href="/modules/README.md" target="_blank" rel="noreferrer">파일 형식</a></p>
+				{#if data.modules.length}
+					<ul class="module-list">
+						{#each data.modules as module}
+							<li>
+								<div><strong>{module.name}</strong> <span>v{module.version} · {module.hasWorld ? '세계관' : ''}{module.hasWorld && module.characterCount ? ' · ' : ''}{module.characterCount ? `인물 ${module.characterCount}명` : ''}</span>{#if module.description}<p>{module.description}</p>{/if}</div>
+								<form method="POST" action="?/toggleModule" use:enhance={submit}>
+									<input type="hidden" name="id" value={module.id} />
+									<button name="enabled" value={module.enabled ? '0' : '1'} disabled={busy}>{module.enabled ? '끄기' : '적용'}</button>
+								</form>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</details>
+			<details>
 				<summary>세계관과 era 규칙</summary>
+				{#if data.modules.some((module) => module.enabled && module.hasWorld)}<p class="minor">모듈 세계관이 적용 중입니다. 아래 기본 설정은 모듈을 끄면 다시 사용됩니다. era 규칙은 모듈 규칙과 함께 적용됩니다.</p>{/if}
 				<form method="POST" action="?/scenario" use:enhance={submit} class="settings-form">
 					<label for="world-setting">세계관 설정</label>
 					<textarea id="world-setting" name="worldSetting" rows="6" required value={data.config.worldSetting}></textarea>

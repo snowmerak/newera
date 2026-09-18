@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getGameView, loadGame, saveGame } from '$lib/server/db';
+import { getGameView, installModule, loadGame, saveGame, setModuleEnabled } from '$lib/server/db';
 import { advanceWorld, performAction, performFreeAction, respondToProposal, runExclusive, saveCharacterSettings, saveScenarioSettings, suggestPlayerActions } from '$lib/server/game';
 
 export const load: PageServerLoad = () => getGameView();
@@ -77,6 +77,32 @@ export const actions: Actions = {
 			return { message: '인물 설정을 저장했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : '인물 설정을 저장하지 못했습니다.', level: 'error' as const });
+		}
+	},
+	installModule: async ({ request }) => {
+		const body = await request.formData();
+		const file = body.get('moduleFile');
+		try {
+			if (!file || typeof file === 'string' || !file.name.toLowerCase().endsWith('.json')) {
+				throw new Error('JSON 모듈 파일을 선택해 주세요.');
+			}
+			if (file.size > 2_000_000) throw new Error('모듈 파일은 2MB 이하여야 합니다.');
+			const raw = await file.text();
+			const name = await runExclusive(() => installModule(raw));
+			return { message: `${name} 모듈을 설치하고 적용했습니다.`, level: 'success' as const };
+		} catch (error) {
+			return fail(400, { message: error instanceof Error ? error.message : '모듈을 설치하지 못했습니다.', level: 'error' as const });
+		}
+	},
+	toggleModule: async ({ request }) => {
+		const body = await request.formData();
+		try {
+			const enabled = String(body.get('enabled'));
+			if (enabled !== '0' && enabled !== '1') throw new Error('모듈 상태가 올바르지 않습니다.');
+			await runExclusive(() => setModuleEnabled(String(body.get('id') ?? ''), enabled === '1'));
+			return { message: enabled === '1' ? '모듈을 적용했습니다.' : '모듈을 껐습니다.', level: 'success' as const };
+		} catch (error) {
+			return fail(400, { message: error instanceof Error ? error.message : '모듈 상태를 바꾸지 못했습니다.', level: 'error' as const });
 		}
 	},
 	save: async ({ request }) => {

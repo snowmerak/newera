@@ -6,11 +6,13 @@ import type {
 	Character,
 	EventRecord,
 	GameView,
+	InstalledModule,
 	MemoryRecord,
 	ScenarioConfig,
 	SaveSlot,
 	WorldState
 } from '$lib/game/types';
+import { parseModuleManifest, type ModuleManifest } from './modules';
 
 let database: DatabaseSync | undefined;
 
@@ -35,6 +37,7 @@ function characterFromRow(row: Row): Character {
 	const palam = parse<Partial<Character['palam']>>(row.palam_json);
 	return {
 		id: String(row.id),
+		moduleId: row.module_id ? String(row.module_id) : null,
 		name: String(row.name),
 		age: Number(row.age),
 		portrait: String(row.portrait),
@@ -118,6 +121,7 @@ export function getDb(): DatabaseSync {
 		);
 		CREATE TABLE IF NOT EXISTS characters (
 			id TEXT PRIMARY KEY,
+			module_id TEXT,
 			sort_order INTEGER NOT NULL,
 			name TEXT NOT NULL,
 			age INTEGER NOT NULL,
@@ -178,6 +182,13 @@ export function getDb(): DatabaseSync {
 			turn INTEGER NOT NULL,
 			snapshot_json TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS modules (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			version TEXT NOT NULL,
+			manifest_json TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1
+		);
 		CREATE TABLE IF NOT EXISTS scenario_config (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			world_setting TEXT NOT NULL,
@@ -191,6 +202,9 @@ export function getDb(): DatabaseSync {
 	if (!characterColumns.some((column) => column.name === 'profile')) {
 		db.exec("ALTER TABLE characters ADD COLUMN profile TEXT NOT NULL DEFAULT ''");
 		db.exec('UPDATE characters SET profile = introduction WHERE profile = \'\'');
+	}
+	if (!characterColumns.some((column) => column.name === 'module_id')) {
+		db.exec('ALTER TABLE characters ADD COLUMN module_id TEXT');
 	}
 	const configColumns = db.prepare('PRAGMA table_info(scenario_config)').all() as Row[];
 	if (!configColumns.some((column) => column.name === 'world_memory')) {
@@ -293,12 +307,94 @@ export function updatePlayer(player: BaseStats): void {
 }
 
 export function getCharacter(id: string): Character | null {
-	const row = one('SELECT * FROM characters WHERE id = ?', id);
-	return row ? characterFromRow(row) : null;
+	return getCharacters().find((character) => character.id === id) ?? null;
 }
 
 export function getCharacters(): Character[] {
-	return rows('SELECT * FROM characters ORDER BY sort_order, id').map(characterFromRow);
+	const activeIds = new Set(getModuleRows().filter((row) => Number(row.enabled) === 1)
+		.flatMap((row) => parse<ModuleManifest>(row.manifest_json).characters.map((character) => character.id)));
+	return rows('SELECT * FROM characters ORDER BY sort_order, id')
+		.filter((row) => !row.module_id || activeIds.has(String(row.id)))
+		.map(characterFromRow);
+}
+
+function getModuleRows(): Row[] {
+	return rows('SELECT * FROM modules ORDER BY name, id');
+}
+
+export function getInstalledModules(): InstalledModule[] {
+	return getModuleRows().map((row) => {
+		const manifest = parse<ModuleManifest>(row.manifest_json);
+		return {
+			id: String(row.id), name: String(row.name), version: String(row.version),
+			description: manifest.description, enabled: Number(row.enabled) === 1,
+			hasWorld: Boolean(manifest.world), characterCount: manifest.characters.length
+		};
+	});
+}
+
+export function getEffectiveScenarioConfig(): ScenarioConfig {
+	const config = getScenarioConfig();
+	const activeWorld = getModuleRows().find((row) => Number(row.enabled) === 1 && parse<ModuleManifest>(row.manifest_json).world);
+	if (!activeWorld) return config;
+	const world = parse<ModuleManifest>(activeWorld.manifest_json).world!;
+	return { ...config, worldSetting: world.setting, eraRules: [config.eraRules, world.eraRules].filter(Boolean).join('\n\n') };
+}
+
+function ensureModuleCharacters(manifest: ModuleManifest, refreshMetadata: boolean): void {
+	for (const character of manifest.characters) {
+		const existing = one('SELECT * FROM characters WHERE id = ?', character.id);
+		if (!existing) updateCharacter(character);
+		else if (refreshMetadata) {
+			updateCharacter({
+				...characterFromRow(existing), moduleId: manifest.id,
+				name: character.name, age: character.age, portrait: character.portrait,
+				introduction: character.introduction, profile: character.profile
+			});
+		}
+	}
+}
+
+export function installModule(raw: string): string {
+	const manifest = parseModuleManifest(raw);
+	withTransaction(() => {
+		const db = getDb();
+		if (manifest.world) {
+			for (const other of getModuleRows()) {
+				if (other.id !== manifest.id && parse<ModuleManifest>(other.manifest_json).world) {
+					db.prepare('UPDATE modules SET enabled = 0 WHERE id = ?').run(String(other.id));
+				}
+			}
+		}
+		db.prepare(`INSERT INTO modules (id, name, version, manifest_json, enabled) VALUES (?, ?, ?, ?, 1)
+			ON CONFLICT(id) DO UPDATE SET name=excluded.name, version=excluded.version,
+			manifest_json=excluded.manifest_json, enabled=1`).run(
+			manifest.id, manifest.name, manifest.version, JSON.stringify(manifest)
+		);
+		ensureModuleCharacters(manifest, true);
+		const config = getScenarioConfig();
+		updateScenarioConfig({ ...config, worldMemory: manifest.world ? '' : config.worldMemory, pendingProposal: null, playerSuggestions: null });
+	});
+	return manifest.name;
+}
+
+export function setModuleEnabled(id: string, enabled: boolean): void {
+	withTransaction(() => {
+		const row = one('SELECT * FROM modules WHERE id = ?', id);
+		if (!row) throw new Error('설치된 모듈을 찾을 수 없습니다.');
+		const manifest = parse<ModuleManifest>(row.manifest_json);
+		if (enabled && manifest.world) {
+			for (const other of getModuleRows()) {
+				if (other.id !== id && parse<ModuleManifest>(other.manifest_json).world) {
+					getDb().prepare('UPDATE modules SET enabled = 0 WHERE id = ?').run(String(other.id));
+				}
+			}
+		}
+		getDb().prepare('UPDATE modules SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
+		if (enabled) ensureModuleCharacters(manifest, false);
+		const config = getScenarioConfig();
+		updateScenarioConfig({ ...config, worldMemory: manifest.world ? '' : config.worldMemory, pendingProposal: null, playerSuggestions: null });
+	});
 }
 
 export function getScenarioConfig(): ScenarioConfig {
@@ -328,10 +424,11 @@ export function updateCharacter(character: Character, sortOrder?: number): void 
 	getDb()
 		.prepare(`
 			INSERT INTO characters (
-				id, sort_order, name, age, portrait, introduction, profile, base_json,
+				id, module_id, sort_order, name, age, portrait, introduction, profile, base_json,
 				trait_json, abl_json, exp_json, mark_json, relation_json, palam_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET
+				module_id=excluded.module_id,
 				name=excluded.name, age=excluded.age, portrait=excluded.portrait,
 				introduction=excluded.introduction, profile=excluded.profile, base_json=excluded.base_json,
 				trait_json=excluded.trait_json, abl_json=excluded.abl_json,
@@ -340,6 +437,7 @@ export function updateCharacter(character: Character, sortOrder?: number): void 
 		`)
 		.run(
 			character.id,
+			character.moduleId ?? null,
 			order,
 			character.name,
 			character.age,
@@ -432,6 +530,9 @@ export function getGameView(): GameView {
 	const latestEvents = rows('SELECT * FROM events ORDER BY id DESC LIMIT 30').map(eventFromRow);
 	const characters = getCharacters();
 	const config = getScenarioConfig();
+	if (config.pendingProposal && !characters.some((character) => character.id === config.pendingProposal?.characterId)) {
+		config.pendingProposal = null;
+	}
 	if (config.playerSuggestions?.targetId) {
 		const target = characters.find((character) => character.id === config.playerSuggestions?.targetId);
 		const otherNames = characters.filter((character) => character.id !== target?.id).map((character) => character.name);
@@ -460,6 +561,7 @@ export function getGameView(): GameView {
 		config,
 		player: getPlayer(),
 		characters,
+		modules: getInstalledModules(),
 		events: latestEvents,
 		memories,
 		saves,
@@ -477,6 +579,7 @@ interface Snapshot {
 	characters: Row[];
 	events: Row[];
 	memories: Row[];
+	enabledModuleIds?: string[];
 }
 
 export function saveGame(slot: number): void {
@@ -487,7 +590,8 @@ export function saveGame(slot: number): void {
 		player: rows('SELECT * FROM player_state'),
 		characters: rows('SELECT * FROM characters ORDER BY sort_order'),
 		events: rows('SELECT * FROM events ORDER BY id'),
-		memories: rows('SELECT * FROM memories ORDER BY id')
+		memories: rows('SELECT * FROM memories ORDER BY id'),
+		enabledModuleIds: rows('SELECT id FROM modules WHERE enabled = 1').map((row) => String(row.id))
 	};
 	getDb()
 		.prepare(`
@@ -525,10 +629,11 @@ export function loadGame(slot: number): void {
 		}
 		for (const value of snapshot.characters) {
 			db.prepare(`INSERT INTO characters (
-				id, sort_order, name, age, portrait, introduction, profile, base_json,
+				id, module_id, sort_order, name, age, portrait, introduction, profile, base_json,
 				trait_json, abl_json, exp_json, mark_json, relation_json, palam_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
 				value.id as string,
+				(value.module_id ?? null) as string | null,
 				value.sort_order as number,
 				value.name as string,
 				value.age as number,
@@ -582,6 +687,12 @@ export function loadGame(slot: number): void {
 			);
 		} else {
 			db.prepare('UPDATE scenario_config SET pending_proposal_json = NULL, player_suggestions_json = NULL WHERE id = 1').run();
+		}
+		db.prepare('UPDATE modules SET enabled = 0').run();
+		for (const id of snapshot.enabledModuleIds ?? []) {
+			db.prepare('UPDATE modules SET enabled = 1 WHERE id = ?').run(id);
+			const module = one('SELECT manifest_json FROM modules WHERE id = ?', id);
+			if (module) ensureModuleCharacters(parse<ModuleManifest>(module.manifest_json), false);
 		}
 	});
 }

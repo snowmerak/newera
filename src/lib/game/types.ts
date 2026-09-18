@@ -7,6 +7,7 @@ export interface BaseStats {
 
 export interface Character {
 	id: string;
+	moduleId?: string | null;
 	name: string;
 	age: number;
 	portrait: string;
@@ -19,6 +20,16 @@ export interface Character {
 	mark: string[];
 	relation: { affection: number; trust: number; desire: number };
 	palam: { rapport: number; trust: number; arousal: number; pleasure: number };
+}
+
+export interface InstalledModule {
+	id: string;
+	name: string;
+	version: string;
+	description: string;
+	enabled: boolean;
+	hasWorld: boolean;
+	characterCount: number;
 }
 
 export interface WorldState {
@@ -94,6 +105,7 @@ export interface GameView {
 	config: ScenarioConfig;
 	player: BaseStats;
 	characters: Character[];
+	modules: InstalledModule[];
 	events: EventRecord[];
 	memories: Array<Pick<MemoryRecord, 'id' | 'eventId' | 'characterId' | 'summary' | 'isDetail' | 'createdTurn'>>;
 	saves: SaveSlot[];

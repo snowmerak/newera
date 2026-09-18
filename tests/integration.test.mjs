@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -80,6 +80,14 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.equal(response.status, 200, `${action}: ${body}`);
 		assert.equal(body.includes('"type":"failure"'), expectFailure, `${action}: ${body}`);
 	};
+	const postModule = async (name, contents, expectFailure = false) => {
+		const form = new FormData();
+		form.append('moduleFile', new Blob([contents], { type: 'application/json' }), name);
+		const response = await fetch(`${base}/?/installModule`, { method: 'POST', headers: { Origin: base }, body: form });
+		const body = await response.text();
+		assert.equal(response.status, 200, `installModule: ${body}`);
+		assert.equal(body.includes('"type":"failure"'), expectFailure, `installModule: ${body}`);
+	};
 	try {
 		let ready = false;
 		for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -142,6 +150,44 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.ok(modelCalls.some((call) => call.kind === 'interpret'));
 			assert.equal(modelCalls[0].input.worldSetting, '비가 잦은 망원동');
 			assert.equal(modelCalls[1].input.character.name, '서연');
+			const characterModule = readFileSync(join(process.cwd(), 'static/modules/example-character.json'), 'utf8');
+			const worldModule = readFileSync(join(process.cwd(), 'static/modules/example-world.json'), 'utf8');
+			await postModule('underage.json', JSON.stringify({ schemaVersion: 1, id: 'invalid.age', name: 'invalid', version: '1', characters: [{ id: 'a', name: 'a', age: 19, profile: 'profile' }] }), true);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
+			await postModule('character.json', characterModule);
+			await postModule('world.json', worldModule);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
+			assert.equal(db.prepare("SELECT module_id FROM characters WHERE id = 'mod:example.harin:harin'").get().module_id, 'example.harin');
+			assert.ok((await (await fetch(base)).text()).includes('value="mod:example.harin:harin"'));
+			await post('advance');
+			assert.ok(modelCalls.findLast((call) => call.kind === 'world').input.worldSetting.includes('며칠째 늦여름 비'));
+			await post('act', { actionId: 'talk', targetId: 'mod:example.harin:harin' });
+			const moduleRelation = db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json;
+			await post('toggleModule', { id: 'example.harin', enabled: '0' });
+			assert.ok(!(await (await fetch(base)).text()).includes('value="mod:example.harin:harin"'));
+			await post('act', { actionId: 'talk', targetId: 'mod:example.harin:harin' }, true);
+			await post('toggleModule', { id: 'example.harin', enabled: '1' });
+			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json, moduleRelation);
+			const revisedCharacter = JSON.parse(characterModule);
+			revisedCharacter.version = '1.1.0';
+			revisedCharacter.characters[0].profile = '하린은 새 작업실로 이사했다.';
+			await postModule('character-update.json', JSON.stringify(revisedCharacter));
+			assert.equal(db.prepare("SELECT profile FROM characters WHERE id = 'mod:example.harin:harin'").get().profile, '하린은 새 작업실로 이사했다.');
+			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json, moduleRelation);
+			await postModule('another-world.json', JSON.stringify({ schemaVersion: 1, id: 'example.other-world', name: '다른 세계', version: '1.0.0', world: { setting: '다른 도시' } }));
+			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.rainy-mangwon'").get().enabled, 0);
+			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.harin'").get().enabled, 1);
+			await post('toggleModule', { id: 'example.rainy-mangwon', enabled: '1' });
+			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.other-world'").get().enabled, 0);
+			await post('save', { slot: '2' });
+			await post('toggleModule', { id: 'example.harin', enabled: '0' });
+			await post('toggleModule', { id: 'example.rainy-mangwon', enabled: '0' });
+			await post('load', { slot: '2' });
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
+			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json, moduleRelation);
+			await post('load', { slot: '1' });
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 0);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
 		} finally {
 			db.close();
 		}
