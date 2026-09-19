@@ -262,6 +262,7 @@ export interface ScenarioConfig {
 	worldSetting: string;
 	eraRules: string;
 	worldMemory: string;
+	sceneNote: string;
 	pendingProposal: Proposal | null;
 	playerSuggestions: PlayerSuggestionSet | null;
 }

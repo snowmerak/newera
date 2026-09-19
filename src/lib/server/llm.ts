@@ -11,6 +11,7 @@ export interface WorldBeat {
 	focusCharacterId: string | null;
 	minutes: number;
 	worldMemory: string;
+	sceneNote: string;
 }
 
 export interface CharacterTurn {
@@ -18,6 +19,7 @@ export interface CharacterTurn {
 	accepted: boolean;
 	proposal: { actionId: Exclude<ActionId, 'rest'>; text: string } | null;
 	memory: string | null;
+	sceneNote: string;
 }
 
 type JsonSchema = Record<string, unknown>;
@@ -75,9 +77,10 @@ function worldBeatOutput(characterIds: string[]): StructuredOutput {
 				location: { type: 'string', minLength: 1 },
 				focusCharacterId: { type: ['string', 'null'], enum: [...characterIds, null] },
 				minutes: { type: 'integer', minimum: 5, maximum: 120 },
-				worldMemory: { type: 'string' }
+				worldMemory: { type: 'string' },
+				sceneNote: { type: 'string', minLength: 1 }
 			},
-			required: ['scene', 'situation', 'location', 'focusCharacterId', 'minutes', 'worldMemory']
+			required: ['scene', 'situation', 'location', 'focusCharacterId', 'minutes', 'worldMemory', 'sceneNote']
 		}
 	};
 }
@@ -109,9 +112,10 @@ function characterTurnOutput(mode: CharacterTurnMode, availableActions: ActionId
 				narrative: { type: 'string', minLength: 1 },
 				accepted: { type: 'boolean' },
 				proposal,
-				memory: { type: ['string', 'null'] }
+				memory: { type: ['string', 'null'] },
+				sceneNote: { type: 'string', minLength: 1 }
 			},
-			required: ['narrative', 'accepted', 'proposal', 'memory']
+			required: ['narrative', 'accepted', 'proposal', 'memory', 'sceneNote']
 		}
 	};
 }
@@ -175,6 +179,40 @@ function mentionedCharacterNames(values: unknown[], names: string[]): string[] {
 	return names.filter((name) => text.includes(name));
 }
 
+function recentTurnContext(events: EventRecord[], limit: number): Array<{
+	turn: number;
+	day: number;
+	minute: number;
+	location: string;
+	action: string;
+	characterId: string | null;
+	summary: string;
+	narrative: string;
+}> {
+	return events.slice(0, limit).reverse().map((event) => ({
+		turn: event.turn,
+		day: event.day,
+		minute: event.minute,
+		location: event.location,
+		action: event.actionId,
+		characterId: event.characterId,
+		summary: event.summary,
+		narrative: event.narrative
+	}));
+}
+
+function timeContext(world: WorldState): { day: number; clock: string; minuteAfterMidnight: number; period: string } {
+	const hour = Math.floor(world.minute / 60);
+	const minute = world.minute % 60;
+	const period = hour < 6 ? '새벽' : hour < 12 ? '오전' : hour < 17 ? '오후' : hour < 21 ? '저녁' : '밤';
+	return {
+		day: world.day,
+		clock: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+		minuteAfterMidnight: world.minute,
+		period
+	};
+}
+
 export async function embed(text: string): Promise<number[]> {
 	const response = await postJson('/embeddings', { model: embeddingModel, input: text });
 	const data = response.data as Array<{ embedding?: unknown }> | undefined;
@@ -209,9 +247,10 @@ export async function generatePlayerSuggestions(input: {
 			worldSetting: input.config.worldSetting,
 			eraRules: input.config.eraRules,
 			worldMemory: input.config.worldMemory,
+			sceneNote: input.config.sceneNote,
 			character: input.character,
 			currentScene: input.currentScene,
-			recentEvents: input.recentEvents.slice(0, 8).map((event) => event.summary),
+			recentTurns: recentTurnContext(input.recentEvents, 6),
 			availableActions: input.availableActions
 		},
 		playerSuggestionsOutput
@@ -281,13 +320,17 @@ export async function generateWorldBeat(input: {
 	const system = [
 			'당신은 한국어 성인 era 텍스트 게임의 세계 진행 담당 세션이다.',
 			'세계의 시간, 장소, 외부 사건과 장면의 출발 상황만 결정한다. 인물의 대사·속마음·승낙·거절은 인물 세션에 맡긴다.',
+			'currentSceneNote는 직전 턴이 끝난 순간의 위치, 함께 있는 인물, 자세, 진행 중인 행동과 즉각적인 의도를 기록한 현재 상태다. recentResolvedTurns의 실제 서술과 함께 확정 사실로 취급한다.',
+			'currentTime은 현재의 정확한 날짜와 시각이다. minutes가 지난 뒤의 시각을 계산해 scene의 햇빛, 노을, 오전, 저녁, 밤 같은 표현과 모순되지 않게 한다.',
+			'가장 최근 턴에서 이미 끝난 귀가, 만남, 이동, 착석, 접촉이나 대화를 다시 시작하지 않는다. 명시적인 이동이나 충분한 시간 경과가 없다면 같은 장소와 물리적 연속성을 이어간다.',
 			'scene은 새로운 상황을 보여주는 간결한 1~2문장으로 쓴다. 직전 사건을 다시 설명하거나 분위기만 길게 수식하지 않는다.',
 			'플레이어가 행동을 정했다면 그 행동의 결과를 미리 확정하지 않는다. 세계관 설정과 확정 사건을 지키며, 세계는 플레이어가 기다려도 움직인다.',
 			'한 장면에 등록된 등장인물은 최대 한 명만 출연한다. focusCharacterId는 scene과 situation에 실제로 등장하는 유일한 등록 인물이다. null이면 등록 인물을 아무도 등장시키지 않는다.',
 			'다른 등록 인물을 같은 장소에 부르거나, 대사·행동·연락을 추가하거나, 군중 장면으로 합류시키지 않는다. 변화를 만들기 위해 인물 수를 늘리지 않는다.',
 			'최근 사건을 보고 내용 없는 상황만 반복하지 않는다. 인물을 추가하는 대신 시간의 흐름에 맞는 일정, 장소, 외부 사건의 변화를 만든다.',
-			'스키마의 scene, situation, location, focusCharacterId, minutes, worldMemory에 세계 진행 결과만 넣는다.',
+			'스키마의 scene, situation, location, focusCharacterId, minutes, worldMemory, sceneNote에 세계 진행 결과만 넣는다.',
 			'worldMemory에는 이전 요약에서 여전히 유효한 사실과 이번 세계 변화만 간결하게 남긴다. 아직 인물이 결정하지 않은 행동 결과는 넣지 않는다.',
+			'sceneNote에는 세계 장면을 제시한 직후의 현재 위치, 함께 있는 인물, 자세나 거리, 진행 중인 행동과 미해결 의도를 1~3개의 사실 문장으로 쓴다. 분위기와 감상은 쓰지 않는다.',
 			'인물이 지정된 행동이면 focusCharacterId는 그 인물로 한다. scene에는 인물의 행동, 대사, 결정이나 확정되지 않은 성적 접촉을 쓰지 않는다.'
 		].join(' ');
 	let previousViolation: string[] = [];
@@ -298,7 +341,9 @@ export async function generateWorldBeat(input: {
 				worldSetting: input.config.worldSetting,
 				eraRules: input.config.eraRules,
 				worldMemory: input.config.worldMemory,
+				currentSceneNote: input.config.sceneNote,
 				world: input.world,
+				currentTime: timeContext(input.world),
 				cast: input.characters.map((character) => ({
 					id: character.id,
 					name: character.name,
@@ -308,7 +353,7 @@ export async function generateWorldBeat(input: {
 					relationToPlayer: character.relations.player,
 					mark: character.mark
 				})),
-				recentEvents: input.recentEvents.slice(0, 8).map((event) => event.summary),
+				recentResolvedTurns: recentTurnContext(input.recentEvents, 6),
 				playerIntent: input.intent,
 				targetCharacterId: input.targetId,
 				singleCharacterCorrection: previousViolation.length
@@ -329,7 +374,7 @@ export async function generateWorldBeat(input: {
 		const forbiddenNames = input.characters
 			.filter((character) => character.id !== focusCharacterId && character.name !== focusCharacterName)
 			.map((character) => character.name);
-		previousViolation = mentionedCharacterNames([scene, situation], forbiddenNames);
+		previousViolation = mentionedCharacterNames([scene, situation, result.sceneNote], forbiddenNames);
 		if (previousViolation.length) continue;
 		const minutes = Number(result.minutes);
 		return {
@@ -338,7 +383,8 @@ export async function generateWorldBeat(input: {
 			location,
 			focusCharacterId,
 			minutes: Number.isFinite(minutes) ? Math.max(5, Math.min(120, Math.round(minutes))) : 20,
-			worldMemory: typeof result.worldMemory === 'string' ? result.worldMemory.trim() : input.config.worldMemory
+			worldMemory: typeof result.worldMemory === 'string' ? result.worldMemory.trim() : input.config.worldMemory,
+			sceneNote: requiredText(result.sceneNote, 'sceneNote')
 		};
 	}
 	throw new Error('모델이 한 장면에 여러 등장인물을 함께 배치했습니다. 다시 시도해 주세요.');
@@ -362,10 +408,12 @@ export async function generateCharacterTurn(input: {
 			'player-action이면 제안에 승낙 또는 거절할 수 있다. accept-proposal이면 자신이 직전 장면에서 먼저 제안한 행동을 플레이어가 수락한 것이다. decline-proposal이면 플레이어가 제안을 거절한 것이다.',
 			'idle이면 availableActions에 포함된 행동만 필요에 따라 먼저 제안할 수 있다. 제안은 아직 실행된 사건이 아니다. 성인 행동도 제안과 실제 실행을 구분한다.',
 			'최근 같은 행동을 반복했다면 이번에는 대화의 주제나 인물의 목적이 실제로 달라질 때만 다시 제안한다. 제안할 이유가 없으면 proposal은 null이다.',
+			'previousSceneNote와 recentResolvedInteractions는 직전까지 실제로 확정된 상태와 장면이다. 이미 끝난 귀가, 만남, 이동, 착석, 접촉이나 대화를 처음부터 다시 쓰지 않는다. worldScene에서 명시적으로 바뀐 부분만 반영하고 나머지 물리 상태는 이어간다.',
 			'한국어 텍스트 미연시 장면을 쓰되 짧고 구체적으로 쓴다. 장면마다 인물의 선택이나 대화 내용이 한 가지는 달라져야 한다. 평범한 대화와 호감 표현마다 큰 감정의 결론을 내리지 않는다.',
 			'뺨이 붉어짐, 고개를 끄덕임, 다정한 눈빛, 마음이 편안해짐 같은 상투적인 반응과 감정 수식어를 반복하지 않는다. 같은 말을 되풀이하지 말고 인물의 실제 관심사와 현재 상황을 대사에 반영한다.',
-			'스키마의 narrative에는 장면, accepted에는 행동의 수락 여부, proposal에는 제안, memory에는 이후 행동을 바꿀 사실을 넣는다.',
+			'스키마의 narrative에는 장면, accepted에는 행동의 수락 여부, proposal에는 제안, memory에는 이후 행동을 바꿀 사실, sceneNote에는 응답 직후의 현재 상태를 넣는다.',
 			'memory는 장면 문장을 복사하거나 일반적인 감정 평가를 쓰지 않는다. 실제로 일어난 일만 3인칭 사실 문장으로 쓴다. 중요한 새 사실이 없으면 반드시 null을 반환한다.',
+			'sceneNote에는 응답이 끝난 뒤의 정확한 위치, 플레이어와의 자세나 거리, 진행 중인 행동과 미해결 의도를 1~3개의 사실 문장으로 쓴다. 다음 턴이 그대로 이어질 수 있어야 하며 분위기와 감상은 쓰지 않는다.',
 			'idle 외의 모드에서는 proposal을 null로 한다.'
 		].join(' ');
 	let previousViolation: string[] = [];
@@ -375,7 +423,9 @@ export async function generateCharacterTurn(input: {
 			{
 				worldSetting: input.config.worldSetting,
 				eraRules: input.config.eraRules,
+				previousSceneNote: input.config.sceneNote,
 				worldScene: input.beat.scene,
+				worldSceneNote: input.beat.sceneNote,
 				situation: input.beat.situation,
 				location: input.beat.location,
 				mode: input.mode,
@@ -387,7 +437,7 @@ export async function generateCharacterTurn(input: {
 					? `이전 출력에 다른 인물(${previousViolation.join(', ')})이 등장했다. 현재 인물과 플레이어만 남겨 다시 작성한다.`
 					: null,
 				personalMemories: input.memories.map((memory) => memory.summary),
-				recentInteractions: input.recentInteractions.map((event) => ({ turn: event.turn, action: event.actionId, summary: event.summary }))
+				recentResolvedInteractions: recentTurnContext(input.recentInteractions, 5)
 			},
 			characterTurnOutput(input.mode, input.availableActions)
 		);
@@ -395,7 +445,7 @@ export async function generateCharacterTurn(input: {
 		const rawProposalText = result.proposal && typeof result.proposal === 'object'
 			? (result.proposal as Record<string, unknown>).text
 			: null;
-		previousViolation = mentionedCharacterNames([narrative, rawProposalText, result.memory], input.otherCharacterNames);
+		previousViolation = mentionedCharacterNames([narrative, rawProposalText, result.memory, result.sceneNote], input.otherCharacterNames);
 		if (previousViolation.length) continue;
 		let proposal: CharacterTurn['proposal'] = null;
 		if (input.mode === 'idle' && result.proposal && typeof result.proposal === 'object') {
@@ -413,7 +463,8 @@ export async function generateCharacterTurn(input: {
 			narrative,
 			accepted: result.accepted === true,
 			proposal,
-			memory: typeof result.memory === 'string' && result.memory.trim() ? result.memory.trim() : null
+			memory: typeof result.memory === 'string' && result.memory.trim() ? result.memory.trim() : null,
+			sceneNote: requiredText(result.sceneNote, 'sceneNote')
 		};
 	}
 	throw new Error('모델이 한 장면에 여러 등장인물을 함께 묘사했습니다. 다시 시도해 주세요.');

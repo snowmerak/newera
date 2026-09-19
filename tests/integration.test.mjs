@@ -55,22 +55,23 @@ const modelServer = createServer(async (request, response) => {
 	} else if (world) {
 		if (crowdedWorldOnce) {
 			crowdedWorldOnce = false;
-			output = { scene: '서연과 지은이 함께 서점 앞에 도착했다.', situation: '서연과 지은이 플레이어를 기다린다.', location: '망원동 서점 앞', focusCharacterId: 'seoyeon', minutes: 10, worldMemory: '망원동에 비가 내린다.' };
+			output = { scene: '서연과 지은이 함께 서점 앞에 도착했다.', situation: '서연과 지은이 플레이어를 기다린다.', location: '망원동 서점 앞', focusCharacterId: 'seoyeon', minutes: 10, worldMemory: '망원동에 비가 내린다.', sceneNote: '서연과 지은이 서점 앞에 서 있다.' };
 		} else {
 			const focusCharacterId = input.targetCharacterId ?? 'seoyeon';
 			const focusName = input.cast.find((character) => character.id === focusCharacterId)?.name ?? '서연';
-			output = { scene: '저녁 거리에 비가 내린다.', situation: `${focusName}의 일과가 끝날 시간이다.`, location: '망원동 서점 앞', focusCharacterId, minutes: 10, worldMemory: '망원동에 비가 내린다.' };
+			output = { scene: '저녁 거리에 비가 내린다.', situation: `${focusName}의 일과가 끝날 시간이다.`, location: '망원동 서점 앞', focusCharacterId, minutes: 10, worldMemory: '망원동에 비가 내린다.', sceneNote: input.targetCharacterId ? `${focusName}과 플레이어가 서점 앞에 함께 서 있다.` : input.currentSceneNote || `${focusName}과 플레이어가 서점 앞에 함께 서 있다.` };
 		}
 	} else if (crowdedCharacterOnce) {
 		crowdedCharacterOnce = false;
-		output = { narrative: '서연과 지은이 함께 플레이어에게 다가왔다.', accepted, memory: null, proposal: null };
+		output = { narrative: '서연과 지은이 함께 플레이어에게 다가왔다.', accepted, memory: null, proposal: null, sceneNote: '서연과 지은이 플레이어 앞에 서 있다.' };
 	} else {
 		const characterName = input.character.name;
 		output = {
 			narrative: input.mode === 'idle' ? `${characterName}이 다가와 대화를 제안했다.` : accepted ? `${characterName}이 고개를 끄덕이며 이야기를 나눴다.` : `${characterName}이 고개를 저으며 거절했다.`,
 			accepted,
 			memory: input.mode === 'idle' ? `${characterName}이 서점 앞에서 대화를 제안했다.` : null,
-			proposal: input.mode === 'idle' ? { actionId: 'talk', text: '잠깐 이야기할래요?' } : null
+			proposal: input.mode === 'idle' ? { actionId: 'talk', text: '잠깐 이야기할래요?' } : null,
+			sceneNote: `${characterName}과 플레이어가 서점 앞에서 마주 보고 있다.`
 		};
 	}
 	response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }));
@@ -159,6 +160,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const initialCharacterCalls = modelCalls.filter((call) => call.kind === 'character');
 			assert.equal(initialWorldCalls.length, 2);
 			assert.equal(initialCharacterCalls.length, 2);
+			assert.deepEqual(initialWorldCalls[0].input.currentTime, { day: 1, clock: '18:20', minuteAfterMidnight: 1100, period: '저녁' });
 			assert.match(initialWorldCalls[1].input.singleCharacterCorrection, /지은/);
 			assert.match(initialCharacterCalls[1].input.singleCharacterCorrection, /지은/);
 			assert.ok(!db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative.includes('지은'));
@@ -212,6 +214,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.deepEqual(JSON.parse(db.prepare('SELECT base_json FROM characters WHERE id = ?').get(harinId).base_json), { energy: 20, maxEnergy: 20 });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'advance');
 			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '망원동에 비가 내린다.');
+			assert.equal(db.prepare('SELECT scene_note FROM scenario_config').get().scene_note, '서연과 플레이어가 서점 앞에서 마주 보고 있다.');
 			assert.equal(JSON.parse(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json).actionId, 'talk');
 			assert.equal(db.prepare('SELECT summary FROM memories ORDER BY id DESC LIMIT 1').get().summary, '서연이 서점 앞에서 대화를 제안했다.');
 			const firstEvent = db.prepare('SELECT id, turn, summary FROM events ORDER BY id LIMIT 1').get();
@@ -224,6 +227,14 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('proposal', { answer: 'accept' });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'talk');
 			assert.equal(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json, null);
+			const proposalWorldCall = modelCalls.filter((call) => call.kind === 'world').at(-1);
+			assert.equal(proposalWorldCall.input.currentSceneNote, '서연과 플레이어가 서점 앞에서 마주 보고 있다.');
+			assert.equal(proposalWorldCall.input.recentResolvedTurns.at(-1).narrative,
+				db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative);
+			const proposalCharacterCall = modelCalls.filter((call) => call.kind === 'character').at(-1);
+			assert.equal(proposalCharacterCall.input.previousSceneNote, '서연과 플레이어가 서점 앞에서 마주 보고 있다.');
+			assert.equal(proposalCharacterCall.input.recentResolvedInteractions.at(-1).narrative,
+				db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative);
 			await post('edit', { id: harinId, ...fixedFields });
 			const liveHarinStats = db.prepare('SELECT base_json, trait_json, talent_json, abl_json, exp_json, mark_json, relation_json, palam_json FROM characters WHERE id = ?').get(harinId);
 			assert.deepEqual(JSON.parse(liveHarinStats.base_json), { energy: 17, maxEnergy: 24 });

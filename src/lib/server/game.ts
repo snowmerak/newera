@@ -7,6 +7,7 @@ import {
 	getEffectiveScenarioConfig,
 	getGameView,
 	getMemories,
+	getRecentCharacterEvents,
 	insertEvent,
 	insertMemory,
 	searchMemoryIds,
@@ -161,7 +162,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 			beat,
 			intent,
 			mode,
-			recentInteractions: view.events.filter((event) => event.characterId === sceneFocus.id).slice(0, 5),
+			recentInteractions: getRecentCharacterEvents(sceneFocus.id, 5),
 			availableActions: (Object.keys(ACTIONS) as ActionId[]).filter((id) => id !== 'rest' && !actionReason(id, sceneFocus)),
 			otherCharacterNames: characters
 				.filter((character) => character.id !== sceneFocus.id && character.name !== sceneFocus.name)
@@ -205,12 +206,20 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		narrative,
 		renderer: 'llm'
 	};
-	const memorySummary = focus ? response?.memory ?? null : null;
+	const memorySummary = focus
+		? response?.memory ?? (accepted && (actionId === 'kiss' || actionId === 'intimacy') ? summary : null)
+		: null;
 	const committed = withTransaction(() => {
 		updateWorld(nextWorld);
 		if (sceneChanged) for (const character of characters) updateCharacter({ ...character, palam: { ...DEFAULT_PALAM } });
 		if (effects.character && accepted && actionId !== 'rest') updateCharacter(effects.character);
-		updateScenarioConfig({ ...config, worldMemory: beat.worldMemory, pendingProposal: proposal, playerSuggestions: null });
+		updateScenarioConfig({
+			...config,
+			worldMemory: beat.worldMemory,
+			sceneNote: response?.sceneNote ?? beat.sceneNote,
+			pendingProposal: proposal,
+			playerSuggestions: null
+		});
 		const eventId = insertEvent(event);
 		const memoryId = focus && memorySummary ? insertMemory(eventId, focus.id, memorySummary, nextWorld.turn) : null;
 		return { eventId, memoryId };
@@ -282,6 +291,7 @@ export function saveScenarioSettings(worldSetting: string, eraRules: string): Pr
 			worldSetting: worldSetting.trim(),
 			eraRules: eraRules.trim(),
 			worldMemory: config.worldSetting === worldSetting.trim() ? config.worldMemory : '',
+			sceneNote: config.worldSetting === worldSetting.trim() && config.eraRules === eraRules.trim() ? config.sceneNote : '',
 			pendingProposal: null,
 			playerSuggestions: null
 		});

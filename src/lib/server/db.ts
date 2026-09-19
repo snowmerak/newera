@@ -248,6 +248,7 @@ export function getDb(): DatabaseSync {
 			world_setting TEXT NOT NULL,
 			era_rules TEXT NOT NULL,
 			world_memory TEXT NOT NULL DEFAULT '',
+			scene_note TEXT NOT NULL DEFAULT '',
 			pending_proposal_json TEXT,
 			player_suggestions_json TEXT
 		);
@@ -275,6 +276,9 @@ export function getDb(): DatabaseSync {
 	}
 	if (!configColumns.some((column) => column.name === 'player_suggestions_json')) {
 		db.exec('ALTER TABLE scenario_config ADD COLUMN player_suggestions_json TEXT');
+	}
+	if (!configColumns.some((column) => column.name === 'scene_note')) {
+		db.exec("ALTER TABLE scenario_config ADD COLUMN scene_note TEXT NOT NULL DEFAULT ''");
 	}
 	database = db;
 	const hadWorld = Boolean(one('SELECT id FROM world_state WHERE id = 1'));
@@ -499,7 +503,13 @@ export function installModule(raw: string): string {
 		);
 		ensureModuleCharacters(manifest, true);
 		const config = getScenarioConfig();
-		updateScenarioConfig({ ...config, worldMemory: manifest.world ? '' : config.worldMemory, pendingProposal: null, playerSuggestions: null });
+		updateScenarioConfig({
+			...config,
+			worldMemory: manifest.world ? '' : config.worldMemory,
+			sceneNote: manifest.world ? '' : config.sceneNote,
+			pendingProposal: null,
+			playerSuggestions: null
+		});
 	});
 	return manifest.name;
 }
@@ -519,7 +529,13 @@ export function setModuleEnabled(id: string, enabled: boolean): void {
 		getDb().prepare('UPDATE modules SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
 		if (enabled) ensureModuleCharacters(manifest, false);
 		const config = getScenarioConfig();
-		updateScenarioConfig({ ...config, worldMemory: manifest.world ? '' : config.worldMemory, pendingProposal: null, playerSuggestions: null });
+		updateScenarioConfig({
+			...config,
+			worldMemory: manifest.world ? '' : config.worldMemory,
+			sceneNote: manifest.world ? '' : config.sceneNote,
+			pendingProposal: null,
+			playerSuggestions: null
+		});
 	});
 }
 
@@ -533,7 +549,7 @@ export function selectWorldModule(id: string | null): void {
 		}
 		if (selected) ensureModuleCharacters(selected.manifest, false);
 		const config = getScenarioConfig();
-		updateScenarioConfig({ ...config, worldMemory: '', pendingProposal: null, playerSuggestions: null });
+		updateScenarioConfig({ ...config, worldMemory: '', sceneNote: '', pendingProposal: null, playerSuggestions: null });
 	});
 }
 
@@ -544,16 +560,18 @@ export function getScenarioConfig(): ScenarioConfig {
 		worldSetting: String(row.world_setting),
 		eraRules: String(row.era_rules),
 		worldMemory: String(row.world_memory),
+		sceneNote: String(row.scene_note ?? ''),
 		pendingProposal: row.pending_proposal_json ? parse(row.pending_proposal_json) : null,
 		playerSuggestions: row.player_suggestions_json ? parse(row.player_suggestions_json) : null
 	};
 }
 
 export function updateScenarioConfig(config: ScenarioConfig): void {
-	getDb().prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, world_memory = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
+	getDb().prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, world_memory = ?, scene_note = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
 		config.worldSetting,
 		config.eraRules,
 		config.worldMemory,
+		config.sceneNote,
 		config.pendingProposal ? JSON.stringify(config.pendingProposal) : null,
 		config.playerSuggestions ? JSON.stringify(config.playerSuggestions) : null
 	);
@@ -674,6 +692,14 @@ export function updateEventNarrative(id: number, narrative: string, renderer: 't
 	getDb().prepare('UPDATE events SET narrative = ?, renderer = ? WHERE id = ?').run(narrative, renderer, id);
 }
 
+export function getRecentCharacterEvents(characterId: string, limit = 5): EventRecord[] {
+	return rows(
+		'SELECT * FROM events WHERE character_id = ? ORDER BY id DESC LIMIT ?',
+		characterId,
+		limit
+	).map(eventFromRow);
+}
+
 export function insertMemory(eventId: number, characterId: string, summary: string, turn: number): number {
 	const result = getDb()
 		.prepare('INSERT INTO memories (event_id, character_id, summary, created_turn) VALUES (?, ?, ?, ?)')
@@ -765,7 +791,7 @@ export function createLore(title: string, worldSetting: string, eraRules: string
 	const snapshot: Snapshot = {
 		world: [{ id: 1, turn: 0, day: 1, minute: 18 * 60, location: '시작 장소' }],
 		config: [{ id: 1, world_setting: cleanWorld, era_rules: cleanRules,
-			world_memory: '', pending_proposal_json: null, player_suggestions_json: null }],
+			world_memory: '', scene_note: '', pending_proposal_json: null, player_suggestions_json: null }],
 		characters: [], characterTemplates: [], events: [], memories: [], modules: [], enabledModuleIds: []
 	};
 	withTransaction(() => {
@@ -1095,15 +1121,16 @@ function restoreSnapshot(snapshot: Snapshot, replaceLoreDefinitions = false): vo
 		}
 		if (snapshot.config?.[0]) {
 			const value = snapshot.config[0];
-			db.prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, world_memory = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
+			db.prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, world_memory = ?, scene_note = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
 				value.world_setting as string,
 				value.era_rules as string,
 				(value.world_memory ?? '') as string,
+				(value.scene_note ?? '') as string,
 				value.pending_proposal_json as string | null,
 				(value.player_suggestions_json ?? null) as string | null
 			);
 		} else {
-			db.prepare('UPDATE scenario_config SET pending_proposal_json = NULL, player_suggestions_json = NULL WHERE id = 1').run();
+			db.prepare("UPDATE scenario_config SET scene_note = '', pending_proposal_json = NULL, player_suggestions_json = NULL WHERE id = 1").run();
 		}
 		if (!snapshot.modules) {
 			db.prepare('UPDATE modules SET enabled = 0').run();
