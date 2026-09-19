@@ -1,9 +1,23 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getGameView, loadGame, saveGame, switchLore } from '$lib/server/db';
-import { advanceWorld, performAction, performFreeAction, respondToProposal, runExclusive, suggestPlayerActions } from '$lib/server/game';
+import { advanceWorld, ensurePlayerSuggestions, performAction, performFreeAction, respondToProposal, runExclusive } from '$lib/server/game';
 
-export const load: PageServerLoad = () => getGameView();
+export const load: PageServerLoad = async ({ url }) => {
+	const view = getGameView();
+	const requestedTarget = url.searchParams.get('target');
+	const selectedTargetId = requestedTarget === null
+		? view.characters[0]?.id ?? ''
+		: requestedTarget === 'none'
+			? ''
+			: view.characters.some((character) => character.id === requestedTarget) ? requestedTarget : '';
+	try {
+		await ensurePlayerSuggestions(selectedTargetId);
+	} catch (error) {
+		console.warn('기본 행동 선택지를 생성하지 못했습니다:', error);
+	}
+	return { ...getGameView(), selectedTargetId };
+};
 
 export const actions: Actions = {
 	switchLore: async ({ request }) => {
@@ -33,15 +47,6 @@ export const actions: Actions = {
 				message: error instanceof Error ? error.message : '행동을 처리하지 못했습니다.',
 				level: 'error' as const
 			});
-		}
-	},
-	suggest: async ({ request }) => {
-		const body = await request.formData();
-		try {
-			await suggestPlayerActions(String(body.get('targetId') ?? ''));
-			return { message: '지금 할 수 있는 행동을 제안받았습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, { message: error instanceof Error ? error.message : '행동을 제안받지 못했습니다.', level: 'error' as const });
 		}
 	},
 	freeAct: async ({ request }) => {

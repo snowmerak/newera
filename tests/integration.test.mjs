@@ -104,12 +104,17 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(firstPage.includes('aria-label="로어 목록"'));
 		assert.ok(firstPage.includes('>망원동의 세 사람</button>'));
 		assert.ok(!firstPage.includes('data-lore-id='));
-		const sidebar = firstPage.split('<aside class="lore-sidebar"')[1].split('</aside>')[0];
+		const sidebar = firstPage.split('<aside id="lore-sidebar"')[1].split('</aside>')[0];
 		assert.ok(!sidebar.includes('로어 관리'));
 		assert.ok(sidebar.includes('aria-label="저장 슬롯"'));
 		assert.ok(!firstPage.split('<main class="reader">')[1].split('</main>')[0].includes('aria-label="저장 슬롯"'));
 		assert.ok(firstPage.includes('현재 세션'));
 		assert.ok(firstPage.includes('저장 슬롯'));
+		assert.ok(firstPage.includes('aria-label="대화와 장면"'));
+		assert.ok(firstPage.includes('aria-label="행동 요청"'));
+		assert.ok(firstPage.includes('aria-label="추천 행동"'));
+		assert.ok(firstPage.includes('사이드바 숨기기'));
+		assert.ok(!firstPage.includes('LLM에게 행동 제안 받기'));
 		assert.ok(!firstPage.includes('플레이어 체력'));
 		assert.ok(!firstPage.includes('new-lore-world'));
 		assert.ok(!firstPage.includes('href="/simulator"'));
@@ -199,10 +204,10 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.deepEqual(JSON.parse(liveHarinStats.exp_json), { social: 17, romantic: 3, seduction: 7, intimacy: 1 });
 			assert.deepEqual(JSON.parse(liveHarinStats.relation_json).player, { affection: 80, trust: 11, desire: 90, attachment: 12, jealousy: 14, resentment: 55 });
 			assert.deepEqual(JSON.parse(liveHarinStats.palam_json), { rapport: 6, comfort: 5, arousal: 3, pleasure: 2, embarrassment: 4, tension: 9, frustration: 1, satisfaction: 8 });
-			await post('suggest', { targetId: 'seoyeon' });
+			const suggestedPage = await (await fetch(`${base}/?target=seoyeon`)).text();
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 2);
 			assert.equal(JSON.parse(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json).options.length, 3);
-			assert.ok((await (await fetch(base)).text()).includes('서연에게 책을 추천한다'));
+			assert.ok(suggestedPage.includes('서연에게 책을 추천한다'));
 			await post('freeAct', { text: '서연에게 책을 추천한다', targetId: 'seoyeon' });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'custom');
 			assert.equal(db.prepare('SELECT source_json FROM events ORDER BY id DESC LIMIT 1').get().source_json, '{}');
@@ -242,8 +247,8 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(playerActionCharacterCall.responseFormat.json_schema.schema.properties.proposal.type, 'null');
 			const idleCharacterCall = modelCalls.find((call) => call.kind === 'character' && call.input.mode === 'idle');
 			assert.ok(Array.isArray(idleCharacterCall.responseFormat.json_schema.schema.properties.proposal.anyOf));
-			assert.equal(modelCalls[0].input.worldSetting, '비가 잦은 망원동');
-			assert.equal(modelCalls[1].input.character.name, '서연');
+			assert.equal(modelCalls.find((call) => call.kind === 'world').input.worldSetting, '비가 잦은 망원동');
+			assert.equal(modelCalls.find((call) => call.kind === 'character').input.character.name, '서연');
 			const characterModule = readFileSync(join(process.cwd(), 'static/modules/example-character.json'), 'utf8');
 			const worldModule = readFileSync(join(process.cwd(), 'static/modules/example-world.json'), 'utf8');
 			await postModule('underage.json', JSON.stringify({ schemaVersion: 1, id: 'invalid.age', name: 'invalid', version: '1', characters: [{ id: 'a', name: 'a', age: 19, profile: 'profile' }] }), true);
@@ -513,7 +518,8 @@ test('existing progress and legacy save slots become the first lore', async () =
 	const base = `http://127.0.0.1:${appPort}`;
 	const app = spawn(process.execPath, ['build/index.js'], {
 		cwd: process.cwd(),
-		env: { ...process.env, PORT: String(appPort), HOST: '127.0.0.1', ORIGIN: base, NEWERA_DATA_DIR: legacyDirectory },
+		env: { ...process.env, PORT: String(appPort), HOST: '127.0.0.1', ORIGIN: base, NEWERA_DATA_DIR: legacyDirectory,
+			NEWERA_LLM_BASE_URL: 'http://127.0.0.1:1/v1' },
 		stdio: 'pipe'
 	});
 	try {

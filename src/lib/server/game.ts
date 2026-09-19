@@ -235,11 +235,17 @@ export function performFreeAction(text: string, targetId: string): Promise<Event
 	return runExclusive(() => runTurn({ kind: 'free', text, targetId }));
 }
 
-export function suggestPlayerActions(targetId: string): Promise<string[]> {
+export function ensurePlayerSuggestions(targetId: string): Promise<string[]> {
 	return runExclusive(async () => {
 		const view = getGameView();
 		const character = targetId ? view.characters.find((candidate) => candidate.id === targetId) ?? null : null;
 		if (targetId && !character) throw new Error('선택한 인물을 찾을 수 없습니다.');
+		if (view.config.pendingProposal) return [];
+		if (view.config.playerSuggestions?.turn === view.world.turn &&
+			view.config.playerSuggestions.targetId === (character?.id ?? null) &&
+			view.config.playerSuggestions.options.length >= 2) {
+			return view.config.playerSuggestions.options;
+		}
 		const availableActions = (Object.keys(ACTIONS) as ActionId[])
 			.filter((id) => !actionReason(id, character))
 			.map((id) => ({ id, title: ACTIONS[id].title }));

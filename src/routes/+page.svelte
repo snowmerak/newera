@@ -1,17 +1,29 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
+	import type { EventRecord } from '$lib/game/types';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { tick } from 'svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
-	let selectedId = $state('');
 	let loreOpen = $state(false);
+	let sidebarHidden = $state(false);
 	let busy = $state(false);
-	let targetId = $derived(data.characters.some((character) => character.id === selectedId) ? selectedId : '');
+	let chatThread: HTMLDivElement;
+	let targetId = $derived(data.selectedTargetId);
 	let selected = $derived(data.characters.find((character) => character.id === targetId) ?? null);
 	let proposalCharacter = $derived(data.characters.find((character) => character.id === data.config.pendingProposal?.characterId));
 	let suggestions = $derived(data.config.playerSuggestions?.turn === data.world.turn && data.config.playerSuggestions.targetId === (targetId || null)
 		? data.config.playerSuggestions.options : []);
+	let conversationEvents = $derived([...data.events.slice(0, 12)].reverse());
+	$effect(() => {
+		data.world.turn;
+		data.config.pendingProposal;
+		void tick().then(() => {
+			if (chatThread) chatThread.scrollTop = chatThread.scrollHeight;
+		});
+	});
 	let visibleMemories = $derived.by(() => {
 		const seen = new Set<string>();
 		return data.memories.filter((memory) => {
@@ -29,12 +41,31 @@
 	};
 
 	function afterLoreSwitch(): void {
-		selectedId = '';
 		loreOpen = false;
+	}
+
+	async function changeTarget(event: Event & { currentTarget: HTMLSelectElement }): Promise<void> {
+		const id = event.currentTarget.value;
+		busy = true;
+		try {
+			await goto(`/?target=${encodeURIComponent(id || 'none')}`, { replaceState: true, keepFocus: true, noScroll: true });
+		} finally {
+			busy = false;
+		}
 	}
 
 	function timeLabel(minute: number): string {
 		return `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+	}
+
+	function characterName(id: string | null): string {
+		return data.characters.find((character) => character.id === id)?.name ?? '세계';
+	}
+
+	function requestText(event: EventRecord): string {
+		if (event.actionId === 'advance') return '다음 장면을 기다린다.';
+		if (event.summary.startsWith('플레이어 시도: ')) return event.summary.slice('플레이어 시도: '.length).split(' — ')[0];
+		return event.summary;
 	}
 
 </script>
@@ -47,11 +78,15 @@
 <div class="page">
 	<header class="topbar">
 		<div class="brand-group"><a class="brand" href="/">newera</a><span class="adult-label">성인용 텍스트 게임</span></div>
-		<div class="top-actions"><a class="top-link" href="/lores">로어 관리</a><button type="button" class="lore-toggle" aria-expanded={loreOpen} onclick={() => (loreOpen = !loreOpen)}>로어 {loreOpen ? '닫기' : '목록'}</button></div>
+		<div class="top-actions">
+			<button type="button" class="sidebar-toggle" aria-controls="lore-sidebar" aria-expanded={!sidebarHidden} onclick={() => (sidebarHidden = !sidebarHidden)}>{sidebarHidden ? '사이드바 열기' : '사이드바 숨기기'}</button>
+			<a class="top-link" href="/lores">로어 관리</a>
+			<button type="button" class="lore-toggle" aria-controls="lore-sidebar" aria-expanded={loreOpen} onclick={() => { sidebarHidden = false; loreOpen = !loreOpen; }}>로어 {loreOpen ? '닫기' : '목록'}</button>
+		</div>
 	</header>
 
-	<div class="game-layout">
-		<aside class="lore-sidebar" class:open={loreOpen} aria-label="로어 목록">
+	<div class="game-layout" class:sidebar-hidden={sidebarHidden}>
+		<aside id="lore-sidebar" class="lore-sidebar" class:open={loreOpen} class:hidden={sidebarHidden} aria-label="로어 목록">
 			<div class="lore-sidebar-inner">
 				<h2 class="lore-sidebar-title">로어</h2>
 				<nav class="lore-items" aria-label="로어 선택">
@@ -78,55 +113,78 @@
 			<section class="session-panel" aria-label="현재 세션">
 				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴</small></div>
 			</section>
-			<div class="scene-meta"><span>TURN {data.world.turn}</span><span>{data.world.day}일차 · {timeLabel(data.world.minute)}</span><span>{data.world.location}</span></div>
-			<article class="scene" aria-label="현재 장면">
-				{#each data.latestNarrative.split('\n\n') as paragraph}<p>{paragraph}</p>{/each}
-			</article>
 
-			{#if data.config.pendingProposal}
-				<section class="proposal" aria-label="등장인물의 제안">
-					<div class="eyebrow">{proposalCharacter?.name ?? '등장인물'}의 제안</div>
-					<p>{data.config.pendingProposal.text}</p>
-					<div class="button-row">
+			<section class="conversation-panel" aria-label="대화와 장면">
+				<div class="scene-meta"><span>TURN {data.world.turn}</span><span>{data.world.day}일차 · {timeLabel(data.world.minute)}</span><span>{data.world.location}</span></div>
+				<div class="chat-thread" role="log" bind:this={chatThread}>
+					{#if conversationEvents.length}
+						{#each conversationEvents as event}
+							<div class="chat-turn">
+								<article class="chat-message player-message">
+									<div class="chat-message-meta"><strong>나</strong><span>{event.day}일차 {timeLabel(event.minute)}</span></div>
+									<p>{requestText(event)}</p>
+								</article>
+								<article class="chat-message story-message">
+									<div class="chat-message-meta"><strong>{characterName(event.characterId)}</strong><span>{event.location}</span></div>
+									{#each event.narrative.split('\n\n') as paragraph}<p>{paragraph}</p>{/each}
+								</article>
+							</div>
+						{/each}
+					{:else}
+						<article class="chat-message story-message initial-message">
+							<div class="chat-message-meta"><strong>세계</strong><span>{data.world.location}</span></div>
+							{#each data.latestNarrative.split('\n\n') as paragraph}<p>{paragraph}</p>{/each}
+						</article>
+					{/if}
+					{#if data.config.pendingProposal}
+						<article class="chat-message story-message proposal-message" aria-label="등장인물의 제안">
+							<div class="chat-message-meta"><strong>{proposalCharacter?.name ?? '등장인물'}</strong><span>제안</span></div>
+							<p>{data.config.pendingProposal.text}</p>
+						</article>
+					{/if}
+				</div>
+			</section>
+
+			<section class="request-panel" aria-label="행동 요청">
+				<div class="request-panel-head">
+					<div><h2>무엇을 할까요?</h2><p>{selected ? `${selected.name}에게 할 행동을 선택하거나 직접 입력하세요.` : '행동을 선택하거나 직접 입력하세요.'}</p></div>
+					<div class="target-row">
+						<label for="target">대상</label>
+						<select id="target" value={targetId} onchange={changeTarget} disabled={busy}>
+							<option value="">지정 안 함</option>
+							{#each data.characters as character}<option value={character.id}>{character.name}</option>{/each}
+						</select>
+					</div>
+				</div>
+
+				{#if data.config.pendingProposal}
+					<div class="quick-replies proposal-replies" aria-label="제안에 답하기">
 						<form method="POST" action="?/proposal" use:enhance={submit}><button class="accent" name="answer" value="accept" disabled={busy}>수락한다</button></form>
 						<form method="POST" action="?/proposal" use:enhance={submit}><button name="answer" value="decline" disabled={busy}>거절한다</button></form>
 					</div>
-				</section>
-			{/if}
-
-			<section class="turn-controls" aria-label="진행과 행동">
-				<form method="POST" action="?/advance" use:enhance={submit}>
-					<button class="next-button" disabled={busy}>다음 장면으로 진행 <span aria-hidden="true">→</span></button>
-				</form>
-				<div class="or-label">또는 먼저 행동한다</div>
-				<div class="target-row">
-					<label for="target">행동할 인물</label>
-					<select id="target" value={targetId} onchange={(event) => (selectedId = event.currentTarget.value)}>
-						<option value="">지정 안 함</option>
-						{#each data.characters as character}<option value={character.id}>{character.name}</option>{/each}
-					</select>
-				</div>
-				<form method="POST" action="?/suggest" use:enhance={submit}>
-					<input type="hidden" name="targetId" value={targetId} />
-					<button class="suggest-button" disabled={busy}>LLM에게 행동 제안 받기</button>
-				</form>
-				{#if suggestions.length}
-					<form method="POST" action="?/freeAct" use:enhance={submit} class="suggestion-list">
+				{:else if suggestions.length}
+					<form method="POST" action="?/freeAct" use:enhance={submit} class="quick-replies" aria-label="추천 행동">
 						<input type="hidden" name="targetId" value={targetId} />
 						{#each suggestions as suggestion, index}
-							<button name="text" value={suggestion} disabled={busy}><span>{index + 1}.</span>{suggestion}</button>
+							<button name="text" value={suggestion} disabled={busy}><span>{index + 1}</span>{suggestion}</button>
 						{/each}
 					</form>
 				{/if}
-				<form method="POST" action="?/freeAct" use:enhance={submit} class="free-action-form">
+
+				<form method="POST" action="?/freeAct" use:enhance={submit} class="composer-form">
 					<input type="hidden" name="targetId" value={targetId} />
-					<label for="free-action">직접 행동 입력</label>
-					<textarea id="free-action" name="text" rows="3" required placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '예: 주변을 살핀다, 다른 장소로 이동한다'}></textarea>
-					<button disabled={busy}>행동한다</button>
+					<label class="sr-only" for="free-action">직접 행동 입력</label>
+					<textarea id="free-action" name="text" rows="2" required placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '주변을 살피거나 이동하는 등 원하는 행동을 적어 주세요'}></textarea>
+					<button disabled={busy}>보내기</button>
 				</form>
-				<p class="action-hint">인물을 지정하지 않으면 이동·탐색·휴식 같은 행동을 할 수 있습니다. era 행동에 해당하면 조건과 수치가 적용됩니다.</p>
+
+				<div class="request-footer">
+					<form method="POST" action="?/advance" use:enhance={submit}><button class="continue-button" disabled={busy}>아무 행동 없이 다음 장면으로 <span aria-hidden="true">→</span></button></form>
+					<p>인물을 지정하지 않으면 이동·탐색·휴식 같은 행동을 할 수 있습니다.</p>
+				</div>
 			</section>
-			{#if busy}<p class="feedback">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
+
+			{#if busy}<p class="feedback" role="status">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
 			{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
 
 			<div class="details-area">

@@ -40,8 +40,8 @@ const playerSuggestionsOutput: StructuredOutput = {
 			suggestions: {
 				type: 'array',
 				items: { type: 'string', minLength: 1 },
-				minItems: 3,
-				maxItems: 4
+				minItems: 2,
+				maxItems: 3
 			}
 		},
 		required: ['suggestions']
@@ -190,7 +190,7 @@ export async function generatePlayerSuggestions(input: {
 	const result = await completion(
 		[
 			'당신은 한국어 era 텍스트 게임에서 플레이어가 먼저 할 행동을 제안한다.',
-			'현재 세계, 최근 사건, 선택한 상대의 성격과 관계를 보고 서로 다른 구체적인 선택지 3개를 만든다. 반복적인 잡담과 막연한 감정 표현은 피한다.',
+			'현재 세계, 최근 사건, 선택한 상대의 성격과 관계를 보고 서로 다른 구체적인 선택지 2~3개를 만든다. 반복적인 잡담과 막연한 감정 표현은 피한다.',
 			'인물을 지정하지 않았으면 장소 탐색, 이동, 준비, 휴식처럼 특정 인물을 대상으로 하지 않는 행동을 제안한다.',
 			'상대가 선택되어 있으면 그 인물 한 명에게 하는 행동만 제안한다. 다른 등장인물을 함께 행동 대상으로 넣지 않는다. 현재 장면에서 확인되지 않은 접촉이나 약속을 이미 일어난 일처럼 전제하지 않는다.',
 			'제안은 플레이어가 시도할 행동이며 결과를 미리 확정하지 않는다. 상대의 승낙을 전제로 쓰지 않는다.',
@@ -212,13 +212,23 @@ export async function generatePlayerSuggestions(input: {
 	if (!Array.isArray(result.suggestions)) throw new Error('행동 제안 형식이 올바르지 않습니다.');
 	const otherNames = input.character
 		? input.characters.filter((character) => character.id !== input.character?.id).map((character) => character.name)
-		: [];
+		: input.characters.map((character) => character.name);
 	const suggestions = [...new Set(result.suggestions
 		.filter((value): value is string => typeof value === 'string')
 		.map((value) => value.trim())
-		.filter((value) => value && !otherNames.some((name) => value.includes(name))))].slice(0, 4);
-	if (!suggestions.length) throw new Error('생성된 행동 제안이 없습니다.');
-	return suggestions;
+		.filter((value) => value && !otherNames.some((name) => value.includes(name))))];
+	const fallback = input.character
+		? [
+			`${input.character.name}에게 지금 무슨 생각을 하는지 묻는다`,
+			`${input.character.name}의 이야기를 들어준다`,
+			`${input.character.name}에게 함께 다른 곳으로 가자고 제안한다`
+		]
+		: ['주변 상황을 자세히 살핀다', '다른 장소로 이동한다', '잠시 기다리며 상황의 변화를 지켜본다'];
+	for (const option of fallback) {
+		if (suggestions.length >= 3) break;
+		if (!suggestions.includes(option)) suggestions.push(option);
+	}
+	return suggestions.slice(0, 3);
 }
 
 export async function interpretPlayerAction(input: {
