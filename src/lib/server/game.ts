@@ -131,7 +131,12 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 			characters
 		});
 		actionId = interpreted.actionId;
-		targetId = interpreted.targetId;
+		// The selected UI target is authoritative when the interpreter recognizes a
+		// targeted command but omits its target. Small local models occasionally
+		// return this otherwise contradictory pair (for example, talk + null).
+		targetId = interpreted.targetId ?? (
+			actionId && ACTIONS[actionId].needsTarget ? request.targetId || null : null
+		);
 		if (actionId) {
 			const reason = actionReason(actionId, targetId ? getCharacter(targetId) : null);
 			if (reason) throw new Error(reason);

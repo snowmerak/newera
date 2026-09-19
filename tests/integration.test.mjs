@@ -261,8 +261,11 @@ test('world and character turns, proposals, settings, save/load', async () => {
 				{ rapport: 2, comfort: 1, tension: -1, satisfaction: 1 });
 			assert.equal(JSON.parse(db.prepare("SELECT palam_json FROM characters WHERE id = 'seoyeon'").get().palam_json).satisfaction, satisfactionBeforeCustom + 1);
 			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
-			await post('freeAct', { text: '서연과 대화한다', targetId: 'seoyeon' });
+			// The model can recognize a targeted command while omitting targetId.
+			// Preserve the valid target explicitly selected in the UI in that case.
+			await post('freeAct', { text: '선택한 상대와 대화한다', targetId: 'seoyeon' });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'talk');
+			assert.equal(db.prepare('SELECT character_id FROM events ORDER BY id DESC LIMIT 1').get().character_id, 'seoyeon');
 			assert.notEqual(db.prepare('SELECT source_json FROM events ORDER BY id DESC LIMIT 1').get().source_json, '{}');
 			await post('freeAct', { text: '서연에게 입맞춤을 제안한다', targetId: 'seoyeon' }, true);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 4);
