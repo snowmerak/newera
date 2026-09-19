@@ -1,16 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import { ACTIONS, actionReason, applyEffects, applyPalamSource, calculateSource, eventSummary } from '$lib/game/actions';
-import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type GameView, type MemoryRecord, type Proposal, type ScenarioConfig, type Source, type WorldState } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type GameView, type GenerationJob, type MemoryRecord, type Proposal, type ScenarioConfig, type Source, type WorldState } from '$lib/game/types';
 import {
+	claimGenerationJob,
+	completeGenerationJob,
+	createGenerationJob,
+	failGenerationJob,
 	getCharacter,
 	getCharacterTemplates,
 	getEffectiveScenarioConfig,
 	getGameView,
+	getLatestGenerationJob,
 	getMemories,
 	getRecentCharacterEvents,
+	getRunnableGenerationJobIds,
 	insertEvent,
 	insertMemory,
 	searchMemoryIds,
+	touchGenerationJob,
 	updateCharacter,
 	updateCharacterTemplate,
 	updateMemoryEmbedding,
@@ -23,6 +30,10 @@ import { embed, embeddingModel, generateCharacterTurn, generatePlayerSuggestions
 let turnTail: Promise<void> = Promise.resolve();
 let gameplayEpoch = 0;
 const suggestionJobs = new Map<string, Promise<string[]>>();
+const scheduledGenerationJobs = new Set<string>();
+const generationWorkerId = randomUUID();
+const GENERATION_LEASE_MS = 15_000;
+const GENERATION_HEARTBEAT_MS = 5_000;
 
 async function runTurnExclusive<T>(operation: () => Promise<T>): Promise<T> {
 	const previous = turnTail;
@@ -109,6 +120,30 @@ type TurnRequest =
 	| { kind: 'free'; text: string; targetId: string }
 	| { kind: 'accept' | 'decline' };
 
+type QueuedTurn = {
+	request: TurnRequest;
+	stateKey: string;
+};
+
+function checkedQueuedTurn(value: unknown): QueuedTurn {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('저장된 생성 요청이 올바르지 않습니다.');
+	const payload = value as Record<string, unknown>;
+	if (typeof payload.stateKey !== 'string' || !payload.request || typeof payload.request !== 'object' || Array.isArray(payload.request)) {
+		throw new Error('저장된 생성 요청이 올바르지 않습니다.');
+	}
+	const request = payload.request as Record<string, unknown>;
+	if (request.kind === 'advance' || request.kind === 'accept' || request.kind === 'decline') {
+		return { stateKey: payload.stateKey, request: { kind: request.kind } };
+	}
+	if (request.kind === 'act' && typeof request.actionId === 'string' && Object.hasOwn(ACTIONS, request.actionId) && typeof request.targetId === 'string') {
+		return { stateKey: payload.stateKey, request: { kind: 'act', actionId: request.actionId as ActionId, targetId: request.targetId } };
+	}
+	if (request.kind === 'free' && typeof request.text === 'string' && typeof request.targetId === 'string') {
+		return { stateKey: payload.stateKey, request: { kind: 'free', text: request.text, targetId: request.targetId } };
+	}
+	throw new Error('저장된 생성 요청이 올바르지 않습니다.');
+}
+
 function combineSources(...sources: Source[]): Source {
 	const combined: Source = {};
 	for (const source of sources) {
@@ -148,7 +183,10 @@ function assertGameStateCurrent(epoch: number, stateKey: string): void {
 	}
 }
 
-async function runTurn(request: TurnRequest): Promise<EventRecord> {
+async function runTurn(
+	request: TurnRequest,
+	execution?: { jobId: string; workerId: string }
+): Promise<EventRecord> {
 	const view = getGameView();
 	const { world, characters, config } = view;
 	const llmConfig = getEffectiveScenarioConfig();
@@ -172,7 +210,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		// The selected UI target is authoritative when the interpreter recognizes a
 		// targeted command but omits its target. Small local models occasionally
 		// return this otherwise contradictory pair (for example, talk + null).
-			targetId = interpreted.targetId ?? (
+		targetId = interpreted.targetId ?? (
 			actionId && ACTIONS[actionId].needsTarget ? request.targetId || null : null
 		);
 		assertGameStateCurrent(startingEpoch, startingStateKey);
@@ -283,34 +321,111 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		});
 		const eventId = insertEvent(event);
 		const memoryId = focus && memorySummary ? insertMemory(eventId, focus.id, memorySummary, nextWorld.turn) : null;
+		if (execution) completeGenerationJob(execution.jobId, execution.workerId, eventId);
 		gameplayEpoch += 1;
 		return { eventId, memoryId };
 	});
 	if (committed.memoryId && memorySummary) {
-		try {
-			updateMemoryEmbedding(committed.memoryId, await embed(memorySummary), embeddingModel);
-		} catch (error) {
-			console.warn('기억 임베딩을 건너뜁니다:', error);
-		}
+		void embed(memorySummary)
+			.then((embedding) => updateMemoryEmbedding(committed.memoryId!, embedding, embeddingModel))
+			.catch((error) => console.warn('기억 임베딩을 건너뜁니다:', error));
 	}
 	return { id: committed.eventId, ...event };
 }
 
-export function advanceWorld(): Promise<EventRecord> {
-	return runTurnExclusive(() => runTurn({ kind: 'advance' }));
+function validateQueuedRequest(request: TurnRequest, view: GameView): void {
+	if (request.kind === 'free') {
+		if (!request.text.trim()) throw new Error('행동을 입력해 주세요.');
+		if (request.targetId && !view.characters.some((character) => character.id === request.targetId)) {
+			throw new Error('선택한 인물을 찾을 수 없습니다.');
+		}
+		return;
+	}
+	if (request.kind === 'act') {
+		const target = request.targetId ? view.characters.find((character) => character.id === request.targetId) ?? null : null;
+		const reason = actionReason(request.actionId, target);
+		if (reason) throw new Error(reason);
+		return;
+	}
+	if (request.kind === 'accept' || request.kind === 'decline') {
+		if (!view.config.pendingProposal) throw new Error('응답할 제안이 없습니다.');
+		if (request.kind === 'accept') {
+			const target = view.characters.find((character) => character.id === view.config.pendingProposal?.characterId) ?? null;
+			const reason = actionReason(view.config.pendingProposal.actionId, target);
+			if (reason) throw new Error(reason);
+		}
+	}
 }
 
-export function performAction(rawActionId: string, targetId: string): Promise<EventRecord> {
+function enqueueTurn(request: TurnRequest): GenerationJob {
+	const view = getGameView();
+	validateQueuedRequest(request, view);
+	const job = createGenerationJob(view.lore.id, request.kind, {
+		request,
+		stateKey: gameStateKey(view, getEffectiveScenarioConfig())
+	});
+	scheduleGenerationJob(job.id);
+	return job;
+}
+
+async function processGenerationJob(id: string): Promise<void> {
+	await runTurnExclusive(async () => {
+		const staleBefore = new Date(Date.now() - GENERATION_LEASE_MS).toISOString();
+		const claimed = claimGenerationJob(id, generationWorkerId, staleBefore);
+		if (!claimed) return;
+		const heartbeat = setInterval(() => {
+			try {
+				touchGenerationJob(id, generationWorkerId);
+			} catch (error) {
+				console.warn('생성 작업 상태 갱신에 실패했습니다:', error);
+			}
+		}, GENERATION_HEARTBEAT_MS);
+		try {
+			const queued = checkedQueuedTurn(claimed.request);
+			if (claimed.job.loreId !== getGameView().lore.id || queued.stateKey !== currentGameStateKey()) {
+				throw new Error('게임 상태가 변경되어 대기 중이던 생성을 취소했습니다.');
+			}
+			await runTurn(queued.request, { jobId: id, workerId: generationWorkerId });
+		} catch (error) {
+			failGenerationJob(id, generationWorkerId, error instanceof Error ? error.message : '장면 생성에 실패했습니다.');
+		} finally {
+			clearInterval(heartbeat);
+		}
+	});
+}
+
+function scheduleGenerationJob(id: string): void {
+	if (scheduledGenerationJobs.has(id)) return;
+	scheduledGenerationJobs.add(id);
+	setTimeout(() => {
+		void processGenerationJob(id)
+			.catch((error) => console.error('생성 작업 실행에 실패했습니다:', error))
+			.finally(() => scheduledGenerationJobs.delete(id));
+	}, 0);
+}
+
+export function ensureGenerationWorker(): void {
+	const staleBefore = new Date(Date.now() - GENERATION_LEASE_MS).toISOString();
+	for (const id of getRunnableGenerationJobIds(staleBefore)) scheduleGenerationJob(id);
+}
+
+export function queueAdvanceWorld(): GenerationJob {
+	return enqueueTurn({ kind: 'advance' });
+}
+
+export function queueAction(rawActionId: string, targetId: string): GenerationJob {
 	if (!Object.hasOwn(ACTIONS, rawActionId)) throw new Error('알 수 없는 행동입니다.');
-	return runTurnExclusive(() => runTurn({ kind: 'act', actionId: rawActionId as ActionId, targetId }));
+	return enqueueTurn({ kind: 'act', actionId: rawActionId as ActionId, targetId });
 }
 
-export function performFreeAction(text: string, targetId: string): Promise<EventRecord> {
-	return runTurnExclusive(() => runTurn({ kind: 'free', text, targetId }));
+export function queueFreeAction(text: string, targetId: string): GenerationJob {
+	return enqueueTurn({ kind: 'free', text, targetId });
 }
 
 export function ensurePlayerSuggestions(targetId: string): Promise<string[]> {
 	const view = getGameView();
+	const generation = getLatestGenerationJob(view.lore.id);
+	if (generation?.status === 'pending' || generation?.status === 'running') return Promise.resolve([]);
 	const character = targetId ? view.characters.find((candidate) => candidate.id === targetId) ?? null : null;
 	if (targetId && !character) return Promise.reject(new Error('선택한 인물을 찾을 수 없습니다.'));
 	if (view.config.pendingProposal) return Promise.resolve([]);
@@ -344,8 +459,8 @@ export function ensurePlayerSuggestions(targetId: string): Promise<string[]> {
 	return job;
 }
 
-export function respondToProposal(answer: 'accept' | 'decline'): Promise<EventRecord> {
-	return runTurnExclusive(() => runTurn({ kind: answer }));
+export function queueProposalResponse(answer: 'accept' | 'decline'): GenerationJob {
+	return enqueueTurn({ kind: answer });
 }
 
 export function saveScenarioSettings(worldSetting: string, eraRules: string): void {

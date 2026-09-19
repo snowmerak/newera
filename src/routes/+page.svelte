@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { PALAM_METADATA, type EventRecord } from '$lib/game/types';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { tick } from 'svelte';
@@ -19,7 +19,8 @@
 	let targetId = $derived(data.selectedTargetId);
 	let selected = $derived(data.characters.find((character) => character.id === targetId) ?? null);
 	let proposalCharacter = $derived(data.characters.find((character) => character.id === data.config.pendingProposal?.characterId));
-	let interactionBusy = $derived(turnBusy || stateBusy || navigationBusy);
+	let serverGenerating = $derived(data.generation?.status === 'pending' || data.generation?.status === 'running');
+	let interactionBusy = $derived(turnBusy || serverGenerating || stateBusy || navigationBusy);
 	let suggestionKey = $derived(JSON.stringify({
 		loreId: data.lore.id,
 		world: data.world,
@@ -44,7 +45,7 @@
 	$effect(() => {
 		const key = suggestionKey;
 		const requestedTargetId = targetId;
-		if (data.config.pendingProposal || storedSuggestions.length || lazySuggestionSet?.key === key) {
+		if (serverGenerating || data.config.pendingProposal || storedSuggestions.length || lazySuggestionSet?.key === key) {
 			suggestionLoading = false;
 			return;
 		}
@@ -66,6 +67,39 @@
 			if (suggestionKey === key) suggestionLoading = false;
 		});
 		return () => controller.abort();
+	});
+	$effect(() => {
+		const generation = data.generation;
+		if (!generation || (generation.status !== 'pending' && generation.status !== 'running')) return;
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let stopped = false;
+		const poll = async (): Promise<void> => {
+			try {
+				const response = await fetch(`/api/generation?id=${encodeURIComponent(generation.id)}`, {
+					signal: controller.signal,
+					headers: { accept: 'application/json' },
+					cache: 'no-store'
+				});
+				const result = await response.json() as { generation?: { status?: unknown } | null };
+				const status = result.generation?.status;
+				if (status === 'pending' || status === 'running') {
+					if (!stopped) timer = setTimeout(poll, 1000);
+					return;
+				}
+				if (!stopped) await invalidateAll();
+			} catch (error) {
+				if (!(error instanceof DOMException && error.name === 'AbortError') && !stopped) {
+					timer = setTimeout(poll, 1500);
+				}
+			}
+		};
+		timer = setTimeout(poll, 500);
+		return () => {
+			stopped = true;
+			controller.abort();
+			if (timer) clearTimeout(timer);
+		};
 	});
 	let visibleMemories = $derived.by(() => {
 		const seen = new Set<string>();
@@ -247,7 +281,7 @@
 				<form method="POST" action="?/freeAct" use:enhance={submitTurn} class="composer-form">
 					<input type="hidden" name="targetId" value={targetId} />
 					<label class="sr-only" for="free-action">직접 행동 입력</label>
-					<textarea id="free-action" name="text" rows="2" required placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '주변을 살피거나 이동하는 등 원하는 행동을 적어 주세요'}></textarea>
+					<textarea id="free-action" name="text" rows="2" required disabled={interactionBusy} placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '주변을 살피거나 이동하는 등 원하는 행동을 적어 주세요'}></textarea>
 					<button disabled={interactionBusy}>보내기</button>
 				</form>
 
@@ -257,8 +291,9 @@
 				</div>
 			</section>
 
-			{#if turnBusy}<p class="feedback" role="status">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
+			{#if turnBusy || serverGenerating}<p class="feedback" role="status">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
 			{#if saveBusy}<p class="feedback" role="status">현재 진행을 저장하고 있어요…</p>{/if}
+			{#if data.generation?.status === 'failed'}<p class="feedback error" role="alert">{data.generation.error ?? '장면 생성에 실패했습니다.'}</p>{/if}
 			{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
 
 			<div class="details-area">

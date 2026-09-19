@@ -110,12 +110,34 @@ test('world and character turns, proposals, settings, save/load', async () => {
 	const base = `http://127.0.0.1:${appPort}`;
 	const manageActions = new Set(['createLore', 'renameLore', 'scenario', 'character', 'installModule', 'toggleModule', 'selectWorld', 'importLore', 'deleteLore']);
 	const simulatorActions = new Set(['conversation', 'edit']);
-	const post = async (action, fields = {}, expectFailure = false) => {
+	const generationActions = new Set(['advance', 'act', 'freeAct', 'proposal']);
+	const generationStatus = async () => {
+		const response = await fetch(`${base}/api/generation`);
+		assert.equal(response.status, 200);
+		return (await response.json()).generation;
+	};
+	const waitForGeneration = async (expectFailure = false) => {
+		for (let attempt = 0; attempt < 400; attempt += 1) {
+			const generation = await generationStatus();
+			if (generation && (generation.status === 'completed' || generation.status === 'failed')) {
+				assert.equal(generation.status === 'failed', expectFailure, generation.error ?? 'generation status');
+				return generation;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+		assert.fail('generation did not finish');
+	};
+	const post = async (action, fields = {}, expectFailure = false, waitForTurn = true) => {
 		const path = manageActions.has(action) ? '/lores' : simulatorActions.has(action) ? '/simulator' : '/';
 		const response = await fetch(`${base}${path}?/${action}`, { method: 'POST', headers: { Origin: base }, body: new URLSearchParams(fields) });
 		const body = await response.text();
 		assert.equal(response.status, 200, `${action}: ${body}`);
-		assert.equal(body.includes('"type":"failure"'), expectFailure, `${action}: ${body}`);
+		const immediateFailure = body.includes('"type":"failure"');
+		if (generationActions.has(action) && !immediateFailure) {
+			if (waitForTurn) await waitForGeneration(expectFailure);
+			return;
+		}
+		assert.equal(immediateFailure, expectFailure, `${action}: ${body}`);
 	};
 	const postModule = async (name, contents, expectFailure = false) => {
 		const form = new FormData();
@@ -300,8 +322,13 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const worldRelease = new Promise((resolve) => { releaseWorld = resolve; });
 			pausedWorld = { started: markWorldStarted, wait: worldRelease };
 			failNextWorld = true;
-			const failedTurn = post('advance', {}, true);
+			await post('advance', {}, false, false);
 			await worldStarted;
+			const runningGeneration = await generationStatus();
+			assert.equal(runningGeneration.status, 'running');
+			const generatingPage = await (await fetch(base)).text();
+			assert.ok(generatingPage.includes('세계와 인물이 다음 장면을 만들고 있어요'));
+			assert.match(generatingPage, /id="free-action"[^>]*disabled/);
 			let saveFinishedBeforeWorld = false;
 			try {
 				saveFinishedBeforeWorld = await Promise.race([
@@ -312,21 +339,21 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			} finally {
 				releaseWorld();
 			}
-			await failedTurn;
+			await waitForGeneration(true);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
 			let releaseStaleWorld;
 			let markStaleWorldStarted;
 			const staleWorldStarted = new Promise((resolve) => { markStaleWorldStarted = resolve; });
 			const staleWorldRelease = new Promise((resolve) => { releaseStaleWorld = resolve; });
 			pausedWorld = { started: markStaleWorldStarted, wait: staleWorldRelease };
-			const staleTurn = post('advance', {}, true);
+			await post('advance', {}, false, false);
 			await staleWorldStarted;
 			try {
 				await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
 			} finally {
 				releaseStaleWorld();
 			}
-			await staleTurn;
+			await waitForGeneration(true);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
 			await post('save', { slot: '1' });
 			await post('advance');

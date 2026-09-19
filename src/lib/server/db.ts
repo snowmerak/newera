@@ -8,6 +8,7 @@ import type {
 	CharacterLore,
 	EventRecord,
 	GameView,
+	GenerationJob,
 	InstalledModule,
 	LoreSummary,
 	MemoryRecord,
@@ -104,6 +105,20 @@ function eventFromRow(row: Row): EventRecord {
 		renderer: String(row.renderer) as EventRecord['renderer'],
 		semanticEvent: row.semantic_json ? parse(row.semantic_json) : null,
 		stateChanges: row.state_changes_json ? parse(row.state_changes_json) : []
+	};
+}
+
+function generationJobFromRow(row: Row): GenerationJob {
+	return {
+		id: String(row.id),
+		loreId: String(row.lore_id),
+		kind: String(row.kind) as GenerationJob['kind'],
+		status: String(row.status) as GenerationJob['status'],
+		createdAt: String(row.created_at),
+		startedAt: row.started_at ? String(row.started_at) : null,
+		completedAt: row.completed_at ? String(row.completed_at) : null,
+		error: row.error ? String(row.error) : null,
+		resultEventId: row.result_event_id === null ? null : Number(row.result_event_id)
 	};
 }
 
@@ -237,6 +252,24 @@ export function getDb(): DatabaseSync {
 			snapshot_json TEXT NOT NULL,
 			PRIMARY KEY (lore_id, slot)
 		);
+		CREATE TABLE IF NOT EXISTS generation_jobs (
+			id TEXT PRIMARY KEY,
+			lore_id TEXT NOT NULL REFERENCES lores(id) ON DELETE CASCADE,
+			kind TEXT NOT NULL,
+			request_json TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+			created_at TEXT NOT NULL,
+			started_at TEXT,
+			heartbeat_at TEXT,
+			completed_at TEXT,
+			worker_id TEXT,
+			error TEXT,
+			result_event_id INTEGER
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS generation_jobs_active_lore
+			ON generation_jobs(lore_id) WHERE status IN ('pending', 'running');
+		CREATE INDEX IF NOT EXISTS generation_jobs_recent_lore
+			ON generation_jobs(lore_id, created_at DESC);
 		CREATE TABLE IF NOT EXISTS modules (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -388,6 +421,80 @@ export function withTransaction<T>(operation: () => T): T {
 		db.exec('ROLLBACK');
 		throw error;
 	}
+}
+
+export function createGenerationJob(
+	loreId: string,
+	kind: GenerationJob['kind'],
+	request: unknown
+): GenerationJob {
+	const active = one(`SELECT * FROM generation_jobs
+		WHERE lore_id = ? AND status IN ('pending', 'running') LIMIT 1`, loreId);
+	if (active) throw new Error('이미 다음 장면을 생성하고 있습니다.');
+	const id = randomUUID();
+	const createdAt = new Date().toISOString();
+	try {
+		getDb().prepare(`INSERT INTO generation_jobs
+			(id, lore_id, kind, request_json, status, created_at)
+			VALUES (?, ?, ?, ?, 'pending', ?)`).run(id, loreId, kind, JSON.stringify(request), createdAt);
+	} catch (error) {
+		if (String(error).includes('UNIQUE')) throw new Error('이미 다음 장면을 생성하고 있습니다.');
+		throw error;
+	}
+	return getGenerationJob(id)!;
+}
+
+export function getGenerationJob(id: string): GenerationJob | null {
+	const row = one('SELECT * FROM generation_jobs WHERE id = ?', id);
+	return row ? generationJobFromRow(row) : null;
+}
+
+export function getLatestGenerationJob(loreId: string): GenerationJob | null {
+	const row = one('SELECT * FROM generation_jobs WHERE lore_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', loreId);
+	return row ? generationJobFromRow(row) : null;
+}
+
+export function getRunnableGenerationJobIds(staleBefore: string): string[] {
+	return rows(`SELECT id FROM generation_jobs
+		WHERE status = 'pending' OR (status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?))
+		ORDER BY created_at`, staleBefore).map((row) => String(row.id));
+}
+
+export function claimGenerationJob(
+	id: string,
+	workerId: string,
+	staleBefore: string
+): { job: GenerationJob; request: unknown } | null {
+	const now = new Date().toISOString();
+	const result = getDb().prepare(`UPDATE generation_jobs SET
+		status = 'running', worker_id = ?, started_at = COALESCE(started_at, ?), heartbeat_at = ?, error = NULL
+		WHERE id = ? AND (status = 'pending' OR
+			(status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?)))`)
+		.run(workerId, now, now, id, staleBefore);
+	if (Number(result.changes) !== 1) return null;
+	const row = one('SELECT * FROM generation_jobs WHERE id = ?', id)!;
+	return { job: generationJobFromRow(row), request: parse(row.request_json) };
+}
+
+export function touchGenerationJob(id: string, workerId: string): void {
+	getDb().prepare(`UPDATE generation_jobs SET heartbeat_at = ?
+		WHERE id = ? AND status = 'running' AND worker_id = ?`)
+		.run(new Date().toISOString(), id, workerId);
+}
+
+export function completeGenerationJob(id: string, workerId: string, eventId: number): void {
+	const result = getDb().prepare(`UPDATE generation_jobs SET
+		status = 'completed', completed_at = ?, heartbeat_at = ?, error = NULL, result_event_id = ?
+		WHERE id = ? AND status = 'running' AND worker_id = ?`)
+		.run(new Date().toISOString(), new Date().toISOString(), eventId, id, workerId);
+	if (Number(result.changes) !== 1) throw new Error('생성 작업의 실행 권한을 잃었습니다.');
+}
+
+export function failGenerationJob(id: string, workerId: string, error: string): void {
+	getDb().prepare(`UPDATE generation_jobs SET
+		status = 'failed', completed_at = ?, heartbeat_at = ?, error = ?
+		WHERE id = ? AND status = 'running' AND worker_id = ?`)
+		.run(new Date().toISOString(), new Date().toISOString(), error.slice(0, 1000), id, workerId);
 }
 
 export function getWorld(): WorldState {
@@ -754,6 +861,10 @@ function activeLoreId(): string {
 	const row = one('SELECT active_lore_id FROM lore_meta WHERE id = 1');
 	if (!row) throw new Error('현재 로어를 찾을 수 없습니다.');
 	return String(row.active_lore_id);
+}
+
+export function getActiveLoreId(): string {
+	return activeLoreId();
 }
 
 export function getLores(): LoreSummary[] {

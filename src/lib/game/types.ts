@@ -272,6 +272,20 @@ export interface PlayerSuggestionSet {
 	options: string[];
 }
 
+export type GenerationJobStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export interface GenerationJob {
+	id: string;
+	loreId: string;
+	kind: 'advance' | 'act' | 'free' | 'accept' | 'decline';
+	status: GenerationJobStatus;
+	createdAt: string;
+	startedAt: string | null;
+	completedAt: string | null;
+	error: string | null;
+	resultEventId: number | null;
+}
+
 export interface ScenarioConfig {
 	worldSetting: string;
 	eraRules: string;

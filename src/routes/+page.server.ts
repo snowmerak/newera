@@ -1,9 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getGameView, loadGame, resetCurrentSession, saveGame, switchLore } from '$lib/server/db';
-import { advanceWorld, mutateGameState, performAction, performFreeAction, respondToProposal } from '$lib/server/game';
+import { getGameView, getLatestGenerationJob, loadGame, resetCurrentSession, saveGame, switchLore } from '$lib/server/db';
+import { ensureGenerationWorker, mutateGameState, queueAction, queueAdvanceWorld, queueFreeAction, queueProposalResponse } from '$lib/server/game';
 
 export const load: PageServerLoad = ({ url }) => {
+	ensureGenerationWorker();
 	const view = getGameView();
 	const requestedTarget = url.searchParams.get('target');
 	const selectedTargetId = requestedTarget === null
@@ -11,7 +12,7 @@ export const load: PageServerLoad = ({ url }) => {
 		: requestedTarget === 'none'
 			? ''
 			: view.characters.some((character) => character.id === requestedTarget) ? requestedTarget : '';
-	return { ...view, selectedTargetId };
+	return { ...view, selectedTargetId, generation: getLatestGenerationJob(view.lore.id) };
 };
 
 export const actions: Actions = {
@@ -26,8 +27,8 @@ export const actions: Actions = {
 	},
 	advance: async () => {
 		try {
-			await advanceWorld();
-			return { message: '세계가 다음 장면으로 진행됐습니다.', level: 'success' as const };
+			queueAdvanceWorld();
+			return { message: '다음 장면 생성을 시작했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : '장면을 진행하지 못했습니다.', level: 'error' as const });
 		}
@@ -35,8 +36,8 @@ export const actions: Actions = {
 	act: async ({ request }) => {
 		const body = await request.formData();
 		try {
-			await performAction(String(body.get('actionId') ?? ''), String(body.get('targetId') ?? ''));
-			return { message: '새로운 사건이 기록됐습니다.', level: 'success' as const };
+			queueAction(String(body.get('actionId') ?? ''), String(body.get('targetId') ?? ''));
+			return { message: '행동 결과 생성을 시작했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, {
 				message: error instanceof Error ? error.message : '행동을 처리하지 못했습니다.',
@@ -47,8 +48,8 @@ export const actions: Actions = {
 	freeAct: async ({ request }) => {
 		const body = await request.formData();
 		try {
-			await performFreeAction(String(body.get('text') ?? ''), String(body.get('targetId') ?? ''));
-			return { message: '행동을 진행했습니다.', level: 'success' as const };
+			queueFreeAction(String(body.get('text') ?? ''), String(body.get('targetId') ?? ''));
+			return { message: '행동 결과 생성을 시작했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : '행동을 진행하지 못했습니다.', level: 'error' as const });
 		}
@@ -58,8 +59,8 @@ export const actions: Actions = {
 		const answer = String(body.get('answer') ?? '');
 		if (answer !== 'accept' && answer !== 'decline') return fail(400, { message: '응답이 올바르지 않습니다.', level: 'error' as const });
 		try {
-			await respondToProposal(answer);
-			return { message: '제안에 응답했습니다.', level: 'success' as const };
+			queueProposalResponse(answer);
+			return { message: '제안에 대한 장면 생성을 시작했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : '제안에 응답하지 못했습니다.', level: 'error' as const });
 		}
