@@ -11,6 +11,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"test:integration": "npm run build && node --test tests/integration.test.mjs",
 		"test:simulation": "node --experimental-strip-types --test tests/simulation.test.mjs",
+		"lore:build": "node skills/newera-lore-authoring/scripts/build-lore.mjs",
+		"lore:validate": "node skills/newera-lore-authoring/scripts/validate-lore.mjs",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
 	},
 	"devDependencies": {

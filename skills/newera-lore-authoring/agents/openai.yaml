@@ -1,0 +1,4 @@
+interface:
+  display_name: "newera 로어 제작"
+  short_description: "newera용 세계관·성인 캐릭터 로어 JSON 제작 및 검증"
+  default_prompt: "Use $newera-lore-authoring to create an importable newera lore JSON from my setting and character notes."

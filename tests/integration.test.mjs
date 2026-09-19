@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { buildBundle } from '../skills/newera-lore-authoring/scripts/lore-format.mjs';
 
 const dataDirectory = mkdtempSync(join(tmpdir(), 'newera-integration-'));
 const modelCalls = [];
@@ -628,6 +629,16 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(JSON.parse(legacyRow.exp_json).social, 7);
 			assert.equal(JSON.parse(legacyRow.relation_json).player.affection, 80);
 			assert.equal(JSON.parse(legacyRow.palam_json).comfort, 6);
+
+			const authoringSource = JSON.parse(readFileSync(join(process.cwd(), 'skills/newera-lore-authoring/assets/example-source.json'), 'utf8'));
+			const authoredFile = new FormData();
+			authoredFile.append('loreFile', new Blob([JSON.stringify(buildBundle(authoringSource))], { type: 'application/json' }), 'authored-example.json');
+			const authoredImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: authoredFile });
+			assert.equal(authoredImport.status, 200);
+			assert.ok(!(await authoredImport.text()).includes('"type":"failure"'));
+			assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, '비 오는 동네의 저녁');
+			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'sensual');
+			assert.equal(db.prepare('SELECT name FROM characters').get().name, '서연');
 
 			const songSoiPreset = readFileSync(join(process.cwd(), 'static/lore-presets/song-soi.json'), 'utf8');
 			const songSoiFile = new FormData();

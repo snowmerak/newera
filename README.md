@@ -43,4 +43,6 @@ npm run dev
   - 여성향 오피스 로맨스: [크리스마스 전의 90일](static/lore-presets/ninety-days-before-christmas.json)
   - 여성향 도시 미스터리 로맨스: [청연시 이상현상 전담반](static/lore-presets/blue-moon-anomaly-unit.json)
 
+직접 로어 JSON을 만들 때는 [로어 JSON 작성 가이드](docs/LORE_JSON_GUIDE.md)를 참고하세요. `newera-lore-source` 원본을 완성형 import 파일로 변환하고 검증하는 도구와, 같은 작업을 수행하는 설치 가능한 [`newera-lore-authoring` Agent Skill](skills/newera-lore-authoring/SKILL.md)이 포함되어 있습니다.
+
 기억은 SQLite FTS5 trigram/BM25와 임베딩 유사도로 검색합니다. `data/newera.sqlite`에는 이전 실험판의 데이터가 남아 있을 수 있으며, 시작 장면은 새 데이터 저장소에서 생성됩니다.
