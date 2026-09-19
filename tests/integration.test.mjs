@@ -102,7 +102,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(ready, 'app did not start');
 		const firstPage = await (await fetch(base)).text();
 		assert.ok(firstPage.includes('aria-label="로어 목록"'));
-		assert.ok(firstPage.includes('>망원동</button>'));
+		assert.ok(firstPage.includes('>망원동의 세 사람</button>'));
 		assert.ok(!firstPage.includes('data-lore-id='));
 		const sidebar = firstPage.split('<aside class="lore-sidebar"')[1].split('</aside>')[0];
 		assert.ok(!sidebar.includes('로어 관리'));
@@ -298,7 +298,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '외딴 저택의 밤');
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(secondLoreId).n, 0);
 			const secondPage = await (await fetch(base)).text();
-			assert.ok(secondPage.includes('>망원동</button>'));
+			assert.ok(secondPage.includes('>망원동의 세 사람</button>'));
 			assert.ok(secondPage.includes('>비밀의 저택</button>'));
 			assert.ok(secondPage.includes('0/3 사용 중'));
 			await post('load', { slot: '2' }, true);
@@ -457,6 +457,16 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(JSON.parse(legacyRow.exp_json).social, 7);
 			assert.equal(JSON.parse(legacyRow.relation_json).player.affection, 80);
 			assert.equal(JSON.parse(legacyRow.palam_json).comfort, 6);
+
+			const songSoiPreset = readFileSync(join(process.cwd(), 'static/lore-presets/song-soi.json'), 'utf8');
+			const songSoiFile = new FormData();
+			songSoiFile.append('loreFile', new Blob([songSoiPreset], { type: 'application/json' }), 'song-soi.json');
+			const songSoiImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: songSoiFile });
+			assert.equal(songSoiImport.status, 200);
+			assert.ok(!(await songSoiImport.text()).includes('"type":"failure"'));
+			assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, '송소이와 함께 사는 날들');
+			assert.equal(db.prepare('SELECT name FROM characters').get().name, '송소이');
+			assert.equal(JSON.parse(db.prepare('SELECT relation_json FROM characters').get().relation_json).player.attachment, 86);
 		} finally {
 			db.close();
 		}
@@ -506,7 +516,7 @@ test('existing progress and legacy save slots become the first lore', async () =
 		assert.ok(ready, 'app did not start');
 		const migrated = new DatabaseSync(path);
 		try {
-			assert.equal(migrated.prepare('SELECT title FROM lores').get().title, '기존 로어');
+			assert.equal(migrated.prepare('SELECT title FROM lores').get().title, '망원동의 세 사람');
 			assert.equal(migrated.prepare('SELECT turn FROM world_state').get().turn, 9);
 			assert.equal(migrated.prepare('SELECT energy FROM player_state').get().energy, 12);
 			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lore_save_slots').get().n, 1);

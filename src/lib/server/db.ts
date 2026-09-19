@@ -288,7 +288,7 @@ export function getDb(): DatabaseSync {
 		withTransaction(() => {
 			const id = randomUUID();
 			db.prepare('INSERT INTO lores (id, title, state_json, created_at) VALUES (?, ?, NULL, ?)')
-				.run(id, hadWorld ? '기존 로어' : '망원동', new Date().toISOString());
+				.run(id, '망원동의 세 사람', new Date().toISOString());
 			db.prepare('INSERT INTO lore_meta (id, active_lore_id) VALUES (1, ?)').run(id);
 			db.prepare(`INSERT INTO lore_save_slots (lore_id, slot, saved_at, turn, snapshot_json)
 				SELECT ?, slot, saved_at, turn, snapshot_json FROM save_slots`).run(id);
