@@ -483,6 +483,25 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, '송소이와 함께 사는 날들');
 			assert.equal(db.prepare('SELECT name FROM characters').get().name, '송소이');
 			assert.equal(JSON.parse(db.prepare('SELECT relation_json FROM characters').get().relation_json).player.attachment, 86);
+
+			const genrePresets = [
+				['midnight-haeundae-guesthouse.json', '심야의 해운대 게스트하우스', '윤하늘'],
+				['ninety-days-before-christmas.json', '크리스마스 전의 90일', '서도현'],
+				['blue-moon-anomaly-unit.json', '청연시 이상현상 전담반', '김무진']
+			];
+			for (const [fileName, title, firstCharacter] of genrePresets) {
+				const preset = readFileSync(join(process.cwd(), 'static/lore-presets', fileName), 'utf8');
+				const presetFile = new FormData();
+				presetFile.append('loreFile', new Blob([preset], { type: 'application/json' }), fileName);
+				const presetImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: presetFile });
+				assert.equal(presetImport.status, 200);
+				assert.ok(!(await presetImport.text()).includes('"type":"failure"'));
+				assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, title);
+				assert.equal(db.prepare('SELECT name FROM characters ORDER BY sort_order LIMIT 1').get().name, firstCharacter);
+				assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
+				assert.equal(db.prepare('SELECT count(*) AS n FROM characters WHERE age < 20').get().n, 0);
+				assert.ok(JSON.parse(db.prepare('SELECT action_requirements_json FROM characters ORDER BY sort_order LIMIT 1').get().action_requirements_json).length >= 7);
+			}
 		} finally {
 			db.close();
 		}

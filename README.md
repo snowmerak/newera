@@ -37,6 +37,10 @@ npm run dev
 - 인물별 행동 선행 조건은 로어 관리의 표에서 `행동 · 수치 · 최소값` 행으로 편집합니다. `+`로 조건을 추가하고 `−`로 지웁니다. 조건이 없는 행동은 숫자 조건으로 잠기지 않으며, 입맞춤 MARK도 고정 조건으로 사용하지 않습니다.
 - 로어 관리 화면에서 세계관과 성인 등장인물 모듈을 설치하고 적용합니다. 세계관 모듈은 한 번에 하나, 인물 모듈은 여러 개를 켤 수 있습니다. [형식과 예시](static/modules/README.md)를 참고하세요. 모듈을 꺼도 해당 로어의 인물 진행과 기억은 유지됩니다.
 - 진행은 SQLite에 자동 저장됩니다. **각 로어마다 슬롯 1~3**에 스냅샷을 저장·불러올 수 있습니다. 이전 버전의 진행과 슬롯은 최초 실행 시 `망원동의 세 사람` 로어로 연결됩니다. 옛 수치는 새 스키마로 변환하며, `EXP.conversation`과 `EXP.empathy`는 `EXP.social`로 합산하고 `PALAM.trust`는 `PALAM.comfort`로 옮깁니다. 옛 플레이어 체력은 불러오되 사용하거나 다시 저장하지 않습니다.
-- 송소이 캐릭터와 동거 생활 설정은 [송소이와 함께 사는 날들](static/lore-presets/song-soi.json) 로어 파일로 제공하며 로어 관리 화면에서 가져올 수 있습니다.
+- `static/lore-presets`의 완성형 로어 파일은 로어 관리 화면에서 바로 가져올 수 있습니다.
+  - 개인 캐릭터: [송소이와 함께 사는 날들](static/lore-presets/song-soi.json)
+  - 남성향 생활형 연애: [심야의 해운대 게스트하우스](static/lore-presets/midnight-haeundae-guesthouse.json)
+  - 여성향 오피스 로맨스: [크리스마스 전의 90일](static/lore-presets/ninety-days-before-christmas.json)
+  - 여성향 도시 미스터리 로맨스: [청연시 이상현상 전담반](static/lore-presets/blue-moon-anomaly-unit.json)
 
 기억은 SQLite FTS5 trigram/BM25와 임베딩 유사도로 검색합니다. `data/newera.sqlite`에는 이전 실험판의 데이터가 남아 있을 수 있으며, 시작 장면은 새 데이터 저장소에서 생성됩니다.

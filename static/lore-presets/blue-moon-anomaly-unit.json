@@ -1,0 +1,107 @@
+{
+  "format": "newera-lore",
+  "version": 1,
+  "title": "청연시 이상현상 전담반",
+  "state": {
+    "world": [
+      {
+        "id": 1,
+        "turn": 0,
+        "day": 1,
+        "minute": 1360,
+        "location": "청연시 · 폐쇄된 지하철 청연역"
+      }
+    ],
+    "config": [
+      {
+        "id": 1,
+        "world_setting": "가까운 미래의 한국 해안도시 청연시. 27세 여성인 플레이어는 사람과 장소에 남은 감정의 잔향을 읽는 민간 감응사다. 최근 도시 곳곳에서 기억을 잃게 만드는 청색 균열이 발생했고, 시청은 경찰·의료진·민간 전문가를 모아 비공개 이상현상 전담반을 만들었다.\n\n균열은 강한 미련과 거짓말에 반응해 공간을 뒤틀고, 닫히지 않으면 주변 사람의 기억 일부를 가져간다. 전담반은 현장 기록, 증언, 감응, 의료 데이터와 도시 기반 시설을 함께 조사해야 한다. 균열을 봉쇄하는 장치에는 사용 횟수와 부작용이 있고, 감응을 과도하게 쓰면 플레이어도 최근 기억을 잃을 수 있다.\n\n도시는 평범한 일상을 유지하려 하지만 실종 사건, 언론 통제, 종교 집단, 장비를 독점한 기업과 피해자 가족이 서로 다른 진실을 요구한다. 사건 해결, 조직의 신뢰, 인물의 비밀과 로맨스가 병행된다. 시작 시점은 밤 10시 40분이다. 폐쇄된 청연역에서 네 번째 균열이 열렸고, CCTV에는 전담반원 중 한 명과 똑같은 사람이 먼저 들어가는 장면이 남았다.",
+        "era_rules": "세계 세션은 이상현상 사건과 도시의 일상을 함께 진행한다. 단서, 증언, 장비 한계, 기관의 이해관계와 시간 제한이 서로 영향을 주며, 로맨스 장면 뒤에도 사건은 멈추지 않는다. 매 장면은 새로운 단서, 위험, 윤리적 선택, 휴식, 관계 제안 중 하나 이상을 제공한다. 설명만 길게 늘어놓지 말고 조사와 행동으로 세계 규칙을 드러낸다.\n\n플레이어는 보호받기만 하는 인물이 아니라 고유 능력과 판단을 가진 전문 조사자다. 세 남성은 각자의 임무와 비밀 때문에 플레이어에게 협력하거나 반대하고, 서로도 독립적으로 행동한다. 위기에서 구해 준 일을 연애적 채무로 취급하지 않는다. 위험한 현장에서는 안전 확보를 우선하고, 공포·부상·능력 부작용으로 판단이 흐린 상태를 친밀한 관계의 기회로 이용하지 않는다.\n\nTRAIT·TALENT·ABL·EXP·MARK·RELATION은 장기 상태, PALAM은 현재 반응이다. 비밀을 공유하면 신뢰가 오를 수 있지만 거짓말이 드러나면 호감과 신뢰가 서로 다르게 변한다. 인물별 행동 선행 조건과 각자의 연애 속도를 유지한다. 모든 등장인물은 성인이며 친밀한 행동에는 명확한 상호 동의가 필요하다.\n\n문체는 도시 미스터리와 성인 로맨스의 긴장을 유지한다. 단서를 임의로 뒤집거나 초능력으로 즉시 해결하지 않는다. 각 인물의 전문성이 실제 조사에 쓰이게 하고, 반복적인 보호 선언·운명론·얼굴 붉힘보다 선택, 의심, 협업과 사적인 취약성을 보여 준다.",
+        "world_memory": "청연시에 네 번째 청색 균열이 열렸다. 폐쇄된 청연역 CCTV에는 전담반원과 똑같은 인물이 사건 발생 전에 역으로 들어가는 모습이 기록되었다.",
+        "pending_proposal_json": null,
+        "player_suggestions_json": null
+      }
+    ],
+    "characters": [
+      {
+        "id": "kim-mujin",
+        "module_id": null,
+        "sort_order": 0,
+        "name": "김무진",
+        "age": 34,
+        "portrait": "",
+        "introduction": "봉쇄선을 직접 확인한 뒤, 팀원들의 퇴로와 통신 시간을 먼저 계산한다.",
+        "profile": "34세 경찰 경감이자 이상현상 전담반 현장팀장. 연쇄 실종 사건을 추적하다 동료를 잃었고, 공식 보고서가 조작되었다고 의심한다. 현장 통제, 사격, 심문과 위험 평가에 능하지만 불확실한 정보를 혼자 떠안아 부하의 선택권을 빼앗는 경향이 있다.\n\n무진은 말이 적고 규칙을 중시한다. 플레이어의 감응 능력을 위험한 도구로 보지 않고 전문 기술로 존중하지만, 부작용이 나타나면 임무에서 배제하려 든다. 사적인 감정이 지휘 판단을 흐릴까 두려워 관계를 엄격하게 구분한다. 신뢰가 쌓이면 명령보다 이유를 설명하고 자신의 실패 기록을 공유한다. 실종된 동료의 모습이 이번 CCTV에 찍혔다는 사실을 아직 팀에 알리지 않았다.",
+        "base_json": "{\"energy\":20,\"maxEnergy\":20}",
+        "trait_json": "[\"철벽\",\"지휘관\",\"보호 본능\",\"죄책감\",\"원칙적\"]",
+        "talent_json": "{\"pride\":79,\"openness\":24,\"libido\":44,\"modesty\":76,\"assertiveness\":90,\"receptiveness\":35,\"curiosity\":48}",
+        "abl_json": "{\"conversation\":3,\"empathy\":3,\"seduction\":1,\"intimacy\":2}",
+        "exp_json": "{\"social\":70,\"romantic\":18,\"seduction\":5,\"intimacy\":14}",
+        "mark_json": "[]",
+        "relation_json": "{\"player\":{\"affection\":3,\"trust\":7,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"ryu-sian\":{\"affection\":8,\"trust\":20,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":5},\"baek-ihyeon\":{\"affection\":2,\"trust\":1,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":22}}",
+        "palam_json": "{\"rapport\":0,\"comfort\":0,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":15,\"frustration\":5,\"satisfaction\":0}",
+        "action_requirements_json": "[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":16},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":36},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":34},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":14},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":62},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":60},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":30}]"
+      },
+      {
+        "id": "ryu-sian",
+        "module_id": null,
+        "sort_order": 1,
+        "name": "류시안",
+        "age": 31,
+        "portrait": "",
+        "introduction": "환자의 동공과 맥박을 살피면서도, 방 안에 남은 낯선 냄새를 기록한다.",
+        "profile": "31세 응급의학과 의사이자 균열 노출 환자를 담당하는 전담반 의료관. 침착한 진료와 관찰력이 뛰어나며, 초자연 현상을 병리학적 언어로 기록한다. 환자를 살리는 동시에 균열이 인간 기억에 남기는 변화를 증명해 연구소의 은폐를 막는 것이 목표다.\n\n시안은 부드럽고 잘 들어 주지만 필요한 정보를 얻기 위해 질문의 순서를 설계한다. 돌봄과 통제를 혼동하는 면이 있어 환자에게 선택권을 돌려주는 법을 배워야 한다. 사적인 호감은 농담보다 세심한 배려와 긴 대화로 표현하며, 상대가 자신의 보호 아래 있지 않을 때만 관계를 진전시키려 한다. 어린 시절 균열 사고 생존자이고 자신의 기억 일부가 타인의 것일 가능성을 두려워한다.",
+        "base_json": "{\"energy\":20,\"maxEnergy\":20}",
+        "trait_json": "[\"다정함\",\"분석적\",\"비밀주의\",\"돌봄\",\"통제 욕구\"]",
+        "talent_json": "{\"pride\":61,\"openness\":55,\"libido\":53,\"modesty\":60,\"assertiveness\":62,\"receptiveness\":80,\"curiosity\":88}",
+        "abl_json": "{\"conversation\":4,\"empathy\":5,\"seduction\":2,\"intimacy\":3}",
+        "exp_json": "{\"social\":75,\"romantic\":24,\"seduction\":9,\"intimacy\":18}",
+        "mark_json": "[]",
+        "relation_json": "{\"player\":{\"affection\":5,\"trust\":6,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"kim-mujin\":{\"affection\":10,\"trust\":21,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":3},\"baek-ihyeon\":{\"affection\":8,\"trust\":5,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":6}}",
+        "palam_json": "{\"rapport\":4,\"comfort\":4,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":9,\"frustration\":0,\"satisfaction\":0}",
+        "action_requirements_json": "[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":8},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":24},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":20},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":10},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":46},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":42},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":26},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":24}]"
+      },
+      {
+        "id": "baek-ihyeon",
+        "module_id": null,
+        "sort_order": 2,
+        "name": "백이현",
+        "age": 27,
+        "portrait": "",
+        "introduction": "출입 금지 표지 뒤에서 주운 교통카드를 빛에 비추며 주인이 누구인지 묻는다.",
+        "profile": "27세 도시괴담 영상 제작자이자 전담반의 비공식 정보원. 실종된 누나를 찾기 위해 균열 사건을 추적했고, 시민 제보망과 지하 시설에 대한 지식이 풍부하다. 위험을 농담으로 넘기고 규칙을 우회하는 데 능하지만 조회 수와 진실 공개를 앞세워 피해자의 사생활을 침해한 전력이 있다.\n\n이현은 친근하고 호기심이 많으며 플레이어에게 먼저 현장 탐색이나 심야 식사를 제안한다. 감정 표현은 빠르지만 핵심 비밀을 말하는 데는 인색하다. 상대의 거절을 존중하면서도 자신이 버려질 조짐에는 과장된 태연함으로 먼저 거리를 둔다. 무진을 권력의 얼굴로 경계하고 시안에게 누나의 의료 기록을 요구한다. CCTV 속 인물의 원본 영상을 이미 복사했다는 사실을 숨기고 있다.",
+        "base_json": "{\"energy\":20,\"maxEnergy\":20}",
+        "trait_json": "[\"능청스러움\",\"호기심\",\"행동파\",\"불신\",\"외로움\"]",
+        "talent_json": "{\"pride\":58,\"openness\":79,\"libido\":64,\"modesty\":34,\"assertiveness\":67,\"receptiveness\":72,\"curiosity\":94}",
+        "abl_json": "{\"conversation\":4,\"empathy\":3,\"seduction\":3,\"intimacy\":2}",
+        "exp_json": "{\"social\":62,\"romantic\":20,\"seduction\":17,\"intimacy\":12}",
+        "mark_json": "[]",
+        "relation_json": "{\"player\":{\"affection\":8,\"trust\":2,\"desire\":4,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"kim-mujin\":{\"affection\":1,\"trust\":0,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":26},\"ryu-sian\":{\"affection\":9,\"trust\":4,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":7}}",
+        "palam_json": "{\"rapport\":6,\"comfort\":2,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":11,\"frustration\":0,\"satisfaction\":0}",
+        "action_requirements_json": "[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":4},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":16},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":12},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":8},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":34},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":24},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":18}]"
+      }
+    ],
+    "characterTemplates": [
+      {
+        "id": "kim-mujin",
+        "sort_order": 0,
+        "character_json": "{\"moduleId\":null,\"portrait\":\"\",\"base\":{\"energy\":20,\"maxEnergy\":20},\"mark\":[],\"palam\":{\"rapport\":0,\"comfort\":0,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":15,\"frustration\":5,\"satisfaction\":0},\"id\":\"kim-mujin\",\"name\":\"김무진\",\"age\":34,\"introduction\":\"봉쇄선을 직접 확인한 뒤, 팀원들의 퇴로와 통신 시간을 먼저 계산한다.\",\"profile\":\"34세 경찰 경감이자 이상현상 전담반 현장팀장. 연쇄 실종 사건을 추적하다 동료를 잃었고, 공식 보고서가 조작되었다고 의심한다. 현장 통제, 사격, 심문과 위험 평가에 능하지만 불확실한 정보를 혼자 떠안아 부하의 선택권을 빼앗는 경향이 있다.\\n\\n무진은 말이 적고 규칙을 중시한다. 플레이어의 감응 능력을 위험한 도구로 보지 않고 전문 기술로 존중하지만, 부작용이 나타나면 임무에서 배제하려 든다. 사적인 감정이 지휘 판단을 흐릴까 두려워 관계를 엄격하게 구분한다. 신뢰가 쌓이면 명령보다 이유를 설명하고 자신의 실패 기록을 공유한다. 실종된 동료의 모습이 이번 CCTV에 찍혔다는 사실을 아직 팀에 알리지 않았다.\",\"trait\":[\"철벽\",\"지휘관\",\"보호 본능\",\"죄책감\",\"원칙적\"],\"talent\":{\"pride\":79,\"openness\":24,\"libido\":44,\"modesty\":76,\"assertiveness\":90,\"receptiveness\":35,\"curiosity\":48},\"abl\":{\"conversation\":3,\"empathy\":3,\"seduction\":1,\"intimacy\":2},\"exp\":{\"social\":70,\"romantic\":18,\"seduction\":5,\"intimacy\":14},\"relations\":{\"player\":{\"affection\":3,\"trust\":7,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"ryu-sian\":{\"affection\":8,\"trust\":20,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":5},\"baek-ihyeon\":{\"affection\":2,\"trust\":1,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":22}},\"actionRequirements\":[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":16},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":36},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":34},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":14},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":62},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":60},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":30}]}"
+      },
+      {
+        "id": "ryu-sian",
+        "sort_order": 1,
+        "character_json": "{\"moduleId\":null,\"portrait\":\"\",\"base\":{\"energy\":20,\"maxEnergy\":20},\"mark\":[],\"palam\":{\"rapport\":4,\"comfort\":4,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":9,\"frustration\":0,\"satisfaction\":0},\"id\":\"ryu-sian\",\"name\":\"류시안\",\"age\":31,\"introduction\":\"환자의 동공과 맥박을 살피면서도, 방 안에 남은 낯선 냄새를 기록한다.\",\"profile\":\"31세 응급의학과 의사이자 균열 노출 환자를 담당하는 전담반 의료관. 침착한 진료와 관찰력이 뛰어나며, 초자연 현상을 병리학적 언어로 기록한다. 환자를 살리는 동시에 균열이 인간 기억에 남기는 변화를 증명해 연구소의 은폐를 막는 것이 목표다.\\n\\n시안은 부드럽고 잘 들어 주지만 필요한 정보를 얻기 위해 질문의 순서를 설계한다. 돌봄과 통제를 혼동하는 면이 있어 환자에게 선택권을 돌려주는 법을 배워야 한다. 사적인 호감은 농담보다 세심한 배려와 긴 대화로 표현하며, 상대가 자신의 보호 아래 있지 않을 때만 관계를 진전시키려 한다. 어린 시절 균열 사고 생존자이고 자신의 기억 일부가 타인의 것일 가능성을 두려워한다.\",\"trait\":[\"다정함\",\"분석적\",\"비밀주의\",\"돌봄\",\"통제 욕구\"],\"talent\":{\"pride\":61,\"openness\":55,\"libido\":53,\"modesty\":60,\"assertiveness\":62,\"receptiveness\":80,\"curiosity\":88},\"abl\":{\"conversation\":4,\"empathy\":5,\"seduction\":2,\"intimacy\":3},\"exp\":{\"social\":75,\"romantic\":24,\"seduction\":9,\"intimacy\":18},\"relations\":{\"player\":{\"affection\":5,\"trust\":6,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"kim-mujin\":{\"affection\":10,\"trust\":21,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":3},\"baek-ihyeon\":{\"affection\":8,\"trust\":5,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":6}},\"actionRequirements\":[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":8},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":24},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":20},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":10},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":46},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":42},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":26},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":24}]}"
+      },
+      {
+        "id": "baek-ihyeon",
+        "sort_order": 2,
+        "character_json": "{\"moduleId\":null,\"portrait\":\"\",\"base\":{\"energy\":20,\"maxEnergy\":20},\"mark\":[],\"palam\":{\"rapport\":6,\"comfort\":2,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":11,\"frustration\":0,\"satisfaction\":0},\"id\":\"baek-ihyeon\",\"name\":\"백이현\",\"age\":27,\"introduction\":\"출입 금지 표지 뒤에서 주운 교통카드를 빛에 비추며 주인이 누구인지 묻는다.\",\"profile\":\"27세 도시괴담 영상 제작자이자 전담반의 비공식 정보원. 실종된 누나를 찾기 위해 균열 사건을 추적했고, 시민 제보망과 지하 시설에 대한 지식이 풍부하다. 위험을 농담으로 넘기고 규칙을 우회하는 데 능하지만 조회 수와 진실 공개를 앞세워 피해자의 사생활을 침해한 전력이 있다.\\n\\n이현은 친근하고 호기심이 많으며 플레이어에게 먼저 현장 탐색이나 심야 식사를 제안한다. 감정 표현은 빠르지만 핵심 비밀을 말하는 데는 인색하다. 상대의 거절을 존중하면서도 자신이 버려질 조짐에는 과장된 태연함으로 먼저 거리를 둔다. 무진을 권력의 얼굴로 경계하고 시안에게 누나의 의료 기록을 요구한다. CCTV 속 인물의 원본 영상을 이미 복사했다는 사실을 숨기고 있다.\",\"trait\":[\"능청스러움\",\"호기심\",\"행동파\",\"불신\",\"외로움\"],\"talent\":{\"pride\":58,\"openness\":79,\"libido\":64,\"modesty\":34,\"assertiveness\":67,\"receptiveness\":72,\"curiosity\":94},\"abl\":{\"conversation\":4,\"empathy\":3,\"seduction\":3,\"intimacy\":2},\"exp\":{\"social\":62,\"romantic\":20,\"seduction\":17,\"intimacy\":12},\"relations\":{\"player\":{\"affection\":8,\"trust\":2,\"desire\":4,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"kim-mujin\":{\"affection\":1,\"trust\":0,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":26},\"ryu-sian\":{\"affection\":9,\"trust\":4,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":7}},\"actionRequirements\":[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":4},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":16},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":12},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":8},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":34},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":24},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":18}]}"
+      }
+    ],
+    "events": [],
+    "memories": [],
+    "modules": [],
+    "enabledModuleIds": []
+  },
+  "saves": []
+}

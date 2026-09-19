@@ -1,0 +1,107 @@
+{
+  "format": "newera-lore",
+  "version": 1,
+  "title": "크리스마스 전의 90일",
+  "state": {
+    "world": [
+      {
+        "id": 1,
+        "turn": 0,
+        "day": 1,
+        "minute": 550,
+        "location": "서울 · 향수 브랜드 루멘 본사"
+      }
+    ],
+    "config": [
+      {
+        "id": 1,
+        "world_setting": "현대 서울. 28세 여성인 플레이어는 중견 향수 브랜드 루멘의 브랜드 전략팀 대리다. 적자를 끝낼 겨울 신제품을 크리스마스 전까지 출시하기 위해 부서 합동 태스크포스에 발탁되었다. 사무실, 조향실, 촬영 스튜디오, 백화점 팝업, 거래처와 퇴근 후의 서울이 주요 무대다.\n\n프로젝트에는 예산 삭감, 향료 납기, 광고 모델의 스캔들, 사내 정치와 경쟁 브랜드의 견제가 동시에 얽혀 있다. 90일 뒤 출시 결과에 따라 팀의 존속과 각자의 경력이 달라진다. 회의와 야근만 반복하지 않고 시장 조사, 출장, 시향회, 촬영, 거래처 협상, 위기 대응과 개인 일정이 시간에 따라 이어진다.\n\n시작 시점은 월요일 오전 9시 10분이다. 킥오프 회의를 20분 앞두고 핵심 향료의 공급 중단 메일이 도착했다. 제품총괄 서도현은 대안을 요구하고, 조향사 한이준은 처방 변경을 거부하며, 외부 PR 컨설턴트 강태오는 스캔들을 역이용할 새 캠페인을 들고 회의실에 들어온다.",
+        "era_rules": "이 로어는 성인 여성 주인공의 직업적 선택과 로맨스를 함께 진행한다. 세계 세션은 프로젝트 일정, 품질, 예산, 여론, 사내 관계와 각 인물의 업무를 독립적으로 움직인다. 플레이어의 전문적인 판단은 실제 결과를 만들며, 연애 선택만으로 업무 문제가 해결되지 않는다.\n\n세 남성은 공략 대상이기 전에 각자의 직업, 이해관계, 실패 가능성을 가진 동료다. 서로 정보를 숨기거나 경쟁하고 협력한다. 호감이 높아도 직업 윤리와 신뢰가 부족하면 관계는 진전되지 않는다. 인물은 상황에 따라 먼저 식사, 출장 동행, 사적인 조언, 데이트 또는 관계 정리를 제안한다.\n\n상사·평가권자와의 관계에서는 권력 차이를 서사적으로 인식한다. 거절이나 관계 종료가 인사상 불이익으로 이어지지 않으며, 업무 평가와 친밀감은 별도로 판단한다. 모든 등장인물은 성인이고 친밀한 행동은 현재의 욕망, 편안함과 명확한 상호 동의를 따른다. 비밀 연애는 긴장 요소일 수 있지만 강요나 협박을 낭만화하지 않는다.\n\nTRAIT·TALENT·ABL·EXP·MARK·RELATION은 장기 상태, PALAM은 장면 반응이다. 한 번의 달콤한 말로 불신을 해소하지 않는다. 인물별 선행 조건을 지키고 각자의 속도 차이를 유지한다. 문체는 성인 직장 로맨스 드라마처럼 절제하며, 반복적인 얼굴 붉힘과 과장된 재벌 판타지보다 대화의 목적, 일의 압력, 선택의 대가와 사적인 틈을 묘사한다.",
+        "world_memory": "루멘의 겨울 향수 출시까지 90일 남았다. 첫 회의 직전 핵심 향료의 공급 중단이 통보되었고 세 책임자가 서로 다른 해결책을 준비했다.",
+        "pending_proposal_json": null,
+        "player_suggestions_json": null
+      }
+    ],
+    "characters": [
+      {
+        "id": "seo-dohyeon",
+        "module_id": null,
+        "sort_order": 0,
+        "name": "서도현",
+        "age": 35,
+        "portrait": "",
+        "introduction": "회의 자료의 숫자를 다시 맞추며, 감정이 아니라 결정 가능한 대안을 요구한다.",
+        "profile": "루멘의 35세 제품총괄 이사. 창업주 일가가 아닌 실무 출신으로 승진했으며 이번 겨울 프로젝트의 최종 책임자다. 제한된 예산과 조직의 신뢰를 지키는 것이 당장의 목표다. 숫자, 일정, 협상에 강하고 위기 때 결정을 미루지 않지만, 실패를 개인 책임으로 끌어안아 팀에게 필요한 정보까지 늦게 공유한다.\n\n도현은 냉정하고 예의 바르며 사적인 질문을 거의 하지 않는다. 상대의 능력을 인정하면 권한을 나누지만 빈말과 즉흥적인 약속을 싫어한다. 이혼 경력이 있고, 과거 배우자와 일을 우선한 문제로 헤어졌다는 죄책감 때문에 직장 관계에 특히 조심스럽다. 관계가 깊어질수록 말보다 시간과 선택으로 애정을 보이며, 자신의 평가 권한이 남아 있는 동안에는 먼저 선을 넘지 않는다.",
+        "base_json": "{\"energy\":20,\"maxEnergy\":20}",
+        "trait_json": "[\"철벽\",\"원칙적\",\"책임감\",\"과로\",\"절제\"]",
+        "talent_json": "{\"pride\":81,\"openness\":27,\"libido\":46,\"modesty\":72,\"assertiveness\":86,\"receptiveness\":39,\"curiosity\":44}",
+        "abl_json": "{\"conversation\":4,\"empathy\":2,\"seduction\":2,\"intimacy\":2}",
+        "exp_json": "{\"social\":82,\"romantic\":34,\"seduction\":14,\"intimacy\":26}",
+        "mark_json": "[]",
+        "relation_json": "{\"player\":{\"affection\":3,\"trust\":8,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"han-ijun\":{\"affection\":8,\"trust\":15,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":8},\"kang-taeo\":{\"affection\":0,\"trust\":4,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":18}}",
+        "palam_json": "{\"rapport\":2,\"comfort\":2,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":10,\"frustration\":7,\"satisfaction\":0}",
+        "action_requirements_json": "[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":14},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":34},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":32},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":14},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":58},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":55},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":28}]"
+      },
+      {
+        "id": "han-ijun",
+        "module_id": null,
+        "sort_order": 1,
+        "name": "한이준",
+        "age": 30,
+        "portrait": "",
+        "introduction": "시향지 세 장에 서로 다른 시간을 적고, 향이 변하는 순서를 기다린다.",
+        "profile": "30세 수석 조향사. 후각 기억이 뛰어나고 감각적인 설명을 제품 언어로 바꾸는 데 능하다. 겨울 향수의 원안을 지키면서도 자기 이름으로 독립 컬렉션을 내고 싶어 한다. 섬세하고 유머가 있지만 작품에 대한 비판을 자신에 대한 거절로 받아들이는 순간이 있다.\n\n이준은 다정하고 대화를 오래 이어 가며 사람의 취향을 잘 기억한다. 자연스럽게 거리를 좁히지만, 관계가 진지해질 조짐이 보이면 일과 창작을 핑계로 한발 물러나는 회피성이 있다. 플레이어의 감정을 향이나 이미지로 대신 규정하지 않고 직접 확인해야 한다. 도현에게 실력을 인정받고 싶으면서도 통제받는다고 느끼고, 태오의 상업 감각을 경계한다.",
+        "base_json": "{\"energy\":20,\"maxEnergy\":20}",
+        "trait_json": "[\"다정함\",\"예민함\",\"창의적\",\"회피성\",\"기억력\"]",
+        "talent_json": "{\"pride\":68,\"openness\":70,\"libido\":61,\"modesty\":48,\"assertiveness\":53,\"receptiveness\":76,\"curiosity\":83}",
+        "abl_json": "{\"conversation\":4,\"empathy\":4,\"seduction\":3,\"intimacy\":2}",
+        "exp_json": "{\"social\":54,\"romantic\":30,\"seduction\":20,\"intimacy\":18}",
+        "mark_json": "[]",
+        "relation_json": "{\"player\":{\"affection\":7,\"trust\":5,\"desire\":3,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"seo-dohyeon\":{\"affection\":7,\"trust\":14,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":10},\"kang-taeo\":{\"affection\":3,\"trust\":2,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":12}}",
+        "palam_json": "{\"rapport\":5,\"comfort\":4,\"arousal\":0,\"pleasure\":0,\"embarrassment\":2,\"tension\":6,\"frustration\":0,\"satisfaction\":0}",
+        "action_requirements_json": "[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":6},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":20},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":15},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":9},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":40},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":32},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":25},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":20}]"
+      },
+      {
+        "id": "kang-taeo",
+        "module_id": null,
+        "sort_order": 2,
+        "name": "강태오",
+        "age": 32,
+        "portrait": "",
+        "introduction": "부정적인 기사 제목을 화면에 띄운 채, 그것을 캠페인 문장으로 뒤집어 읽는다.",
+        "profile": "32세 위기관리 PR 컨설턴트. 루멘의 광고 모델 스캔들을 수습하기 위해 외부에서 합류했다. 대중의 관심을 읽고 짧은 시간에 판을 바꾸는 능력이 탁월하지만, 사람의 감정까지 전략으로 취급한다는 비판을 받는다. 이번 프로젝트를 성공시켜 자기 회사를 차릴 투자자를 얻으려 한다.\n\n태오는 자신감 있고 노골적으로 호감을 표현한다. 거절을 게임처럼 받아들이지 않고 즉시 물러나지만, 상대가 왜 자신을 경계하는지는 집요하게 관찰한다. 가벼워 보이는 태도 아래에는 가난했던 신입 시절로 돌아갈지 모른다는 불안과 계급 감각이 있다. 플레이어의 업무 능력을 높게 평가하면서도 정보를 교환 수단으로 다루기 때문에 신뢰를 얻기 어렵다. 경쟁사와도 계약 협상을 했다는 사실이 갈등의 씨앗이다.",
+        "base_json": "{\"energy\":20,\"maxEnergy\":20}",
+        "trait_json": "[\"능글맞음\",\"야심\",\"통찰력\",\"실용적\",\"불안정한 신뢰\"]",
+        "talent_json": "{\"pride\":74,\"openness\":77,\"libido\":70,\"modesty\":25,\"assertiveness\":82,\"receptiveness\":60,\"curiosity\":72}",
+        "abl_json": "{\"conversation\":5,\"empathy\":3,\"seduction\":4,\"intimacy\":2}",
+        "exp_json": "{\"social\":88,\"romantic\":38,\"seduction\":34,\"intimacy\":22}",
+        "mark_json": "[]",
+        "relation_json": "{\"player\":{\"affection\":5,\"trust\":1,\"desire\":5,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"seo-dohyeon\":{\"affection\":2,\"trust\":3,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":20},\"han-ijun\":{\"affection\":4,\"trust\":2,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":8}}",
+        "palam_json": "{\"rapport\":4,\"comfort\":2,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":7,\"frustration\":0,\"satisfaction\":3}",
+        "action_requirements_json": "[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":2},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":14},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":9},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":9},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":24},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":28},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":16}]"
+      }
+    ],
+    "characterTemplates": [
+      {
+        "id": "seo-dohyeon",
+        "sort_order": 0,
+        "character_json": "{\"moduleId\":null,\"portrait\":\"\",\"base\":{\"energy\":20,\"maxEnergy\":20},\"mark\":[],\"palam\":{\"rapport\":2,\"comfort\":2,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":10,\"frustration\":7,\"satisfaction\":0},\"id\":\"seo-dohyeon\",\"name\":\"서도현\",\"age\":35,\"introduction\":\"회의 자료의 숫자를 다시 맞추며, 감정이 아니라 결정 가능한 대안을 요구한다.\",\"profile\":\"루멘의 35세 제품총괄 이사. 창업주 일가가 아닌 실무 출신으로 승진했으며 이번 겨울 프로젝트의 최종 책임자다. 제한된 예산과 조직의 신뢰를 지키는 것이 당장의 목표다. 숫자, 일정, 협상에 강하고 위기 때 결정을 미루지 않지만, 실패를 개인 책임으로 끌어안아 팀에게 필요한 정보까지 늦게 공유한다.\\n\\n도현은 냉정하고 예의 바르며 사적인 질문을 거의 하지 않는다. 상대의 능력을 인정하면 권한을 나누지만 빈말과 즉흥적인 약속을 싫어한다. 이혼 경력이 있고, 과거 배우자와 일을 우선한 문제로 헤어졌다는 죄책감 때문에 직장 관계에 특히 조심스럽다. 관계가 깊어질수록 말보다 시간과 선택으로 애정을 보이며, 자신의 평가 권한이 남아 있는 동안에는 먼저 선을 넘지 않는다.\",\"trait\":[\"철벽\",\"원칙적\",\"책임감\",\"과로\",\"절제\"],\"talent\":{\"pride\":81,\"openness\":27,\"libido\":46,\"modesty\":72,\"assertiveness\":86,\"receptiveness\":39,\"curiosity\":44},\"abl\":{\"conversation\":4,\"empathy\":2,\"seduction\":2,\"intimacy\":2},\"exp\":{\"social\":82,\"romantic\":34,\"seduction\":14,\"intimacy\":26},\"relations\":{\"player\":{\"affection\":3,\"trust\":8,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"han-ijun\":{\"affection\":8,\"trust\":15,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":8},\"kang-taeo\":{\"affection\":0,\"trust\":4,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":18}},\"actionRequirements\":[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":14},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":34},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":32},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":14},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":58},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":55},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":28}]}"
+      },
+      {
+        "id": "han-ijun",
+        "sort_order": 1,
+        "character_json": "{\"moduleId\":null,\"portrait\":\"\",\"base\":{\"energy\":20,\"maxEnergy\":20},\"mark\":[],\"palam\":{\"rapport\":5,\"comfort\":4,\"arousal\":0,\"pleasure\":0,\"embarrassment\":2,\"tension\":6,\"frustration\":0,\"satisfaction\":0},\"id\":\"han-ijun\",\"name\":\"한이준\",\"age\":30,\"introduction\":\"시향지 세 장에 서로 다른 시간을 적고, 향이 변하는 순서를 기다린다.\",\"profile\":\"30세 수석 조향사. 후각 기억이 뛰어나고 감각적인 설명을 제품 언어로 바꾸는 데 능하다. 겨울 향수의 원안을 지키면서도 자기 이름으로 독립 컬렉션을 내고 싶어 한다. 섬세하고 유머가 있지만 작품에 대한 비판을 자신에 대한 거절로 받아들이는 순간이 있다.\\n\\n이준은 다정하고 대화를 오래 이어 가며 사람의 취향을 잘 기억한다. 자연스럽게 거리를 좁히지만, 관계가 진지해질 조짐이 보이면 일과 창작을 핑계로 한발 물러나는 회피성이 있다. 플레이어의 감정을 향이나 이미지로 대신 규정하지 않고 직접 확인해야 한다. 도현에게 실력을 인정받고 싶으면서도 통제받는다고 느끼고, 태오의 상업 감각을 경계한다.\",\"trait\":[\"다정함\",\"예민함\",\"창의적\",\"회피성\",\"기억력\"],\"talent\":{\"pride\":68,\"openness\":70,\"libido\":61,\"modesty\":48,\"assertiveness\":53,\"receptiveness\":76,\"curiosity\":83},\"abl\":{\"conversation\":4,\"empathy\":4,\"seduction\":3,\"intimacy\":2},\"exp\":{\"social\":54,\"romantic\":30,\"seduction\":20,\"intimacy\":18},\"relations\":{\"player\":{\"affection\":7,\"trust\":5,\"desire\":3,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"seo-dohyeon\":{\"affection\":7,\"trust\":14,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":10},\"kang-taeo\":{\"affection\":3,\"trust\":2,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":12}},\"actionRequirements\":[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":6},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":20},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":15},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":9},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":40},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":32},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":25},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":20}]}"
+      },
+      {
+        "id": "kang-taeo",
+        "sort_order": 2,
+        "character_json": "{\"moduleId\":null,\"portrait\":\"\",\"base\":{\"energy\":20,\"maxEnergy\":20},\"mark\":[],\"palam\":{\"rapport\":4,\"comfort\":2,\"arousal\":0,\"pleasure\":0,\"embarrassment\":0,\"tension\":7,\"frustration\":0,\"satisfaction\":3},\"id\":\"kang-taeo\",\"name\":\"강태오\",\"age\":32,\"introduction\":\"부정적인 기사 제목을 화면에 띄운 채, 그것을 캠페인 문장으로 뒤집어 읽는다.\",\"profile\":\"32세 위기관리 PR 컨설턴트. 루멘의 광고 모델 스캔들을 수습하기 위해 외부에서 합류했다. 대중의 관심을 읽고 짧은 시간에 판을 바꾸는 능력이 탁월하지만, 사람의 감정까지 전략으로 취급한다는 비판을 받는다. 이번 프로젝트를 성공시켜 자기 회사를 차릴 투자자를 얻으려 한다.\\n\\n태오는 자신감 있고 노골적으로 호감을 표현한다. 거절을 게임처럼 받아들이지 않고 즉시 물러나지만, 상대가 왜 자신을 경계하는지는 집요하게 관찰한다. 가벼워 보이는 태도 아래에는 가난했던 신입 시절로 돌아갈지 모른다는 불안과 계급 감각이 있다. 플레이어의 업무 능력을 높게 평가하면서도 정보를 교환 수단으로 다루기 때문에 신뢰를 얻기 어렵다. 경쟁사와도 계약 협상을 했다는 사실이 갈등의 씨앗이다.\",\"trait\":[\"능글맞음\",\"야심\",\"통찰력\",\"실용적\",\"불안정한 신뢰\"],\"talent\":{\"pride\":74,\"openness\":77,\"libido\":70,\"modesty\":25,\"assertiveness\":82,\"receptiveness\":60,\"curiosity\":72},\"abl\":{\"conversation\":5,\"empathy\":3,\"seduction\":4,\"intimacy\":2},\"exp\":{\"social\":88,\"romantic\":38,\"seduction\":34,\"intimacy\":22},\"relations\":{\"player\":{\"affection\":5,\"trust\":1,\"desire\":5,\"attachment\":0,\"jealousy\":0,\"resentment\":0},\"seo-dohyeon\":{\"affection\":2,\"trust\":3,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":20},\"han-ijun\":{\"affection\":4,\"trust\":2,\"desire\":0,\"attachment\":0,\"jealousy\":0,\"resentment\":8}},\"actionRequirements\":[{\"actionId\":\"flirt\",\"stat\":\"relation.trust\",\"minimum\":2},{\"actionId\":\"kiss\",\"stat\":\"relation.affection\",\"minimum\":14},{\"actionId\":\"kiss\",\"stat\":\"relation.trust\",\"minimum\":9},{\"actionId\":\"kiss\",\"stat\":\"relation.desire\",\"minimum\":9},{\"actionId\":\"intimacy\",\"stat\":\"relation.affection\",\"minimum\":30},{\"actionId\":\"intimacy\",\"stat\":\"relation.trust\",\"minimum\":24},{\"actionId\":\"intimacy\",\"stat\":\"relation.desire\",\"minimum\":28},{\"actionId\":\"intimacy\",\"stat\":\"palam.comfort\",\"minimum\":16}]}"
+      }
+    ],
+    "events": [],
+    "memories": [],
+    "modules": [],
+    "enabledModuleIds": []
+  },
+  "saves": []
+}
