@@ -35,7 +35,7 @@ const modelServer = createServer(async (request, response) => {
 		: system.includes('플레이어가 먼저 할 행동을 제안한다') ? 'suggest'
 		: system.includes('COMMAND에 연결하는 해석기') ? 'interpret'
 		: 'character';
-	modelCalls.push({ kind, input, responseFormat: body.response_format });
+	modelCalls.push({ kind, system, input, responseFormat: body.response_format });
 	const world = kind === 'world';
 	if (world && pausedWorld) {
 		const pause = pausedWorld;
@@ -187,8 +187,10 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(managementPage.includes('name="mark.firstKiss"'));
 		assert.ok(managementPage.includes('name="requirement.0.actionId"'));
 		assert.ok(managementPage.includes('＋ 조건 추가'));
+		assert.ok(managementPage.includes('name="narrativeMode"'));
+		assert.ok(managementPage.includes('노골적'));
 		assert.ok(!managementPage.includes('href="/simulator"'));
-		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
+		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다', narrativeMode: 'explicit' });
 		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
 		await post('advance');
 		const db = new DatabaseSync(join(dataDirectory, 'newera.sqlite'));
@@ -200,7 +202,11 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.deepEqual(initialWorldCalls[0].input.currentTime, { day: 1, clock: '18:20', minuteAfterMidnight: 1100, period: '저녁' });
 			assert.match(initialWorldCalls[1].input.singleCharacterCorrection, /지은/);
 			assert.match(initialCharacterCalls[1].input.singleCharacterCorrection, /지은/);
+			assert.equal(initialCharacterCalls[1].input.narrativeMode, 'explicit');
+			assert.match(initialCharacterCalls[1].system, /외설적이고 야한 어휘로 최대한 직접 묘사/);
+			assert.match(initialCharacterCalls[1].system, /행위의 흐름과 서로의 반응을 충분한 분량/);
 			assert.ok(!db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative.includes('지은'));
+			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'explicit');
 			assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'player_state'").get().n, 0);
 			const originalLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
@@ -349,7 +355,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('advance', {}, false, false);
 			await staleWorldStarted;
 			try {
-				await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
+				await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다', narrativeMode: 'explicit' });
 			} finally {
 				releaseStaleWorld();
 			}
@@ -431,7 +437,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(originalLoreId).n, 2);
 
-			await post('createLore', { title: '비밀의 저택', worldSetting: '외딴 저택의 밤', eraRules: '방을 탐색하고 인물의 의지를 존중한다' });
+			await post('createLore', { title: '비밀의 저택', worldSetting: '외딴 저택의 밤', eraRules: '방을 탐색하고 인물의 의지를 존중한다', narrativeMode: 'restrained' });
 			const secondLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
 			assert.notEqual(secondLoreId, originalLoreId);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 2);
@@ -440,6 +446,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 0);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
 			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '외딴 저택의 밤');
+			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'restrained');
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(secondLoreId).n, 0);
 			const secondPage = await (await fetch(base)).text();
 			assert.ok(secondPage.includes('>망원동의 세 사람</button>'));
@@ -510,11 +517,13 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
 			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '비가 잦은 망원동');
+			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'explicit');
 			assert.ok((await (await fetch(base)).text()).includes('2/3 사용 중'));
 			await post('load', { slot: '2' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
 			await post('switchLore', { id: secondLoreId });
 			assert.equal(db.prepare('SELECT name FROM characters').get().name, '도희');
+			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'restrained');
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
 			assert.ok((await (await fetch(base)).text()).includes('1/3 사용 중'));
 			await post('renameLore', { title: '저택의 밤' });

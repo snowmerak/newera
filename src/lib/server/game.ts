@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ACTIONS, actionReason, applyEffects, applyPalamSource, calculateSource, eventSummary } from '$lib/game/actions';
-import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type GameView, type GenerationJob, type MemoryRecord, type Proposal, type ScenarioConfig, type Source, type WorldState } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, normalizeNarrativeMode, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type GameView, type GenerationJob, type MemoryRecord, type NarrativeMode, type Proposal, type ScenarioConfig, type Source, type WorldState } from '$lib/game/types';
 import {
 	claimGenerationJob,
 	completeGenerationJob,
@@ -463,7 +463,7 @@ export function queueProposalResponse(answer: 'accept' | 'decline'): GenerationJ
 	return enqueueTurn({ kind: answer });
 }
 
-export function saveScenarioSettings(worldSetting: string, eraRules: string): void {
+export function saveScenarioSettings(worldSetting: string, eraRules: string, narrativeMode: NarrativeMode): void {
 	mutateGameState(() => withTransaction(() => {
 		if (!worldSetting.trim() || !eraRules.trim()) throw new Error('세계관과 era 규칙을 모두 입력해 주세요.');
 		const config = getGameView().config;
@@ -471,6 +471,7 @@ export function saveScenarioSettings(worldSetting: string, eraRules: string): vo
 			...config,
 			worldSetting: worldSetting.trim(),
 			eraRules: eraRules.trim(),
+			narrativeMode: normalizeNarrativeMode(narrativeMode),
 			worldMemory: config.worldSetting === worldSetting.trim() ? config.worldMemory : '',
 			sceneNote: config.worldSetting === worldSetting.trim() && config.eraRules === eraRules.trim() ? config.sceneNote : '',
 			pendingProposal: null,

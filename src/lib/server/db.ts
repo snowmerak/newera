@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, clampBase, normalizeAbl, normalizeActionRequirements, normalizeExp, normalizeMarks, normalizePalam, normalizeRelations, normalizeTalent } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, clampBase, normalizeAbl, normalizeActionRequirements, normalizeExp, normalizeMarks, normalizeNarrativeMode, normalizePalam, normalizeRelations, normalizeTalent } from '$lib/game/types';
 import type {
 	Character,
 	CharacterLore,
@@ -281,6 +281,7 @@ export function getDb(): DatabaseSync {
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			world_setting TEXT NOT NULL,
 			era_rules TEXT NOT NULL,
+			narrative_mode TEXT NOT NULL DEFAULT 'sensual',
 			world_memory TEXT NOT NULL DEFAULT '',
 			scene_note TEXT NOT NULL DEFAULT '',
 			pending_proposal_json TEXT,
@@ -313,6 +314,9 @@ export function getDb(): DatabaseSync {
 	}
 	if (!configColumns.some((column) => column.name === 'scene_note')) {
 		db.exec("ALTER TABLE scenario_config ADD COLUMN scene_note TEXT NOT NULL DEFAULT ''");
+	}
+	if (!configColumns.some((column) => column.name === 'narrative_mode')) {
+		db.exec("ALTER TABLE scenario_config ADD COLUMN narrative_mode TEXT NOT NULL DEFAULT 'sensual'");
 	}
 	const loreColumns = db.prepare('PRAGMA table_info(lores)').all() as Row[];
 	if (!loreColumns.some((column) => column.name === 'start_json')) {
@@ -672,6 +676,7 @@ export function getScenarioConfig(): ScenarioConfig {
 	return {
 		worldSetting: String(row.world_setting),
 		eraRules: String(row.era_rules),
+		narrativeMode: normalizeNarrativeMode(row.narrative_mode),
 		worldMemory: String(row.world_memory),
 		sceneNote: String(row.scene_note ?? ''),
 		pendingProposal: row.pending_proposal_json ? parse(row.pending_proposal_json) : null,
@@ -680,9 +685,10 @@ export function getScenarioConfig(): ScenarioConfig {
 }
 
 export function updateScenarioConfig(config: ScenarioConfig): void {
-	getDb().prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, world_memory = ?, scene_note = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
+	getDb().prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, narrative_mode = ?, world_memory = ?, scene_note = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
 		config.worldSetting,
 		config.eraRules,
+		normalizeNarrativeMode(config.narrativeMode),
 		config.worldMemory,
 		config.sceneNote,
 		config.pendingProposal ? JSON.stringify(config.pendingProposal) : null,
@@ -896,7 +902,7 @@ export function switchLore(id: string): void {
 	withTransaction(() => activateLore(id));
 }
 
-export function createLore(title: string, worldSetting: string, eraRules: string): string {
+export function createLore(title: string, worldSetting: string, eraRules: string, narrativeMode: unknown = 'sensual'): string {
 	const cleanTitle = title.trim();
 	const cleanWorld = worldSetting.trim();
 	const cleanRules = eraRules.trim();
@@ -908,7 +914,7 @@ export function createLore(title: string, worldSetting: string, eraRules: string
 	const snapshot: Snapshot = {
 		world: [{ id: 1, turn: 0, day: 1, minute: 18 * 60, location: '시작 장소' }],
 		config: [{ id: 1, world_setting: cleanWorld, era_rules: cleanRules,
-			world_memory: '', scene_note: '', pending_proposal_json: null, player_suggestions_json: null }],
+			narrative_mode: normalizeNarrativeMode(narrativeMode), world_memory: '', scene_note: '', pending_proposal_json: null, player_suggestions_json: null }],
 		characters: [], characterTemplates: [], events: [], memories: [], modules: [], enabledModuleIds: []
 	};
 	withTransaction(() => {
@@ -1138,6 +1144,7 @@ function checkedSnapshot(value: unknown, full: boolean): Snapshot {
 function migrateSnapshot(snapshot: Snapshot): Snapshot {
 	const { player: _legacyPlayer, ...current } = snapshot;
 	return { ...current,
+		config: snapshot.config?.map((row) => ({ ...row, narrative_mode: normalizeNarrativeMode(row.narrative_mode) })),
 		characters: snapshot.characters.map(migrateCharacterRow),
 		characterTemplates: snapshot.characterTemplates?.map((row) => ({
 			...row, character_json: JSON.stringify(normalizeCharacter(parse<Character>(row.character_json)))
@@ -1329,9 +1336,10 @@ function restoreSnapshot(snapshot: Snapshot, replaceLoreDefinitions = false): vo
 		}
 		if (snapshot.config?.[0]) {
 			const value = snapshot.config[0];
-			db.prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, world_memory = ?, scene_note = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
+			db.prepare(`UPDATE scenario_config SET world_setting = ?, era_rules = ?, narrative_mode = ?, world_memory = ?, scene_note = ?, pending_proposal_json = ?, player_suggestions_json = ? WHERE id = 1`).run(
 				value.world_setting as string,
 				value.era_rules as string,
+				normalizeNarrativeMode(value.narrative_mode),
 				(value.world_memory ?? '') as string,
 				(value.scene_note ?? '') as string,
 				value.pending_proposal_json as string | null,

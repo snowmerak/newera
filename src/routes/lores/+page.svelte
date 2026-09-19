@@ -4,7 +4,7 @@
 	import CharacterStatsFields from '$lib/components/CharacterStatsFields.svelte';
 	import CharacterMarksFields from '$lib/components/CharacterMarksFields.svelte';
 	import ActionRequirementsFields from '$lib/components/ActionRequirementsFields.svelte';
-	import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type Character } from '$lib/game/types';
+	import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, NARRATIVE_MODES, type Character } from '$lib/game/types';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -60,6 +60,7 @@
 						<label for="new-lore-title">제목</label><input id="new-lore-title" name="title" maxlength="80" required />
 						<label for="new-lore-world">세계관 설정</label><textarea id="new-lore-world" name="worldSetting" rows="5" required></textarea>
 						<label for="new-lore-rules">era 규칙</label><textarea id="new-lore-rules" name="eraRules" rows="4" required value={data.config.eraRules}></textarea>
+						<label for="new-narrative-mode">묘사 모드</label><select id="new-narrative-mode" name="narrativeMode">{#each NARRATIVE_MODES as mode}<option value={mode.value} selected={mode.value === 'sensual'}>{mode.label} · {mode.description}</option>{/each}</select>
 						<button disabled={busy}>만들고 열기</button>
 					</form>
 				</details>
@@ -87,6 +88,8 @@
 					<form method="POST" action="?/scenario" use:enhance={submit} class="settings-form">
 						<label for="world-setting">기본 세계관</label><textarea id="world-setting" name="worldSetting" rows="6" required value={data.config.worldSetting}></textarea>
 						<label for="era-rules">era 규칙과 진행 방향</label><textarea id="era-rules" name="eraRules" rows="5" required value={data.config.eraRules}></textarea>
+						<label for="narrative-mode">묘사 모드</label><select id="narrative-mode" name="narrativeMode" value={data.config.narrativeMode}>{#each NARRATIVE_MODES as mode}<option value={mode.value}>{mode.label} · {mode.description}</option>{/each}</select>
+						<p class="minor">묘사 모드는 장면의 문체만 바꿉니다. 인물의 성향, 행동 조건, 수락과 거절 판단은 그대로 적용됩니다.</p>
 						<button disabled={busy}>설정 저장</button>
 					</form>
 					{#if data.worldLore.length > 1}

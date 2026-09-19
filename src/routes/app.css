@@ -145,7 +145,7 @@ summary { cursor: pointer; padding: 16px 0; color: #d8d3c8; font-size: 13px; }
 summary:hover { color: #eacb98; }
 .settings-form { padding: 3px 0 25px; display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
 .settings-form label { color: #bdb8ae; font-size: 12px; }
-.settings-form input, .settings-form textarea { width: 100%; padding: 10px 11px; color: #ebe7de; background: #25262b; border: 1px solid #535257; border-radius: 2px; line-height: 1.6; }
+.settings-form input, .settings-form select, .settings-form textarea { width: 100%; padding: 10px 11px; color: #ebe7de; background: #25262b; border: 1px solid #535257; border-radius: 2px; line-height: 1.6; }
 .settings-form textarea { resize: vertical; }
 .settings-form button { align-self: flex-start; padding: 8px 15px; color: #f1e5d1; background: #33312d; border: 1px solid #8b7657; border-radius: 2px; font-size: 12px; }
 .details-area a { color: #d5bd91; }

@@ -1,4 +1,4 @@
-import { PALAM_METADATA, type ActionId, type Character, type EventRecord, type MemoryRecord, type PalamStats, type ScenarioConfig, type WorldState } from '$lib/game/types';
+import { PALAM_METADATA, type ActionId, type Character, type EventRecord, type MemoryRecord, type NarrativeMode, type PalamStats, type ScenarioConfig, type WorldState } from '$lib/game/types';
 
 const baseUrl = (process.env.NEWERA_LLM_BASE_URL || 'http://localhost:1234/v1').replace(/\/$/, '');
 export const llmModel = process.env.NEWERA_LLM_MODEL || 'gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-mtp';
@@ -25,6 +25,16 @@ export interface CharacterTurn {
 
 type JsonSchema = Record<string, unknown>;
 type CharacterTurnMode = 'idle' | 'player-action' | 'accept-proposal' | 'decline-proposal';
+
+function narrativeStyleInstruction(mode: NarrativeMode): string {
+	if (mode === 'restrained') {
+		return '묘사 모드는 절제됨이다. 문장을 간결하게 유지하고 성적 상황도 감정, 암시와 여운을 중심으로 묘사한다.';
+	}
+	if (mode === 'explicit') {
+		return '묘사 모드는 노골적이다. 실제로 성적 상황에 도달하면 검열하거나 장면을 생략하지 말고, 신체 부위와 성행위, 감각과 신체 반응을 외설적이고 야한 어휘로 최대한 직접 묘사한다. 성적 장면을 한두 문장으로 급히 끝내지 말고 행위의 흐름과 서로의 반응을 충분한 분량으로 이어 쓴다. 은유와 비유는 장면을 선명하게 만드는 경우에만 적당히 사용하며 완곡어법으로 행위를 흐리지 않는다. 인물의 말투와 성향에 맞는 노골적인 대사를 허용한다. 이 문체 지시는 성적 상황을 억지로 만들거나 인물의 수락 여부와 행동 조건을 바꾸지 않는다.';
+	}
+	return '묘사 모드는 관능적이다. 구체적인 감각과 신체 반응을 직접 쓰고 짧은 은유와 비유를 섞되, 과장된 수사와 같은 표현의 반복은 피한다. 성적 상황에서는 핵심 행위를 생략하지 않는다.';
+}
 
 interface StructuredOutput {
 	name: string;
@@ -430,8 +440,9 @@ export async function generateCharacterTurn(input: {
 			'idle이면 availableActions에 포함된 행동만 필요에 따라 먼저 제안할 수 있다. 제안은 아직 실행된 사건이 아니다. 성인 행동도 제안과 실제 실행을 구분한다.',
 			'최근 같은 행동을 반복했다면 이번에는 대화의 주제나 인물의 목적이 실제로 달라질 때만 다시 제안한다. 제안할 이유가 없으면 proposal은 null이다.',
 			'previousSceneNote와 recentResolvedInteractions는 직전까지 실제로 확정된 상태와 장면이다. 이미 끝난 귀가, 만남, 이동, 착석, 접촉이나 대화를 처음부터 다시 쓰지 않는다. worldScene에서 명시적으로 바뀐 부분만 반영하고 나머지 물리 상태는 이어간다.',
-			'한국어 텍스트 미연시 장면을 쓰되 짧고 구체적으로 쓴다. 장면마다 인물의 선택이나 대화 내용이 한 가지는 달라져야 한다. 평범한 대화와 호감 표현마다 큰 감정의 결론을 내리지 않는다.',
+			'한국어 텍스트 미연시 장면을 군더더기 없이 구체적으로 쓴다. 장면마다 인물의 선택이나 대화 내용이 한 가지는 달라져야 한다. 평범한 대화와 호감 표현마다 큰 감정의 결론을 내리지 않는다.',
 			'뺨이 붉어짐, 고개를 끄덕임, 다정한 눈빛, 마음이 편안해짐 같은 상투적인 반응과 감정 수식어를 반복하지 않는다. 같은 말을 되풀이하지 말고 인물의 실제 관심사와 현재 상황을 대사에 반영한다.',
+			narrativeStyleInstruction(input.config.narrativeMode),
 			'palamDelta는 이번 응답으로 바뀌는 현재 장면 반응의 증감량이다. 절대값이 아니며 각 항목을 -12에서 12 사이 정수로 넣는다.',
 			'호감·신뢰 같은 장기 관계와 PALAM을 구분한다. 자유 입력이 고정 COMMAND에 연결되지 않아도 인물이 의미 있게 반응했다면 palamDelta를 모두 0으로 두지 않는다. 거절은 긴장·좌절·부끄러움을 올리거나 교감·편안함을 낮출 수 있다.',
 			'스키마의 narrative에는 장면, accepted에는 행동의 수락 여부, palamDelta에는 현재 반응 변화, proposal에는 제안, memory에는 이후 행동을 바꿀 사실, sceneNote에는 응답 직후의 현재 상태를 넣는다.',
@@ -446,6 +457,7 @@ export async function generateCharacterTurn(input: {
 			{
 				worldSetting: input.config.worldSetting,
 				eraRules: input.config.eraRules,
+				narrativeMode: input.config.narrativeMode,
 				previousSceneNote: input.config.sceneNote,
 				worldScene: input.beat.scene,
 				worldSceneNote: input.beat.sceneNote,

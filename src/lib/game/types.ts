@@ -272,6 +272,17 @@ export interface PlayerSuggestionSet {
 	options: string[];
 }
 
+export const NARRATIVE_MODES = [
+	{ value: 'restrained', label: '절제됨', description: '일상과 감정을 간결하게 쓰고 성적 장면도 여운과 암시를 중심으로 묘사합니다.' },
+	{ value: 'sensual', label: '관능적', description: '감각과 분위기, 직접적인 표현을 섞되 과도한 수사와 반복을 피합니다.' },
+	{ value: 'explicit', label: '노골적', description: '성적 장면에서 생략하거나 돌려 말하지 않고 행위와 신체 반응을 직접 묘사합니다.' }
+] as const;
+export type NarrativeMode = typeof NARRATIVE_MODES[number]['value'];
+
+export function normalizeNarrativeMode(value: unknown): NarrativeMode {
+	return NARRATIVE_MODES.some((mode) => mode.value === value) ? value as NarrativeMode : 'sensual';
+}
+
 export type GenerationJobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface GenerationJob {
@@ -289,6 +300,7 @@ export interface GenerationJob {
 export interface ScenarioConfig {
 	worldSetting: string;
 	eraRules: string;
+	narrativeMode: NarrativeMode;
 	worldMemory: string;
 	sceneNote: string;
 	pendingProposal: Proposal | null;

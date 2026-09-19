@@ -15,7 +15,8 @@ export const actions: Actions = {
 		const body = await request.formData();
 		try {
 			mutateGameState(() => createLore(
-				String(body.get('title') ?? ''), String(body.get('worldSetting') ?? ''), String(body.get('eraRules') ?? '')
+				String(body.get('title') ?? ''), String(body.get('worldSetting') ?? ''), String(body.get('eraRules') ?? ''),
+				body.get('narrativeMode')
 			));
 			return { message: '새 로어를 만들고 열었습니다.', level: 'success' as const };
 		} catch (error) { return errorResult(error, '로어를 만들지 못했습니다.'); }
@@ -37,8 +38,11 @@ export const actions: Actions = {
 	scenario: async ({ request }) => {
 		const body = await request.formData();
 		try {
-			await saveScenarioSettings(String(body.get('worldSetting') ?? ''), String(body.get('eraRules') ?? ''));
-			return { message: '세계관과 규칙을 저장했습니다.', level: 'success' as const };
+			await saveScenarioSettings(
+				String(body.get('worldSetting') ?? ''), String(body.get('eraRules') ?? ''),
+				String(body.get('narrativeMode') ?? '') as import('$lib/game/types').NarrativeMode
+			);
+			return { message: '세계관과 묘사 설정을 저장했습니다.', level: 'success' as const };
 		} catch (error) { return errorResult(error, '설정을 저장하지 못했습니다.'); }
 	},
 	character: async ({ request }) => {
