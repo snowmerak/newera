@@ -112,6 +112,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(firstPage.includes('저장 슬롯'));
 		assert.ok(!firstPage.includes('플레이어 체력'));
 		assert.ok(!firstPage.includes('new-lore-world'));
+		assert.ok(!firstPage.includes('href="/simulator"'));
 		const managementPage = await (await fetch(`${base}/lores`)).text();
 		assert.ok(managementPage.includes('새 로어 만들기'));
 		assert.ok(managementPage.includes('로어 가져오기'));
@@ -122,6 +123,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(managementPage.includes('name="mark.firstKiss"'));
 		assert.ok(managementPage.includes('name="requirement.0.actionId"'));
 		assert.ok(managementPage.includes('＋ 조건 추가'));
+		assert.ok(!managementPage.includes('href="/simulator"'));
 		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
 		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
 		await post('advance');

@@ -38,7 +38,7 @@
 <div class="page">
 	<header class="topbar">
 		<div class="brand-group"><a class="brand" href="/">newera</a><span class="adult-label">로어 관리</span></div>
-		<div class="top-actions"><a class="top-link" href="/simulator">시뮬레이터</a><a class="top-link" href="/">플레이 화면으로</a></div>
+		<div class="top-actions"><a class="top-link" href="/">플레이 화면으로</a></div>
 	</header>
 	<main class="manage-shell">
 		<div class="manage-intro"><p class="eyebrow">LORE LIBRARY</p><h1>로어 관리</h1><p>제목과 세계관, 등장인물 설정을 관리합니다. 플레이 중인 장면과 저장 슬롯은 플레이 화면에 있습니다.</p></div>
