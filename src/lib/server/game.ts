@@ -162,7 +162,10 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 			intent,
 			mode,
 			recentInteractions: view.events.filter((event) => event.characterId === sceneFocus.id).slice(0, 5),
-			availableActions: (Object.keys(ACTIONS) as ActionId[]).filter((id) => id !== 'rest' && !actionReason(id, sceneFocus))
+			availableActions: (Object.keys(ACTIONS) as ActionId[]).filter((id) => id !== 'rest' && !actionReason(id, sceneFocus)),
+			otherCharacterNames: characters
+				.filter((character) => character.id !== sceneFocus.id && character.name !== sceneFocus.name)
+				.map((character) => character.name)
 		})
 		: null;
 	const accepted = request.kind === 'accept' || actionId === 'rest' ||

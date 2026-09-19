@@ -12,6 +12,8 @@ const dataDirectory = mkdtempSync(join(tmpdir(), 'newera-integration-'));
 const modelCalls = [];
 let refuseNextAction = false;
 let failNextWorld = false;
+let crowdedWorldOnce = true;
+let crowdedCharacterOnce = true;
 const modelServer = createServer(async (request, response) => {
 	const chunks = [];
 	for await (const chunk of request) chunks.push(chunk);
@@ -42,16 +44,35 @@ const modelServer = createServer(async (request, response) => {
 	}
 	const accepted = input.mode === 'player-action' && refuseNextAction ? false : true;
 	if (input.mode === 'player-action') refuseNextAction = false;
-	const output = kind === 'suggest'
-		? { suggestions: ['서연에게 책을 추천한다', '지은과 함께 서연에게 말을 건다', '서연과 대화한다', '잠시 쉰다'] }
-		: kind === 'interpret'
-			? { actionId: input.playerText.includes('입맞춤') ? 'kiss' : input.playerText.includes('대화') ? 'talk' : null,
-				targetId: input.playerText.includes('서연') ? 'seoyeon' : null }
-		: world
-		? { scene: '저녁 거리에 비가 내린다.', situation: '서연이 서점 문을 닫을 시간이다.', location: '망원동 서점 앞', focusCharacterId: 'seoyeon', minutes: 10, worldMemory: '망원동에 비가 내린다.' }
-		: { narrative: input.mode === 'idle' ? '서연이 다가와 대화를 제안했다.' : accepted ? '서연이 고개를 끄덕이며 이야기를 나눴다.' : '서연이 고개를 저으며 거절했다.', accepted,
-			memory: input.mode === 'idle' ? '서연이 서점 앞에서 대화를 제안했다.' : null,
-			proposal: input.mode === 'idle' ? { actionId: 'talk', text: '잠깐 이야기할래요?' } : null };
+	let output;
+	if (kind === 'suggest') {
+		output = { suggestions: ['서연에게 책을 추천한다', '지은과 함께 서연에게 말을 건다', '서연과 대화한다', '잠시 쉰다'] };
+	} else if (kind === 'interpret') {
+		output = {
+			actionId: input.playerText.includes('입맞춤') ? 'kiss' : input.playerText.includes('대화') ? 'talk' : null,
+			targetId: input.playerText.includes('서연') ? 'seoyeon' : null
+		};
+	} else if (world) {
+		if (crowdedWorldOnce) {
+			crowdedWorldOnce = false;
+			output = { scene: '서연과 지은이 함께 서점 앞에 도착했다.', situation: '서연과 지은이 플레이어를 기다린다.', location: '망원동 서점 앞', focusCharacterId: 'seoyeon', minutes: 10, worldMemory: '망원동에 비가 내린다.' };
+		} else {
+			const focusCharacterId = input.targetCharacterId ?? 'seoyeon';
+			const focusName = input.cast.find((character) => character.id === focusCharacterId)?.name ?? '서연';
+			output = { scene: '저녁 거리에 비가 내린다.', situation: `${focusName}의 일과가 끝날 시간이다.`, location: '망원동 서점 앞', focusCharacterId, minutes: 10, worldMemory: '망원동에 비가 내린다.' };
+		}
+	} else if (crowdedCharacterOnce) {
+		crowdedCharacterOnce = false;
+		output = { narrative: '서연과 지은이 함께 플레이어에게 다가왔다.', accepted, memory: null, proposal: null };
+	} else {
+		const characterName = input.character.name;
+		output = {
+			narrative: input.mode === 'idle' ? `${characterName}이 다가와 대화를 제안했다.` : accepted ? `${characterName}이 고개를 끄덕이며 이야기를 나눴다.` : `${characterName}이 고개를 저으며 거절했다.`,
+			accepted,
+			memory: input.mode === 'idle' ? `${characterName}이 서점 앞에서 대화를 제안했다.` : null,
+			proposal: input.mode === 'idle' ? { actionId: 'talk', text: '잠깐 이야기할래요?' } : null
+		};
+	}
 	response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }));
 });
 
@@ -134,6 +155,13 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		await post('advance');
 		const db = new DatabaseSync(join(dataDirectory, 'newera.sqlite'));
 		try {
+			const initialWorldCalls = modelCalls.filter((call) => call.kind === 'world');
+			const initialCharacterCalls = modelCalls.filter((call) => call.kind === 'character');
+			assert.equal(initialWorldCalls.length, 2);
+			assert.equal(initialCharacterCalls.length, 2);
+			assert.match(initialWorldCalls[1].input.singleCharacterCorrection, /지은/);
+			assert.match(initialCharacterCalls[1].input.singleCharacterCorrection, /지은/);
+			assert.ok(!db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative.includes('지은'));
 			assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'player_state'").get().n, 0);
 			const originalLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);

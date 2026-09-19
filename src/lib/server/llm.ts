@@ -168,6 +168,13 @@ function requiredText(value: unknown, label: string): string {
 	return value.trim();
 }
 
+const singleCharacterAttempts = 2;
+
+function mentionedCharacterNames(values: unknown[], names: string[]): string[] {
+	const text = values.filter((value): value is string => typeof value === 'string').join('\n');
+	return names.filter((name) => text.includes(name));
+}
+
 export async function embed(text: string): Promise<number[]> {
 	const response = await postJson('/embeddings', { model: embeddingModel, input: text });
 	const data = response.data as Array<{ embedding?: unknown }> | undefined;
@@ -271,52 +278,70 @@ export async function generateWorldBeat(input: {
 	intent: string | null;
 	targetId: string | null;
 }): Promise<WorldBeat> {
-	const result = await completion(
-		[
+	const system = [
 			'당신은 한국어 성인 era 텍스트 게임의 세계 진행 담당 세션이다.',
 			'세계의 시간, 장소, 외부 사건과 장면의 출발 상황만 결정한다. 인물의 대사·속마음·승낙·거절은 인물 세션에 맡긴다.',
 			'scene은 새로운 상황을 보여주는 간결한 1~2문장으로 쓴다. 직전 사건을 다시 설명하거나 분위기만 길게 수식하지 않는다.',
 			'플레이어가 행동을 정했다면 그 행동의 결과를 미리 확정하지 않는다. 세계관 설정과 확정 사건을 지키며, 세계는 플레이어가 기다려도 움직인다.',
-			'최근 사건을 보고 같은 인물과 같은 상황만 연속해서 반복하지 않는다. 시간의 흐름에 맞는 일정, 장소, 외부 사건의 변화를 만든다.',
+			'한 장면에 등록된 등장인물은 최대 한 명만 출연한다. focusCharacterId는 scene과 situation에 실제로 등장하는 유일한 등록 인물이다. null이면 등록 인물을 아무도 등장시키지 않는다.',
+			'다른 등록 인물을 같은 장소에 부르거나, 대사·행동·연락을 추가하거나, 군중 장면으로 합류시키지 않는다. 변화를 만들기 위해 인물 수를 늘리지 않는다.',
+			'최근 사건을 보고 내용 없는 상황만 반복하지 않는다. 인물을 추가하는 대신 시간의 흐름에 맞는 일정, 장소, 외부 사건의 변화를 만든다.',
 			'스키마의 scene, situation, location, focusCharacterId, minutes, worldMemory에 세계 진행 결과만 넣는다.',
 			'worldMemory에는 이전 요약에서 여전히 유효한 사실과 이번 세계 변화만 간결하게 남긴다. 아직 인물이 결정하지 않은 행동 결과는 넣지 않는다.',
 			'인물이 지정된 행동이면 focusCharacterId는 그 인물로 한다. scene에는 인물의 행동, 대사, 결정이나 확정되지 않은 성적 접촉을 쓰지 않는다.'
-		].join(' '),
-		{
-			worldSetting: input.config.worldSetting,
-			eraRules: input.config.eraRules,
-			worldMemory: input.config.worldMemory,
-			world: input.world,
-			cast: input.characters.map((character) => ({
-				id: character.id,
-				name: character.name,
-				age: character.age,
-				profile: character.profile,
-				trait: character.trait,
-				relationToPlayer: character.relations.player,
-				mark: character.mark
-			})),
-			recentEvents: input.recentEvents.slice(0, 8).map((event) => event.summary),
-			playerIntent: input.intent,
-			targetCharacterId: input.targetId
-		},
-		worldBeatOutput(input.characters.map((character) => character.id))
-	);
-	const location = requiredText(result.location, 'location');
-	const focusCharacterId = input.targetId ?? (
-		typeof result.focusCharacterId === 'string' && input.characters.some((character) => character.id === result.focusCharacterId)
-			? result.focusCharacterId
-			: null
-	);
-	const minutes = Number(result.minutes);
-	return {
-		scene: requiredText(result.scene, 'scene'),
-		situation: requiredText(result.situation, 'situation'),
-		location,
-		focusCharacterId,
-		minutes: Number.isFinite(minutes) ? Math.max(5, Math.min(120, Math.round(minutes))) : 20,
-		worldMemory: typeof result.worldMemory === 'string' ? result.worldMemory.trim() : input.config.worldMemory
-	};
+		].join(' ');
+	let previousViolation: string[] = [];
+	for (let attempt = 0; attempt < singleCharacterAttempts; attempt += 1) {
+		const result = await completion(
+			system,
+			{
+				worldSetting: input.config.worldSetting,
+				eraRules: input.config.eraRules,
+				worldMemory: input.config.worldMemory,
+				world: input.world,
+				cast: input.characters.map((character) => ({
+					id: character.id,
+					name: character.name,
+					age: character.age,
+					profile: character.profile,
+					trait: character.trait,
+					relationToPlayer: character.relations.player,
+					mark: character.mark
+				})),
+				recentEvents: input.recentEvents.slice(0, 8).map((event) => event.summary),
+				playerIntent: input.intent,
+				targetCharacterId: input.targetId,
+				singleCharacterCorrection: previousViolation.length
+					? `이전 출력에 허용되지 않은 인물(${previousViolation.join(', ')})이 함께 등장했다. 한 명만 남겨 다시 작성한다.`
+					: null
+			},
+			worldBeatOutput(input.characters.map((character) => character.id))
+		);
+		const scene = requiredText(result.scene, 'scene');
+		const situation = requiredText(result.situation, 'situation');
+		const location = requiredText(result.location, 'location');
+		const focusCharacterId = input.targetId ?? (
+			typeof result.focusCharacterId === 'string' && input.characters.some((character) => character.id === result.focusCharacterId)
+				? result.focusCharacterId
+				: null
+		);
+		const focusCharacterName = input.characters.find((character) => character.id === focusCharacterId)?.name;
+		const forbiddenNames = input.characters
+			.filter((character) => character.id !== focusCharacterId && character.name !== focusCharacterName)
+			.map((character) => character.name);
+		previousViolation = mentionedCharacterNames([scene, situation], forbiddenNames);
+		if (previousViolation.length) continue;
+		const minutes = Number(result.minutes);
+		return {
+			scene,
+			situation,
+			location,
+			focusCharacterId,
+			minutes: Number.isFinite(minutes) ? Math.max(5, Math.min(120, Math.round(minutes))) : 20,
+			worldMemory: typeof result.worldMemory === 'string' ? result.worldMemory.trim() : input.config.worldMemory
+		};
+	}
+	throw new Error('모델이 한 장면에 여러 등장인물을 함께 배치했습니다. 다시 시도해 주세요.');
 }
 
 export async function generateCharacterTurn(input: {
@@ -328,11 +353,12 @@ export async function generateCharacterTurn(input: {
 	mode: CharacterTurnMode;
 	availableActions: ActionId[];
 	recentInteractions: EventRecord[];
+	otherCharacterNames: string[];
 }): Promise<CharacterTurn> {
-	const result = await completion(
-		[
+	const system = [
 			`당신은 era 텍스트 게임 등장인물 '${input.character.name}' 한 명만 맡는 독립 세션이다. 모든 등장인물은 성인이다.`,
 			'인물 설정, 현재 스탯, 관계, 경험, 마크, 인물 자신의 기억에 따라 자율적으로 행동한다. 다른 인물이나 플레이어의 의사·대사를 대신 결정하지 않는다.',
+			'현재 장면에 등록된 등장인물은 자신 한 명뿐이다. 다른 등록 인물을 등장시키거나 말하게 하거나 연락시키지 않으며, 함께 있는 것처럼 묘사하지 않는다.',
 			'player-action이면 제안에 승낙 또는 거절할 수 있다. accept-proposal이면 자신이 직전 장면에서 먼저 제안한 행동을 플레이어가 수락한 것이다. decline-proposal이면 플레이어가 제안을 거절한 것이다.',
 			'idle이면 availableActions에 포함된 행동만 필요에 따라 먼저 제안할 수 있다. 제안은 아직 실행된 사건이 아니다. 성인 행동도 제안과 실제 실행을 구분한다.',
 			'최근 같은 행동을 반복했다면 이번에는 대화의 주제나 인물의 목적이 실제로 달라질 때만 다시 제안한다. 제안할 이유가 없으면 proposal은 null이다.',
@@ -341,38 +367,54 @@ export async function generateCharacterTurn(input: {
 			'스키마의 narrative에는 장면, accepted에는 행동의 수락 여부, proposal에는 제안, memory에는 이후 행동을 바꿀 사실을 넣는다.',
 			'memory는 장면 문장을 복사하거나 일반적인 감정 평가를 쓰지 않는다. 실제로 일어난 일만 3인칭 사실 문장으로 쓴다. 중요한 새 사실이 없으면 반드시 null을 반환한다.',
 			'idle 외의 모드에서는 proposal을 null로 한다.'
-		].join(' '),
-		{
-			worldSetting: input.config.worldSetting,
-			eraRules: input.config.eraRules,
-			worldScene: input.beat.scene,
-			situation: input.beat.situation,
-			location: input.beat.location,
-			mode: input.mode,
-			availableActions: input.availableActions,
-			playerIntent: input.intent,
-			character: input.character,
-			personalMemories: input.memories.map((memory) => memory.summary),
-			recentInteractions: input.recentInteractions.map((event) => ({ turn: event.turn, action: event.actionId, summary: event.summary }))
-		},
-		characterTurnOutput(input.mode, input.availableActions)
-	);
-	let proposal: CharacterTurn['proposal'] = null;
-	if (input.mode === 'idle' && result.proposal && typeof result.proposal === 'object') {
-		const candidate = result.proposal as Record<string, unknown>;
-		if (
-			typeof candidate.actionId === 'string' &&
-			proposalActionIds.includes(candidate.actionId as Exclude<ActionId, 'rest'>) &&
-			input.availableActions.includes(candidate.actionId as ActionId) &&
-			typeof candidate.text === 'string' && candidate.text.trim()
-		) {
-			proposal = { actionId: candidate.actionId as Exclude<ActionId, 'rest'>, text: candidate.text.trim() };
+		].join(' ');
+	let previousViolation: string[] = [];
+	for (let attempt = 0; attempt < singleCharacterAttempts; attempt += 1) {
+		const result = await completion(
+			system,
+			{
+				worldSetting: input.config.worldSetting,
+				eraRules: input.config.eraRules,
+				worldScene: input.beat.scene,
+				situation: input.beat.situation,
+				location: input.beat.location,
+				mode: input.mode,
+				availableActions: input.availableActions,
+				playerIntent: input.intent,
+				character: input.character,
+				forbiddenCharacterNames: input.otherCharacterNames,
+				singleCharacterCorrection: previousViolation.length
+					? `이전 출력에 다른 인물(${previousViolation.join(', ')})이 등장했다. 현재 인물과 플레이어만 남겨 다시 작성한다.`
+					: null,
+				personalMemories: input.memories.map((memory) => memory.summary),
+				recentInteractions: input.recentInteractions.map((event) => ({ turn: event.turn, action: event.actionId, summary: event.summary }))
+			},
+			characterTurnOutput(input.mode, input.availableActions)
+		);
+		const narrative = requiredText(result.narrative, 'narrative');
+		const rawProposalText = result.proposal && typeof result.proposal === 'object'
+			? (result.proposal as Record<string, unknown>).text
+			: null;
+		previousViolation = mentionedCharacterNames([narrative, rawProposalText, result.memory], input.otherCharacterNames);
+		if (previousViolation.length) continue;
+		let proposal: CharacterTurn['proposal'] = null;
+		if (input.mode === 'idle' && result.proposal && typeof result.proposal === 'object') {
+			const candidate = result.proposal as Record<string, unknown>;
+			if (
+				typeof candidate.actionId === 'string' &&
+				proposalActionIds.includes(candidate.actionId as Exclude<ActionId, 'rest'>) &&
+				input.availableActions.includes(candidate.actionId as ActionId) &&
+				typeof candidate.text === 'string' && candidate.text.trim()
+			) {
+				proposal = { actionId: candidate.actionId as Exclude<ActionId, 'rest'>, text: candidate.text.trim() };
+			}
 		}
+		return {
+			narrative,
+			accepted: result.accepted === true,
+			proposal,
+			memory: typeof result.memory === 'string' && result.memory.trim() ? result.memory.trim() : null
+		};
 	}
-	return {
-		narrative: requiredText(result.narrative, 'narrative'),
-		accepted: result.accepted === true,
-		proposal,
-		memory: typeof result.memory === 'string' && result.memory.trim() ? result.memory.trim() : null
-	};
+	throw new Error('모델이 한 장면에 여러 등장인물을 함께 묘사했습니다. 다시 시도해 주세요.');
 }
