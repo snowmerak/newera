@@ -3,13 +3,14 @@
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import CharacterStatsFields from '$lib/components/CharacterStatsFields.svelte';
 	import CharacterMarksFields from '$lib/components/CharacterMarksFields.svelte';
-	import { DEFAULT_ABL, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type Character } from '$lib/game/types';
+	import ActionRequirementsFields from '$lib/components/ActionRequirementsFields.svelte';
+	import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type Character } from '$lib/game/types';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 	let busy = $state(false);
 	let selectedId = $state('');
-	let selected = $derived(data.characters.find((character) => character.id === selectedId) ?? null);
+	let selected = $derived(data.characterTemplates.find((character) => character.id === selectedId) ?? null);
 	let activeWorld = $derived(data.worldLore.find((world) => world.active) ?? data.worldLore[0]);
 
 	const submit: SubmitFunction = () => {
@@ -95,17 +96,19 @@
 					{/if}
 				</div>
 				<div class="manage-section">
-					<h3>등장인물</h3>
-					{#if data.characters.length}
-						<div class="character-chooser"><label for="character-setting">인물 선택</label><select id="character-setting" value={selectedId} onchange={(event) => (selectedId = event.currentTarget.value)}><option value="">선택</option>{#each data.characters as character}<option value={character.id}>{character.name}</option>{/each}</select></div>
+					<h3>등장인물 원본</h3>
+					<p class="minor">여기서 바꾸는 era 수치는 새 세션의 초기값입니다. 현재 플레이 중인 세션 수치는 바뀌지 않습니다. 이름·설정·행동 조건은 현재 세션에도 바로 반영됩니다.</p>
+					{#if data.characterTemplates.length}
+						<div class="character-chooser"><label for="character-setting">인물 선택</label><select id="character-setting" value={selectedId} onchange={(event) => (selectedId = event.currentTarget.value)}><option value="">선택</option>{#each data.characterTemplates as character}<option value={character.id}>{character.name}</option>{/each}</select></div>
 					{/if}
 					{#if selected}
 						{#key selected.id}<form method="POST" action="?/character" use:enhance={submit} class="settings-form">
 							<input type="hidden" name="id" value={selected.id} />
 							<div class="form-pair"><label>이름<input name="name" required value={selected.name} /></label><label>나이<input name="age" type="number" min="20" required value={selected.age} /></label></div>
 							<label for="character-profile">인물 설정</label><textarea id="character-profile" name="profile" rows="6" required value={selected.profile}></textarea>
-							<details class="nested"><summary>era 수치 · BASE · TALENT · ABL · EXP · RELATION · PALAM</summary><CharacterStatsFields stats={selected} /></details>
+							<details class="nested"><summary>새 세션의 초기 era 수치</summary><CharacterStatsFields stats={selected} /></details>
 							<CharacterMarksFields marks={selected.mark} />
+							<ActionRequirementsFields requirements={selected.actionRequirements} />
 							<div class="variable-stats"><strong>TRAIT</strong><p>가변 성향 목록: {selected.trait.length ? selected.trait.join(' · ') : '없음'}</p></div>
 							<button disabled={busy}>인물 저장</button>
 						</form>{/key}
@@ -115,6 +118,7 @@
 						<label for="new-profile">인물 설정</label><textarea id="new-profile" name="profile" rows="5" required></textarea>
 						<details class="nested"><summary>초기 era 수치</summary><CharacterStatsFields stats={initialStats} /></details>
 						<CharacterMarksFields marks={[]} />
+						<ActionRequirementsFields requirements={DEFAULT_ACTION_REQUIREMENTS} />
 						<button disabled={busy}>인물 추가</button>
 					</form></details>
 				</div>

@@ -16,7 +16,13 @@
       "talent": { "pride": 72, "openness": 58, "libido": 50, "modesty": 55, "assertiveness": 64, "receptiveness": 50, "curiosity": 70 },
       "abl": { "conversation": 2, "empathy": 1, "seduction": 1, "intimacy": 1 },
       "exp": { "social": 0, "romantic": 0, "seduction": 0, "intimacy": 0 },
-      "relations": { "player": { "affection": 0, "trust": 0, "desire": 0, "attachment": 0, "jealousy": 0, "resentment": 0 } }
+      "relations": { "player": { "affection": 0, "trust": 0, "desire": 0, "attachment": 0, "jealousy": 0, "resentment": 0 } },
+      "actionRequirements": [
+        { "actionId": "flirt", "stat": "relation.trust", "minimum": 5 },
+        { "actionId": "kiss", "stat": "relation.affection", "minimum": 12 },
+        { "actionId": "kiss", "stat": "relation.trust", "minimum": 10 },
+        { "actionId": "intimacy", "stat": "relation.desire", "minimum": 20 }
+      ]
     }
   ]
 }

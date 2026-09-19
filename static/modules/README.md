@@ -27,7 +27,11 @@
       "exp": { "social": 0, "romantic": 0, "seduction": 0, "intimacy": 0 },
       "mark": ["firstDate"],
       "relations": { "player": { "affection": 0, "trust": 0, "desire": 0, "attachment": 0, "jealousy": 0, "resentment": 0 } },
-      "palam": { "rapport": 0, "comfort": 0, "arousal": 0, "pleasure": 0, "embarrassment": 0, "tension": 0, "frustration": 0, "satisfaction": 0 }
+      "palam": { "rapport": 0, "comfort": 0, "arousal": 0, "pleasure": 0, "embarrassment": 0, "tension": 0, "frustration": 0, "satisfaction": 0 },
+      "actionRequirements": [
+        { "actionId": "flirt", "stat": "relation.trust", "minimum": 2 },
+        { "actionId": "kiss", "stat": "relation.affection", "minimum": 5 }
+      ]
     }
   ]
 }
@@ -39,6 +43,8 @@
 - `talent`, `relations`의 각 관계, `palam`은 0~100입니다. `abl`과 `exp`는 0 이상의 정수이며 상한이 없습니다. `base.energy`는 `base.maxEnergy`를 넘을 수 없습니다.
 - `relations`는 이 인물에서 대상 ID로 향하는 관계입니다. `player`는 플레이어를 뜻합니다. 옛 모듈의 단일 `relation` 객체, `exp.conversation`/`exp.empathy`, `palam.trust`는 가져올 때 새 수치로 변환됩니다.
 - `mark`는 첫 데이트·첫 입맞춤 같은 사건의 문자열 목록이며 사용자 정의 태그도 허용합니다. JSON은 모듈 설치 형식이고, 일반 인물 편집은 `/lores`의 입력칸을 사용합니다.
+- `actionRequirements`는 인물별 행동 선행 조건입니다. `talk`, `listen`, `flirt`, `kiss`, `intimacy` 중 행동 하나와 수치 경로, 최소값을 적습니다. 빈 배열이면 모든 행동에 숫자 조건이 없습니다. 생략하면 기본 조건이 적용됩니다. `firstKiss` 같은 MARK는 고정 선행 조건이 아닙니다.
+- 수치 경로는 `base.energy`, `talent.*`, `abl.*`, `exp.*`, `relation.*`, `palam.*`의 고정 필드 중에서 선택합니다. 같은 행동과 수치 조합은 한 번만 쓸 수 있습니다.
 - 세계관 모듈은 하나만 켤 수 있습니다. 적용 중에는 기본 세계관 대신 모듈의 `setting`을 사용하고, `eraRules`는 기본 규칙에 추가됩니다. 인물 전용 모듈은 여러 개를 동시에 켤 수 있습니다.
 - 모듈을 꺼도 인물의 스탯, 사건, 기억은 남습니다. 다시 켜면 기존 진행을 이어갑니다. 같은 ID의 새 파일로 업데이트하면 프로필 등 기본 설명을 갱신하고 진행 수치는 유지합니다.
 - 저장 슬롯은 당시 켜져 있던 모듈 목록도 기억합니다. 설치된 모듈 목록 자체는 슬롯 불러오기로 지워지지 않습니다.

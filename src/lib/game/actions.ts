@@ -1,4 +1,4 @@
-import { clampCount, clampPercent, relationTo, type ActionId, type Character, type Source } from './types.ts';
+import { ACTION_REQUIREMENT_LABELS, clampCount, clampPercent, relationTo, type ActionId, type ActionRequirementStat, type Character, type Source } from './types.ts';
 
 export const PLAYER_AGE = 25;
 
@@ -65,21 +65,21 @@ export function actionReason(
 	if (action.category === 'adult' && (PLAYER_AGE < 20 || character.age < 20)) {
 		return '성인 인물에게만 가능한 행동입니다';
 	}
-	const relation = relationTo(character);
-	if (actionId === 'flirt' && relation.trust < 2) return '신뢰 2 필요';
-	if (
-		actionId === 'kiss' &&
-		(relation.affection < 5 || relation.trust < 4 || relation.desire < 3)
-	) return '호감 5 · 신뢰 4 · 욕망 3 필요';
-	if (actionId === 'intimacy') {
-		if (!character.mark.includes('firstKiss') && !character.mark.includes('서로 원한 입맞춤')) return '먼저 입맞춤이 필요합니다';
-		if (
-			relation.affection < 8 ||
-			relation.trust < 7 ||
-			relation.desire < 9
-		) return '호감 8 · 신뢰 7 · 욕망 9 필요';
-	}
+	const unmet = character.actionRequirements
+		.filter((requirement) => requirement.actionId === actionId && requirementValue(character, requirement.stat) < requirement.minimum)
+		.map((requirement) => `${ACTION_REQUIREMENT_LABELS[requirement.stat]} ${requirement.minimum}`);
+	if (unmet.length) return `${unmet.join(' · ')} 필요`;
 	return null;
+}
+
+function requirementValue(character: Character, stat: ActionRequirementStat): number {
+	const [group, key] = stat.split('.') as [string, string];
+	if (group === 'base') return character.base[key as keyof Character['base']];
+	if (group === 'talent') return character.talent[key as keyof Character['talent']];
+	if (group === 'abl') return character.abl[key as keyof Character['abl']];
+	if (group === 'exp') return character.exp[key as keyof Character['exp']];
+	if (group === 'relation') return relationTo(character)[key as keyof ReturnType<typeof relationTo>];
+	return character.palam[key as keyof Character['palam']];
 }
 
 export function canPerform(actionId: ActionId, character: Character | null): boolean {

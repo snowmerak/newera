@@ -1,4 +1,4 @@
-import { STANDARD_MARKS, type CharacterStatsInput } from '$lib/game/types';
+import { ACTION_REQUIREMENT_ACTIONS, ACTION_REQUIREMENT_STATS, STANDARD_MARKS, actionRequirementMaximum, type ActionRequirement, type ActionRequirementStat, type CharacterStatsInput, type RequirementActionId } from '$lib/game/types';
 
 const EDITABLE_MARKS = ['firstConversation', 'becameFriend', ...STANDARD_MARKS];
 
@@ -49,4 +49,28 @@ export function characterStats(body: FormData): CharacterStatsInput | undefined 
 			pleasure: percent('palam.pleasure'), embarrassment: percent('palam.embarrassment'), tension: percent('palam.tension'),
 			frustration: percent('palam.frustration'), satisfaction: percent('palam.satisfaction') }
 	};
+}
+
+export function characterActionRequirements(body: FormData): ActionRequirement[] | undefined {
+	if (!body.has('requirements.present')) return undefined;
+	const indices = [...new Set([...body.keys()].flatMap((key) => {
+		const match = /^requirement\.(\d+)\.(?:actionId|stat|minimum)$/.exec(key);
+		return match ? [Number(match[1])] : [];
+	}))].sort((left, right) => left - right);
+	if (indices.length > 50) throw new Error('행동 선행 조건은 최대 50개까지 설정할 수 있습니다.');
+	const actions = new Set<string>(ACTION_REQUIREMENT_ACTIONS);
+	const stats = new Set<string>(ACTION_REQUIREMENT_STATS);
+	const seen = new Set<string>();
+	return indices.map((index) => {
+		const actionId = String(body.get(`requirement.${index}.actionId`) ?? '');
+		const stat = String(body.get(`requirement.${index}.stat`) ?? '');
+		const minimum = nonnegativeInteger(body, `requirement.${index}.minimum`);
+		if (!actions.has(actionId) || !stats.has(stat)) throw new Error('행동 선행 조건 항목을 확인해 주세요.');
+		const maximum = actionRequirementMaximum(stat as ActionRequirementStat);
+		if (maximum !== undefined && minimum > maximum) throw new Error(`${stat} 최소 요구치는 0~${maximum}으로 입력해 주세요.`);
+		const key = `${actionId}:${stat}`;
+		if (seen.has(key)) throw new Error('같은 행동과 수치의 선행 조건이 중복되었습니다.');
+		seen.add(key);
+		return { actionId: actionId as RequirementActionId, stat: stat as ActionRequirementStat, minimum };
+	});
 }

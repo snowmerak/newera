@@ -137,6 +137,15 @@ summary:hover { color: #eacb98; }
 .stat-grid label { display: flex; flex-direction: column; gap: 5px; }
 .stat-grid small { color: #918d86; font-size: 10px; }
 .settings-form .stat-grid input { padding: 6px 9px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.requirement-table { min-width: 0; margin: 7px 0; padding: 13px; border: 1px solid #424146; }
+.requirement-table legend { padding: 0 5px; color: #d5bd91; font-size: 12px; font-weight: 600; }
+.requirement-head, .requirement-row { display: grid; grid-template-columns: minmax(105px, .8fr) minmax(160px, 1.5fr) minmax(78px, .55fr) 34px; gap: 8px; align-items: center; }
+.requirement-head { padding: 4px 0 6px; color: #8f8a82; font-size: 10px; }
+.requirement-row { margin-bottom: 7px; }
+.settings-form .requirement-row select, .settings-form .requirement-row input { width: 100%; min-width: 0; padding: 7px 8px; color: #ebe7de; background: #25262b; border: 1px solid #535257; border-radius: 2px; }
+.settings-form .requirement-row .requirement-remove { align-self: stretch; width: 34px; padding: 0; color: #d5a29a; border-color: #74504a; }
+.settings-form .requirement-add { margin-top: 4px; padding: 6px 10px; }
 .variable-stats { padding: 11px 12px; border: 1px solid #424146; color: #bdb8ae; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .variable-stats strong { color: #d5bd91; font-weight: 600; }
 .variable-stats p { margin: 2px 0 8px; color: #9f9a91; }
@@ -179,6 +188,8 @@ summary:hover { color: #eacb98; }
 	.lore-toggle { display: inline-block; margin-left: auto; padding: 5px 9px; color: #e4d7c0; background: #292925; border: 1px solid #776a55; font-size: 12px; }
 	.game-layout { display: block; padding: 0 16px; }
 	.lore-sidebar { display: none; position: static; height: auto; max-height: none; overflow: visible; padding: 0; border-right: 0; border-bottom: 1px solid #49474a; }
+	.requirement-head { display: none; }
+	.requirement-row { grid-template-columns: 1fr 1fr 76px 34px; }
 	.lore-sidebar.open { display: block; }
 	.lore-sidebar-inner { min-height: 0; padding: 22px 0 30px; }
 	.sidebar-saves { margin-top: 24px; }

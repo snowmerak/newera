@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { actionUnavailableReason, attachRenderedText, createSimulation, resolveAction } from '../src/lib/game/simulation.ts';
 import { renderSemanticEvent } from '../src/lib/game/simulation-renderer.ts';
-import { applyEffects, calculateSource } from '../src/lib/game/actions.ts';
-import { DEFAULT_TALENT, DEFAULT_ABL, DEFAULT_EXP, DEFAULT_RELATION, DEFAULT_PALAM,
+import { actionReason, applyEffects, calculateSource } from '../src/lib/game/actions.ts';
+import { DEFAULT_TALENT, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_ABL, DEFAULT_EXP, DEFAULT_RELATION, DEFAULT_PALAM,
 	clampBase, normalizeTalent, normalizeExp, normalizeMarks, normalizeRelations, normalizePalam } from '../src/lib/game/types.ts';
 
 function initialState() {
@@ -13,7 +13,8 @@ function initialState() {
 		talent: { ...DEFAULT_TALENT, pride: 40, openness: 80 },
 		abl: { ...DEFAULT_ABL, conversation: 2, empathy: 3 },
 		exp: { ...DEFAULT_EXP }, mark: [],
-		relations: { player: { ...DEFAULT_RELATION } }, palam: { ...DEFAULT_PALAM }
+		relations: { player: { ...DEFAULT_RELATION } }, palam: { ...DEFAULT_PALAM },
+		actionRequirements: DEFAULT_ACTION_REQUIREMENTS.map((requirement) => ({ ...requirement }))
 	}], 'room');
 }
 
@@ -25,6 +26,22 @@ test('conversation has no player stamina requirement', () => {
 	assert.ok(!('energy' in result.source));
 	assert.ok(result.changes.every((change) => change.path !== 'player.BASE.energy'));
 	assert.equal(state.eventLog.length, 0);
+});
+
+test('each character owns editable numeric action requirements without a fixed kiss mark', () => {
+	const character = initialState().characters[0];
+	assert.equal(actionReason('flirt', character), '신뢰 2 필요');
+	character.actionRequirements = [];
+	assert.equal(actionReason('intimacy', character), null);
+	assert.ok(!character.mark.includes('firstKiss'));
+	character.actionRequirements = [
+		{ actionId: 'kiss', stat: 'talent.openness', minimum: 90 },
+		{ actionId: 'kiss', stat: 'relation.desire', minimum: 10 }
+	];
+	assert.equal(actionReason('kiss', character), 'TALENT 개방성 90 · 욕망 10 필요');
+	character.talent.openness = 90;
+	character.relations.player.desire = 10;
+	assert.equal(actionReason('kiss', character), null);
 });
 
 test('same state and action produce identical result and leave input untouched', () => {

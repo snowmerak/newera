@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createLore, deleteLore, getGameView, importLoreJson, installModule, renameLore, selectWorldModule, setModuleEnabled, switchLore } from '$lib/server/db';
 import { runExclusive, saveCharacterSettings, saveScenarioSettings } from '$lib/server/game';
-import { characterMarks, characterStats } from '$lib/server/character-form';
+import { characterActionRequirements, characterMarks, characterStats } from '$lib/server/character-form';
 
 export const load: PageServerLoad = () => getGameView();
 
@@ -47,7 +47,8 @@ export const actions: Actions = {
 			await saveCharacterSettings({
 				id: String(body.get('id') ?? ''), name: String(body.get('name') ?? ''),
 				age: Number(body.get('age')), profile: String(body.get('profile') ?? ''),
-				stats: characterStats(body), marks: characterMarks(body)
+				stats: characterStats(body), marks: characterMarks(body),
+				actionRequirements: characterActionRequirements(body)
 			});
 			return { message: '인물 설정을 저장했습니다.', level: 'success' as const };
 		} catch (error) { return errorResult(error, '인물 설정을 저장하지 못했습니다.'); }

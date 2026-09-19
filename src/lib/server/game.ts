@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { ACTIONS, actionReason, applyEffects, calculateSource, eventSummary } from '$lib/game/actions';
-import { DEFAULT_ABL, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type Character, type CharacterStatsInput, type EventRecord, type MemoryRecord, type Proposal, type Source, type WorldState } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type MemoryRecord, type Proposal, type Source, type WorldState } from '$lib/game/types';
 import {
 	getCharacter,
+	getCharacterTemplates,
 	getEffectiveScenarioConfig,
 	getGameView,
 	getMemories,
@@ -10,6 +11,7 @@ import {
 	insertMemory,
 	searchMemoryIds,
 	updateCharacter,
+	updateCharacterTemplate,
 	updateMemoryEmbedding,
 	updateScenarioConfig,
 	updateWorld,
@@ -277,22 +279,23 @@ export function saveScenarioSettings(worldSetting: string, eraRules: string): Pr
 	});
 }
 
-export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: CharacterStatsInput; marks?: string[] }): Promise<string> {
-	return runExclusive(() => {
+export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: CharacterStatsInput; marks?: string[]; actionRequirements?: ActionRequirement[] }): Promise<string> {
+	return runExclusive(() => withTransaction(() => {
 		const name = input.name.trim();
 		const profile = input.profile.trim();
 		if (!name || !profile) throw new Error('인물 이름과 설정을 입력해 주세요.');
 		if (!Number.isInteger(input.age) || input.age < 20) throw new Error('등장인물은 성인이어야 합니다.');
-		const existing = input.id ? getCharacter(input.id) : null;
-		if (input.id && !existing) throw new Error('인물을 찾을 수 없습니다.');
-		const character: Character = existing ?? {
+		const existingTemplate = input.id ? getCharacterTemplates().find((character) => character.id === input.id) ?? null : null;
+		if (input.id && !existingTemplate) throw new Error('인물을 찾을 수 없습니다.');
+		const character: Character = existingTemplate ?? {
 			id: randomUUID(), name, age: input.age, portrait: '', introduction: '', profile,
 			base: { energy: 20, maxEnergy: 20 }, trait: [],
 			talent: { ...DEFAULT_TALENT },
 			abl: { ...DEFAULT_ABL },
 			exp: { ...DEFAULT_EXP },
 			mark: [], relations: { player: { ...DEFAULT_RELATION } },
-			palam: { ...DEFAULT_PALAM }
+			palam: { ...DEFAULT_PALAM },
+			actionRequirements: DEFAULT_ACTION_REQUIREMENTS.map((requirement) => ({ ...requirement }))
 		};
 		const stats = input.stats ? {
 			base: input.stats.base, talent: input.stats.talent ?? character.talent,
@@ -302,9 +305,23 @@ export function saveCharacterSettings(input: { id: string; name: string; age: nu
 		if (stats.base.maxEnergy < 1 || stats.base.energy > stats.base.maxEnergy) {
 			throw new Error('BASE 체력 값을 확인해 주세요.');
 		}
-		updateCharacter({ ...character, ...stats, mark: input.marks ?? character.mark, name, age: input.age, profile, introduction: profile.split('\n')[0] });
+		const template = {
+			...character, ...stats,
+			mark: input.marks ?? character.mark,
+			actionRequirements: input.actionRequirements ?? character.actionRequirements,
+			name, age: input.age, profile, introduction: profile.split('\n')[0]
+		};
+		updateCharacterTemplate(template);
+		const session = existingTemplate ? getCharacter(character.id) : null;
+		if (!session) updateCharacter(template);
+		else updateCharacter({
+			...session,
+			name: template.name, age: template.age, portrait: template.portrait,
+			introduction: template.introduction, profile: template.profile, trait: [...template.trait],
+			actionRequirements: template.actionRequirements.map((requirement) => ({ ...requirement }))
+		});
 		const config = getGameView().config;
 		if (config.playerSuggestions) updateScenarioConfig({ ...config, playerSuggestions: null });
 		return character.id;
-	});
+	}));
 }

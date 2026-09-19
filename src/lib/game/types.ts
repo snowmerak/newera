@@ -22,6 +22,41 @@ export interface ExperienceStats { social: number; romantic: number; seduction: 
 export interface RelationStats { affection: number; trust: number; desire: number; attachment: number; jealousy: number; resentment: number }
 export interface PalamStats { rapport: number; comfort: number; arousal: number; pleasure: number; embarrassment: number; tension: number; frustration: number; satisfaction: number }
 
+export const ACTION_REQUIREMENT_ACTIONS = ['talk', 'listen', 'flirt', 'kiss', 'intimacy'] as const;
+export type RequirementActionId = typeof ACTION_REQUIREMENT_ACTIONS[number];
+export const ACTION_REQUIREMENT_STATS = [
+	'base.energy',
+	'talent.pride', 'talent.openness', 'talent.libido', 'talent.modesty', 'talent.assertiveness', 'talent.receptiveness', 'talent.curiosity',
+	'abl.conversation', 'abl.empathy', 'abl.seduction', 'abl.intimacy',
+	'exp.social', 'exp.romantic', 'exp.seduction', 'exp.intimacy',
+	'relation.affection', 'relation.trust', 'relation.desire', 'relation.attachment', 'relation.jealousy', 'relation.resentment',
+	'palam.rapport', 'palam.comfort', 'palam.arousal', 'palam.pleasure', 'palam.embarrassment', 'palam.tension', 'palam.frustration', 'palam.satisfaction'
+] as const;
+export type ActionRequirementStat = typeof ACTION_REQUIREMENT_STATS[number];
+export interface ActionRequirement { actionId: RequirementActionId; stat: ActionRequirementStat; minimum: number }
+
+export const DEFAULT_ACTION_REQUIREMENTS: ActionRequirement[] = [
+	{ actionId: 'flirt', stat: 'relation.trust', minimum: 2 },
+	{ actionId: 'kiss', stat: 'relation.affection', minimum: 5 },
+	{ actionId: 'kiss', stat: 'relation.trust', minimum: 4 },
+	{ actionId: 'kiss', stat: 'relation.desire', minimum: 3 },
+	{ actionId: 'intimacy', stat: 'relation.affection', minimum: 8 },
+	{ actionId: 'intimacy', stat: 'relation.trust', minimum: 7 },
+	{ actionId: 'intimacy', stat: 'relation.desire', minimum: 9 }
+];
+
+export const ACTION_REQUIREMENT_LABELS: Record<ActionRequirementStat, string> = {
+	'base.energy': 'BASE 체력',
+	'talent.pride': 'TALENT 자존심', 'talent.openness': 'TALENT 개방성', 'talent.libido': 'TALENT 기본 욕구',
+	'talent.modesty': 'TALENT 수치심 성향', 'talent.assertiveness': 'TALENT 주도성', 'talent.receptiveness': 'TALENT 수용성', 'talent.curiosity': 'TALENT 호기심',
+	'abl.conversation': 'ABL 대화', 'abl.empathy': 'ABL 공감', 'abl.seduction': 'ABL 유혹', 'abl.intimacy': 'ABL 친밀함',
+	'exp.social': 'EXP 사회 경험', 'exp.romantic': 'EXP 연애 경험', 'exp.seduction': 'EXP 유혹 경험', 'exp.intimacy': 'EXP 친밀 경험',
+	'relation.affection': '호감', 'relation.trust': '신뢰', 'relation.desire': '욕망', 'relation.attachment': '애착',
+	'relation.jealousy': '질투', 'relation.resentment': '반감',
+	'palam.rapport': 'PALAM 교감', 'palam.comfort': 'PALAM 편안함', 'palam.arousal': 'PALAM 흥분', 'palam.pleasure': 'PALAM 쾌감',
+	'palam.embarrassment': 'PALAM 부끄러움', 'palam.tension': 'PALAM 긴장', 'palam.frustration': 'PALAM 좌절', 'palam.satisfaction': 'PALAM 만족'
+};
+
 export const DEFAULT_TALENT: TalentStats = { pride: 50, openness: 50, libido: 50, modesty: 50, assertiveness: 50, receptiveness: 50, curiosity: 50 };
 export const DEFAULT_ABL: AbilityStats = { conversation: 1, empathy: 1, seduction: 1, intimacy: 1 };
 export const DEFAULT_EXP: ExperienceStats = { social: 0, romantic: 0, seduction: 0, intimacy: 0 };
@@ -80,6 +115,33 @@ export function normalizePalam(raw: unknown): PalamStats {
 	return fields(DEFAULT_PALAM, { ...source, comfort: source.comfort ?? source.trust }, clampPercent);
 }
 
+export function actionRequirementMaximum(stat: ActionRequirementStat): number | undefined {
+	return stat.startsWith('talent.') || stat.startsWith('relation.') || stat.startsWith('palam.') ? 100 : undefined;
+}
+
+export function normalizeActionRequirements(raw: unknown): ActionRequirement[] {
+	if (raw === undefined || raw === null) return DEFAULT_ACTION_REQUIREMENTS.map((requirement) => ({ ...requirement }));
+	if (!Array.isArray(raw)) return DEFAULT_ACTION_REQUIREMENTS.map((requirement) => ({ ...requirement }));
+	const actions = new Set<string>(ACTION_REQUIREMENT_ACTIONS);
+	const stats = new Set<string>(ACTION_REQUIREMENT_STATS);
+	const normalized: ActionRequirement[] = [];
+	const seen = new Set<string>();
+	for (const value of raw.slice(0, 50)) {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+		const candidate = value as Record<string, unknown>;
+		if (!actions.has(String(candidate.actionId)) || !stats.has(String(candidate.stat)) ||
+			typeof candidate.minimum !== 'number' || !Number.isSafeInteger(candidate.minimum) || candidate.minimum < 0) continue;
+		const requirement = candidate as unknown as ActionRequirement;
+		const maximum = actionRequirementMaximum(requirement.stat);
+		if (maximum !== undefined && requirement.minimum > maximum) continue;
+		const key = `${requirement.actionId}:${requirement.stat}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		normalized.push({ actionId: requirement.actionId, stat: requirement.stat, minimum: requirement.minimum });
+	}
+	return normalized;
+}
+
 export interface Character {
 	id: string;
 	moduleId?: string | null;
@@ -97,6 +159,7 @@ export interface Character {
 	/** Directed edges from this character to a target ID. The player has ID `player`. */
 	relations: Record<string, RelationStats>;
 	palam: PalamStats;
+	actionRequirements: ActionRequirement[];
 }
 
 export type CharacterStatsInput = Pick<Character, 'base' | 'abl' | 'exp' | 'palam'> & { talent?: TalentStats; relation: RelationStats };
@@ -209,6 +272,7 @@ export interface GameView {
 	world: WorldState;
 	config: ScenarioConfig;
 	characters: Character[];
+	characterTemplates: Character[];
 	modules: InstalledModule[];
 	worldLore: WorldLore[];
 	characterLore: CharacterLore[];

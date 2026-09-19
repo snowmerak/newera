@@ -1,4 +1,4 @@
-import { DEFAULT_ABL, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, normalizeExp, normalizeMarks, normalizePalam, type Character, type RelationStats } from '$lib/game/types';
+import { ACTION_REQUIREMENT_ACTIONS, ACTION_REQUIREMENT_STATS, DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, actionRequirementMaximum, normalizeExp, normalizeMarks, normalizePalam, type ActionRequirement, type ActionRequirementStat, type Character, type RelationStats, type RequirementActionId } from '$lib/game/types';
 
 export interface ModuleManifest {
 	schemaVersion: 1;
@@ -43,6 +43,28 @@ function strings(value: unknown, label: string): string[] {
 		throw new Error(`${label}는 100자 이하의 문자열 배열이어야 합니다.`);
 	}
 	return value.map((item: string) => item.trim());
+}
+
+function actionRequirements(value: unknown, label: string): ActionRequirement[] {
+	if (value === undefined) return DEFAULT_ACTION_REQUIREMENTS.map((requirement) => ({ ...requirement }));
+	if (!Array.isArray(value) || value.length > 50) throw new Error(`${label}는 최대 50개의 배열이어야 합니다.`);
+	const actions = new Set<string>(ACTION_REQUIREMENT_ACTIONS);
+	const stats = new Set<string>(ACTION_REQUIREMENT_STATS);
+	const seen = new Set<string>();
+	return value.map((item, index) => {
+		const source = object(item, `${label}[${index}]`);
+		if (!actions.has(String(source.actionId)) || !stats.has(String(source.stat)) ||
+			typeof source.minimum !== 'number' || !Number.isSafeInteger(source.minimum) || source.minimum < 0) {
+			throw new Error(`${label}[${index}] 값을 확인해 주세요.`);
+		}
+		const stat = source.stat as ActionRequirementStat;
+		const maximum = actionRequirementMaximum(stat);
+		if (maximum !== undefined && source.minimum > maximum) throw new Error(`${label}[${index}].minimum은 0~${maximum}이어야 합니다.`);
+		const key = `${source.actionId}:${stat}`;
+		if (seen.has(key)) throw new Error(`${label}에 같은 행동과 수치가 중복되었습니다.`);
+		seen.add(key);
+		return { actionId: source.actionId as RequirementActionId, stat, minimum: source.minimum };
+	});
 }
 
 export function parseModuleManifest(raw: string): ModuleManifest {
@@ -108,7 +130,8 @@ export function parseModuleManifest(raw: string): ModuleManifest {
 			exp,
 			mark: normalizeMarks(strings(source.mark, 'MARK')),
 			relations,
-			palam
+			palam,
+			actionRequirements: actionRequirements(source.actionRequirements, `characters[${index}].actionRequirements`)
 		};
 	});
 	if (!world && characters.length === 0) throw new Error('세계관이나 등장인물을 하나 이상 넣어 주세요.');
