@@ -1033,6 +1033,15 @@ export function saveGame(slot: number): void {
 	});
 }
 
+export function resetSaveSlot(slot: number): void {
+	if (!Number.isInteger(slot) || slot < 1 || slot > 3) throw new Error('저장 슬롯이 올바르지 않습니다.');
+	withTransaction(() => {
+		const result = getDb().prepare('DELETE FROM lore_save_slots WHERE lore_id = ? AND slot = ?')
+			.run(activeLoreId(), slot);
+		if (result.changes === 0) throw new Error('이 로어의 슬롯에는 저장된 게임이 없습니다.');
+	});
+}
+
 function restoreSnapshot(snapshot: Snapshot, replaceLoreDefinitions = false): void {
 	snapshot = migrateSnapshot(snapshot);
 		const db = getDb();

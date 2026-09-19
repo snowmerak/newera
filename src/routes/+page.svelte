@@ -68,6 +68,12 @@
 		return event.summary;
 	}
 
+	function confirmSaveReset(event: SubmitEvent, slot: number): void {
+		if (!window.confirm(`슬롯 ${slot}의 저장 데이터를 초기화할까요?\n현재 플레이 중인 진행에는 영향을 주지 않습니다.`)) {
+			event.preventDefault();
+		}
+	}
+
 </script>
 
 <svelte:head>
@@ -101,7 +107,11 @@
 					<div class="save-slots">{#each [1, 2, 3] as number}
 						{@const saved = data.saves.find((save) => save.slot === number)}
 						<div class="save-slot"><div><strong>슬롯 {number}</strong><span>{saved ? `${saved.turn}턴 저장 · ${new Date(saved.savedAt).toLocaleString('ko-KR')}` : '비어 있음'}</span></div>
-							<div class="save-slot-actions"><form method="POST" action="?/save" use:enhance={submit}><button name="slot" value={number} disabled={busy}>저장</button></form><form method="POST" action="?/load" use:enhance={submit}><button name="slot" value={number} disabled={busy || !saved}>불러오기</button></form></div>
+							<div class="save-slot-actions">
+								<form method="POST" action="?/save" use:enhance={submit}><button name="slot" value={number} disabled={busy}>저장</button></form>
+								<form method="POST" action="?/load" use:enhance={submit}><button name="slot" value={number} disabled={busy || !saved}>불러오기</button></form>
+								<form method="POST" action="?/resetSave" use:enhance={submit} onsubmit={(event) => confirmSaveReset(event, number)}><button class="reset-save" name="slot" value={number} disabled={busy || !saved}>초기화</button></form>
+							</div>
 						</div>
 					{/each}</div>
 				</section>

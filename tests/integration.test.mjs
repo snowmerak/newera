@@ -129,6 +129,8 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		const sidebar = firstPage.split('<aside id="lore-sidebar"')[1].split('</aside>')[0];
 		assert.ok(!sidebar.includes('로어 관리'));
 		assert.ok(sidebar.includes('aria-label="저장 슬롯"'));
+		assert.ok(sidebar.includes('action="?/resetSave"'));
+		assert.ok(sidebar.includes('>초기화</button>'));
 		assert.ok(!firstPage.split('<main class="reader">')[1].split('</main>')[0].includes('aria-label="저장 슬롯"'));
 		assert.ok(firstPage.includes('현재 세션'));
 		assert.ok(firstPage.includes('저장 슬롯'));
@@ -267,6 +269,13 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('advance', {}, true);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
 			await post('save', { slot: '1' });
+			await post('save', { slot: '3' });
+			const turnBeforeSaveReset = db.prepare('SELECT turn FROM world_state').get().turn;
+			await post('resetSave', { slot: '3' });
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ? AND slot = 3').get(originalLoreId).n, 0);
+			assert.equal(db.prepare('SELECT turn FROM world_state').get().turn, turnBeforeSaveReset);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ? AND slot = 1').get(originalLoreId).n, 1);
+			await post('resetSave', { slot: '3' }, true);
 			await post('advance');
 			await post('load', { slot: '1' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
