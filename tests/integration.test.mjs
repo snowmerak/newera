@@ -32,7 +32,7 @@ const modelServer = createServer(async (request, response) => {
 		: system.includes('플레이어가 먼저 할 행동을 제안한다') ? 'suggest'
 		: system.includes('COMMAND에 연결하는 해석기') ? 'interpret'
 		: 'character';
-	modelCalls.push({ kind, input });
+	modelCalls.push({ kind, input, responseFormat: body.response_format });
 	const world = kind === 'world';
 	if (world && failNextWorld) {
 		failNextWorld = false;
@@ -231,6 +231,17 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.ok(modelCalls.filter((call) => call.kind === 'character').length >= 3);
 			assert.ok(modelCalls.some((call) => call.kind === 'suggest'));
 			assert.ok(modelCalls.some((call) => call.kind === 'interpret'));
+			for (const call of modelCalls) {
+				assert.equal(call.responseFormat?.type, 'json_schema');
+				assert.equal(call.responseFormat.json_schema?.strict, true);
+				assert.equal(call.responseFormat.json_schema?.schema?.additionalProperties, false);
+			}
+			assert.deepEqual(new Set(modelCalls.map((call) => call.responseFormat.json_schema.name)),
+				new Set(['player_action_suggestions', 'player_action_interpretation', 'world_beat', 'character_turn']));
+			const playerActionCharacterCall = modelCalls.find((call) => call.kind === 'character' && call.input.mode === 'player-action');
+			assert.equal(playerActionCharacterCall.responseFormat.json_schema.schema.properties.proposal.type, 'null');
+			const idleCharacterCall = modelCalls.find((call) => call.kind === 'character' && call.input.mode === 'idle');
+			assert.ok(Array.isArray(idleCharacterCall.responseFormat.json_schema.schema.properties.proposal.anyOf));
 			assert.equal(modelCalls[0].input.worldSetting, '비가 잦은 망원동');
 			assert.equal(modelCalls[1].input.character.name, '서연');
 			const characterModule = readFileSync(join(process.cwd(), 'static/modules/example-character.json'), 'utf8');

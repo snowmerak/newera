@@ -23,7 +23,7 @@ npm run dev
 | `NEWERA_LLM_TIMEOUT_MS` | `180000` |
 | `NEWERA_DATA_DIR` | 프로젝트의 `data` 폴더 |
 
-`.env.example`에 같은 항목이 있습니다. 채팅 요청에는 `max_tokens`를 지정하지 않습니다. 세계와 인물은 같은 모델에 각각 독립적인 단발 요청을 보냅니다. 서버가 장면 응답을 주지 않으면 턴은 진행되지 않습니다. 임베딩 실패만으로는 턴이 중단되지 않습니다.
+`.env.example`에 같은 항목이 있습니다. 채팅 요청에는 `max_tokens`를 지정하지 않습니다. 세계와 인물은 같은 모델에 각각 독립적인 단발 요청을 보냅니다. 선택지, 행동 해석, 세계 진행, 인물 반응은 OpenAI 호환 `response_format: json_schema`를 사용하므로 모델 서버가 [구조화된 출력](https://lmstudio.ai/docs/developer/openai-compat/structured-output)을 지원해야 합니다. 서버가 장면 응답을 주지 않거나 스키마를 지키지 않으면 턴은 진행되지 않습니다. 임베딩 실패만으로는 턴이 중단되지 않습니다.
 
 ## 사용
 

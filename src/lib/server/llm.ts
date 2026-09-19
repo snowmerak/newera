@@ -20,6 +20,102 @@ export interface CharacterTurn {
 	memory: string | null;
 }
 
+type JsonSchema = Record<string, unknown>;
+type CharacterTurnMode = 'idle' | 'player-action' | 'accept-proposal' | 'decline-proposal';
+
+interface StructuredOutput {
+	name: string;
+	schema: JsonSchema;
+}
+
+const actionIds: ActionId[] = ['talk', 'listen', 'flirt', 'kiss', 'intimacy', 'rest'];
+const proposalActionIds: Array<Exclude<ActionId, 'rest'>> = ['talk', 'listen', 'flirt', 'kiss', 'intimacy'];
+
+const playerSuggestionsOutput: StructuredOutput = {
+	name: 'player_action_suggestions',
+	schema: {
+		type: 'object',
+		additionalProperties: false,
+		properties: {
+			suggestions: {
+				type: 'array',
+				items: { type: 'string', minLength: 1 },
+				minItems: 3,
+				maxItems: 4
+			}
+		},
+		required: ['suggestions']
+	}
+};
+
+function playerActionOutput(characterIds: string[]): StructuredOutput {
+	return {
+		name: 'player_action_interpretation',
+		schema: {
+			type: 'object',
+			additionalProperties: false,
+			properties: {
+				actionId: { type: ['string', 'null'], enum: [...actionIds, null] },
+				targetId: { type: ['string', 'null'], enum: [...characterIds, null] }
+			},
+			required: ['actionId', 'targetId']
+		}
+	};
+}
+
+function worldBeatOutput(characterIds: string[]): StructuredOutput {
+	return {
+		name: 'world_beat',
+		schema: {
+			type: 'object',
+			additionalProperties: false,
+			properties: {
+				scene: { type: 'string', minLength: 1 },
+				situation: { type: 'string', minLength: 1 },
+				location: { type: 'string', minLength: 1 },
+				focusCharacterId: { type: ['string', 'null'], enum: [...characterIds, null] },
+				minutes: { type: 'integer', minimum: 5, maximum: 120 },
+				worldMemory: { type: 'string' }
+			},
+			required: ['scene', 'situation', 'location', 'focusCharacterId', 'minutes', 'worldMemory']
+		}
+	};
+}
+
+function characterTurnOutput(mode: CharacterTurnMode, availableActions: ActionId[]): StructuredOutput {
+	const availableProposals = proposalActionIds.filter((actionId) => availableActions.includes(actionId));
+	const proposal: JsonSchema = mode === 'idle' && availableProposals.length
+		? {
+			anyOf: [
+				{
+					type: 'object',
+					additionalProperties: false,
+					properties: {
+						actionId: { type: 'string', enum: availableProposals },
+						text: { type: 'string', minLength: 1 }
+					},
+					required: ['actionId', 'text']
+				},
+				{ type: 'null' }
+			]
+		}
+		: { type: 'null' };
+	return {
+		name: 'character_turn',
+		schema: {
+			type: 'object',
+			additionalProperties: false,
+			properties: {
+				narrative: { type: 'string', minLength: 1 },
+				accepted: { type: 'boolean' },
+				proposal,
+				memory: { type: ['string', 'null'] }
+			},
+			required: ['narrative', 'accepted', 'proposal', 'memory']
+		}
+	};
+}
+
 function timeout(): number {
 	const configured = Number(process.env.NEWERA_LLM_TIMEOUT_MS);
 	return Number.isFinite(configured) && configured > 0 ? configured : 180_000;
@@ -38,11 +134,15 @@ async function postJson(path: string, body: unknown): Promise<Record<string, unk
 	return (await response.json()) as Record<string, unknown>;
 }
 
-async function completion(system: string, input: unknown, temperature = 0.85): Promise<Record<string, unknown>> {
+async function completion(system: string, input: unknown, output: StructuredOutput, temperature = 0.85): Promise<Record<string, unknown>> {
 	const response = await postJson('/chat/completions', {
 		model: llmModel,
 		temperature,
 		stream: false,
+		response_format: {
+			type: 'json_schema',
+			json_schema: { name: output.name, strict: true, schema: output.schema }
+		},
 		messages: [
 			{ role: 'system', content: system },
 			{ role: 'user', content: JSON.stringify(input) }
@@ -51,15 +151,11 @@ async function completion(system: string, input: unknown, temperature = 0.85): P
 	const choices = response.choices as Array<{ message?: { content?: unknown } }> | undefined;
 	const content = choices?.[0]?.message?.content;
 	if (typeof content !== 'string') throw new Error('모델 응답이 비어 있습니다.');
-	const clean = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(clean);
+		parsed = JSON.parse(content);
 	} catch {
-		const start = clean.indexOf('{');
-		const end = clean.lastIndexOf('}');
-		if (start < 0 || end <= start) throw new Error('모델이 JSON 응답을 주지 않았습니다.');
-		parsed = JSON.parse(clean.slice(start, end + 1));
+		throw new Error('모델이 구조화된 JSON 응답을 주지 않았습니다.');
 	}
 	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
 		throw new Error('모델 응답 형식이 올바르지 않습니다.');
@@ -99,7 +195,7 @@ export async function generatePlayerSuggestions(input: {
 			'상대가 선택되어 있으면 그 인물 한 명에게 하는 행동만 제안한다. 다른 등장인물을 함께 행동 대상으로 넣지 않는다. 현재 장면에서 확인되지 않은 접촉이나 약속을 이미 일어난 일처럼 전제하지 않는다.',
 			'제안은 플레이어가 시도할 행동이며 결과를 미리 확정하지 않는다. 상대의 승낙을 전제로 쓰지 않는다.',
 			'기존 COMMAND에 해당하는 제안은 availableActions에 있는 행동만 사용한다. 조건이 잠긴 신체·성인 행동을 다른 말로 제안하지 않는다.',
-			'JSON 객체만 반환한다: {"suggestions":["플레이어가 시도할 구체적 행동", "...", "..."]}.'
+			'스키마의 suggestions에는 플레이어가 시도할 구체적인 행동만 넣는다.'
 		].join(' '),
 		{
 			world: input.world,
@@ -110,7 +206,8 @@ export async function generatePlayerSuggestions(input: {
 			currentScene: input.currentScene,
 			recentEvents: input.recentEvents.slice(0, 8).map((event) => event.summary),
 			availableActions: input.availableActions
-		}
+		},
+		playerSuggestionsOutput
 	);
 	if (!Array.isArray(result.suggestions)) throw new Error('행동 제안 형식이 올바르지 않습니다.');
 	const otherNames = input.character
@@ -135,13 +232,14 @@ export async function interpretPlayerAction(input: {
 			'의도가 대화면 talk, 이야기를 들어주면 listen, 유혹/호감 표현이면 flirt, 입맞춤이면 kiss, 성관계 제안이면 intimacy, 휴식이면 rest다.',
 			'이 밖의 이동·탐색·물건 사용·일상 행동은 actionId를 null로 둔다. kiss나 intimacy 같은 행동을 조건 검사를 피하려고 null로 분류하지 않는다.',
 			'문장에 명시된 인물이 있으면 그 ID를 targetId로 쓰고, 없지만 선택된 상대에게 하는 행동이면 selectedTargetId를 쓴다. 특정 인물이 관계없는 행동이면 null이다.',
-			'JSON 객체만 반환한다: {"actionId":"talk|listen|flirt|kiss|intimacy|rest" 또는 null,"targetId":"기존 인물 ID" 또는 null}.'
+			'스키마의 actionId와 targetId에는 해석 결과만 넣는다.'
 		].join(' '),
 		{
 			playerText: input.text,
 			selectedTargetId: input.selectedTargetId,
 			characters: input.characters.map((character) => ({ id: character.id, name: character.name }))
 		},
+		playerActionOutput(input.characters.map((character) => character.id)),
 		0
 	);
 	if (result.actionId !== null && (typeof result.actionId !== 'string' || !['talk', 'listen', 'flirt', 'kiss', 'intimacy', 'rest'].includes(result.actionId))) {
@@ -170,7 +268,7 @@ export async function generateWorldBeat(input: {
 			'scene은 새로운 상황을 보여주는 간결한 1~2문장으로 쓴다. 직전 사건을 다시 설명하거나 분위기만 길게 수식하지 않는다.',
 			'플레이어가 행동을 정했다면 그 행동의 결과를 미리 확정하지 않는다. 세계관 설정과 확정 사건을 지키며, 세계는 플레이어가 기다려도 움직인다.',
 			'최근 사건을 보고 같은 인물과 같은 상황만 연속해서 반복하지 않는다. 시간의 흐름에 맞는 일정, 장소, 외부 사건의 변화를 만든다.',
-			'JSON 객체만 반환한다: {"scene":"세계 상황 서술","situation":"인물이 반응할 구체적 상황","location":"현재 또는 새 장소","focusCharacterId":"기존 인물 ID 또는 null","minutes":경과 분,"worldMemory":"다음 턴까지 유지할 중요한 세계 사실의 갱신된 요약"}.',
+			'스키마의 scene, situation, location, focusCharacterId, minutes, worldMemory에 세계 진행 결과만 넣는다.',
 			'worldMemory에는 이전 요약에서 여전히 유효한 사실과 이번 세계 변화만 간결하게 남긴다. 아직 인물이 결정하지 않은 행동 결과는 넣지 않는다.',
 			'인물이 지정된 행동이면 focusCharacterId는 그 인물로 한다. scene에는 인물의 행동, 대사, 결정이나 확정되지 않은 성적 접촉을 쓰지 않는다.'
 		].join(' '),
@@ -191,7 +289,8 @@ export async function generateWorldBeat(input: {
 			recentEvents: input.recentEvents.slice(0, 8).map((event) => event.summary),
 			playerIntent: input.intent,
 			targetCharacterId: input.targetId
-		}
+		},
+		worldBeatOutput(input.characters.map((character) => character.id))
 	);
 	const location = requiredText(result.location, 'location');
 	const focusCharacterId = input.targetId ?? (
@@ -216,7 +315,7 @@ export async function generateCharacterTurn(input: {
 	config: ScenarioConfig;
 	beat: WorldBeat;
 	intent: string | null;
-	mode: 'idle' | 'player-action' | 'accept-proposal' | 'decline-proposal';
+	mode: CharacterTurnMode;
 	availableActions: ActionId[];
 	recentInteractions: EventRecord[];
 }): Promise<CharacterTurn> {
@@ -229,7 +328,7 @@ export async function generateCharacterTurn(input: {
 			'최근 같은 행동을 반복했다면 이번에는 대화의 주제나 인물의 목적이 실제로 달라질 때만 다시 제안한다. 제안할 이유가 없으면 proposal은 null이다.',
 			'한국어 텍스트 미연시 장면을 쓰되 짧고 구체적으로 쓴다. 장면마다 인물의 선택이나 대화 내용이 한 가지는 달라져야 한다. 평범한 대화와 호감 표현마다 큰 감정의 결론을 내리지 않는다.',
 			'뺨이 붉어짐, 고개를 끄덕임, 다정한 눈빛, 마음이 편안해짐 같은 상투적인 반응과 감정 수식어를 반복하지 않는다. 같은 말을 되풀이하지 말고 인물의 실제 관심사와 현재 상황을 대사에 반영한다.',
-			'JSON 객체만 반환한다: {"narrative":"인물의 행동과 대사를 포함한 간결한 장면","accepted":true 또는 false,"proposal":{"actionId":"talk|listen|flirt|kiss|intimacy","text":"플레이어에게 보여줄 제안"} 또는 null,"memory":"나중에 행동을 바꿀 만한 구체적 발언·약속·갈등·사실 한 문장, 없으면 null"}.',
+			'스키마의 narrative에는 장면, accepted에는 행동의 수락 여부, proposal에는 제안, memory에는 이후 행동을 바꿀 사실을 넣는다.',
 			'memory는 장면 문장을 복사하거나 일반적인 감정 평가를 쓰지 않는다. 실제로 일어난 일만 3인칭 사실 문장으로 쓴다. 중요한 새 사실이 없으면 반드시 null을 반환한다.',
 			'idle 외의 모드에서는 proposal을 null로 한다.'
 		].join(' '),
@@ -245,14 +344,16 @@ export async function generateCharacterTurn(input: {
 			character: input.character,
 			personalMemories: input.memories.map((memory) => memory.summary),
 			recentInteractions: input.recentInteractions.map((event) => ({ turn: event.turn, action: event.actionId, summary: event.summary }))
-		}
+		},
+		characterTurnOutput(input.mode, input.availableActions)
 	);
 	let proposal: CharacterTurn['proposal'] = null;
 	if (input.mode === 'idle' && result.proposal && typeof result.proposal === 'object') {
 		const candidate = result.proposal as Record<string, unknown>;
 		if (
 			typeof candidate.actionId === 'string' &&
-			['talk', 'listen', 'flirt', 'kiss', 'intimacy'].includes(candidate.actionId) &&
+			proposalActionIds.includes(candidate.actionId as Exclude<ActionId, 'rest'>) &&
+			input.availableActions.includes(candidate.actionId as ActionId) &&
 			typeof candidate.text === 'string' && candidate.text.trim()
 		) {
 			proposal = { actionId: candidate.actionId as Exclude<ActionId, 'rest'>, text: candidate.text.trim() };
