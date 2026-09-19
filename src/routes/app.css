@@ -57,8 +57,10 @@ form { margin: 0; }
 .save-slot-actions { display: flex; gap: 6px; flex: none; }
 .save-slot-actions button { min-height: 30px; padding: 5px 9px; color: #ddd7ca; border: 1px solid #55545a; background: #2c2d32; font-size: 11px; }
 .save-slot-actions button:hover:not(:disabled) { border-color: #c2a77a; }
-.save-slot-actions .reset-save { color: #d6aaa1; border-color: #6e514d; }
-.save-slot-actions .reset-save:hover:not(:disabled) { color: #efc0b6; border-color: #a16e66; background: #352a2a; }
+.session-reset-form { display: grid; gap: 6px; margin-top: 10px; }
+.session-reset-form button { width: 100%; min-height: 34px; color: #e3b0a5; border: 1px solid #79534e; background: #302627; font-size: 11px; }
+.session-reset-form button:hover:not(:disabled) { color: #f3c2b7; border-color: #aa7067; background: #392a2a; }
+.session-reset-form small { color: #8f8981; font-size: 10px; line-height: 1.45; }
 .sidebar-saves { margin: auto 0 0; padding-top: 20px; border-top: 1px solid #414044; }
 .sidebar-saves .save-slot { align-items: stretch; flex-direction: column; gap: 9px; padding: 10px 11px; }
 .sidebar-saves .save-slot-actions { width: 100%; }

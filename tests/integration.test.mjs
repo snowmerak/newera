@@ -129,8 +129,8 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		const sidebar = firstPage.split('<aside id="lore-sidebar"')[1].split('</aside>')[0];
 		assert.ok(!sidebar.includes('로어 관리'));
 		assert.ok(sidebar.includes('aria-label="저장 슬롯"'));
-		assert.ok(sidebar.includes('action="?/resetSave"'));
-		assert.ok(sidebar.includes('>초기화</button>'));
+		assert.ok(sidebar.includes('action="?/resetSession"'));
+		assert.ok(sidebar.includes('>현재 세션 초기화</button>'));
 		assert.ok(!firstPage.split('<main class="reader">')[1].split('</main>')[0].includes('aria-label="저장 슬롯"'));
 		assert.ok(firstPage.includes('현재 세션'));
 		assert.ok(firstPage.includes('저장 슬롯'));
@@ -269,13 +269,6 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			await post('advance', {}, true);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
 			await post('save', { slot: '1' });
-			await post('save', { slot: '3' });
-			const turnBeforeSaveReset = db.prepare('SELECT turn FROM world_state').get().turn;
-			await post('resetSave', { slot: '3' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ? AND slot = 3').get(originalLoreId).n, 0);
-			assert.equal(db.prepare('SELECT turn FROM world_state').get().turn, turnBeforeSaveReset);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ? AND slot = 1').get(originalLoreId).n, 1);
-			await post('resetSave', { slot: '3' }, true);
 			await post('advance');
 			await post('load', { slot: '1' });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
@@ -408,6 +401,23 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport, 0);
 			await post('load', { slot: '1' });
 			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport, sceneRapport);
+			await post('resetSession');
+			assert.deepEqual({ ...db.prepare('SELECT turn, day, minute, location FROM world_state').get() },
+				{ turn: 0, day: 1, minute: 1080, location: '시작 장소' });
+			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 0);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM memories').get().n, 0);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(secondLoreId).n, 1);
+			assert.equal(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(doheeId).exp_json).social, 17);
+			assert.deepEqual(JSON.parse(db.prepare('SELECT action_requirements_json FROM characters WHERE id = ?').get(doheeId).action_requirements_json),
+				[{ actionId: 'kiss', stat: 'relation.trust', minimum: 70 }]);
+			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '외딴 저택의 밤');
+			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '');
+			assert.equal(db.prepare('SELECT scene_note FROM scenario_config').get().scene_note, '');
+			assert.equal(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json, null);
+			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
+			const resetPage = await (await fetch(base)).text();
+			assert.ok(resetPage.includes('TURN 0'));
+			assert.ok(!resetPage.includes(simulatedEvent.narrative));
 			await post('switchLore', { id: originalLoreId });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
@@ -430,6 +440,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const exported = await exportResponse.text();
 			const bundle = JSON.parse(exported);
 			assert.equal(bundle.title, '저택의 밤');
+			assert.deepEqual(bundle.sessionStart, { day: 1, minute: 1080, location: '시작 장소', worldMemory: '' });
 			assert.equal(bundle.saves.length, 1);
 			assert.equal(bundle.state.characterTemplates.length, 1);
 			assert.ok(bundle.saves.every((save) => !('characterTemplates' in save.state)));
@@ -601,6 +612,8 @@ test('existing progress and legacy save slots become the first lore', async () =
 		const migrated = new DatabaseSync(path);
 		try {
 			assert.equal(migrated.prepare('SELECT title FROM lores').get().title, '망원동의 세 사람');
+			assert.deepEqual(JSON.parse(migrated.prepare('SELECT start_json FROM lores').get().start_json),
+				{ day: 2, minute: 1080, location: '현재 진행 장소', worldMemory: '' });
 			assert.equal(migrated.prepare('SELECT turn FROM world_state').get().turn, 9);
 			assert.equal(migrated.prepare('SELECT energy FROM player_state').get().energy, 12);
 			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lore_save_slots').get().n, 1);

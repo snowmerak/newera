@@ -68,8 +68,8 @@
 		return event.summary;
 	}
 
-	function confirmSaveReset(event: SubmitEvent, slot: number): void {
-		if (!window.confirm(`슬롯 ${slot}의 저장 데이터를 초기화할까요?\n현재 플레이 중인 진행에는 영향을 주지 않습니다.`)) {
+	function confirmSessionReset(event: SubmitEvent): void {
+		if (!window.confirm(`${data.lore.title}의 현재 세션을 처음부터 다시 시작할까요?\n진행된 턴, 사건, 기억과 캐릭터 수치 변화가 초기화됩니다. 수동 세이브 슬롯은 유지됩니다.`)) {
 			event.preventDefault();
 		}
 	}
@@ -110,10 +110,13 @@
 							<div class="save-slot-actions">
 								<form method="POST" action="?/save" use:enhance={submit}><button name="slot" value={number} disabled={busy}>저장</button></form>
 								<form method="POST" action="?/load" use:enhance={submit}><button name="slot" value={number} disabled={busy || !saved}>불러오기</button></form>
-								<form method="POST" action="?/resetSave" use:enhance={submit} onsubmit={(event) => confirmSaveReset(event, number)}><button class="reset-save" name="slot" value={number} disabled={busy || !saved}>초기화</button></form>
 							</div>
 						</div>
 					{/each}</div>
+					<form class="session-reset-form" method="POST" action="?/resetSession" use:enhance={submit} onsubmit={confirmSessionReset}>
+						<button disabled={busy || data.world.turn === 0}>현재 세션 초기화</button>
+						<small>수동 세이브는 남겨 두고 현재 진행만 처음으로 되돌립니다.</small>
+					</form>
 				</section>
 			</div>
 		</aside>

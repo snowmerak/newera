@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getGameView, loadGame, resetSaveSlot, saveGame, switchLore } from '$lib/server/db';
+import { getGameView, loadGame, resetCurrentSession, saveGame, switchLore } from '$lib/server/db';
 import { advanceWorld, ensurePlayerSuggestions, performAction, performFreeAction, respondToProposal, runExclusive } from '$lib/server/game';
 
 export const load: PageServerLoad = async ({ url }) => {
@@ -93,14 +93,13 @@ export const actions: Actions = {
 			});
 		}
 	},
-	resetSave: async ({ request }) => {
-		const body = await request.formData();
+	resetSession: async () => {
 		try {
-			await runExclusive(() => resetSaveSlot(Number(body.get('slot'))));
-			return { message: '저장 슬롯을 초기화했습니다.', level: 'success' as const };
+			await runExclusive(() => resetCurrentSession());
+			return { message: '현재 세션을 처음 상태로 초기화했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, {
-				message: error instanceof Error ? error.message : '저장 슬롯을 초기화하지 못했습니다.',
+				message: error instanceof Error ? error.message : '현재 세션을 초기화하지 못했습니다.',
 				level: 'error' as const
 			});
 		}

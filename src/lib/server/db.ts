@@ -222,6 +222,7 @@ export function getDb(): DatabaseSync {
 			id TEXT PRIMARY KEY,
 			title TEXT NOT NULL,
 			state_json TEXT,
+			start_json TEXT,
 			created_at TEXT NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS lore_meta (
@@ -280,6 +281,10 @@ export function getDb(): DatabaseSync {
 	if (!configColumns.some((column) => column.name === 'scene_note')) {
 		db.exec("ALTER TABLE scenario_config ADD COLUMN scene_note TEXT NOT NULL DEFAULT ''");
 	}
+	const loreColumns = db.prepare('PRAGMA table_info(lores)').all() as Row[];
+	if (!loreColumns.some((column) => column.name === 'start_json')) {
+		db.exec('ALTER TABLE lores ADD COLUMN start_json TEXT');
+	}
 	database = db;
 	const hadWorld = Boolean(one('SELECT id FROM world_state WHERE id = 1'));
 	if (!hadWorld) seed();
@@ -291,8 +296,8 @@ export function getDb(): DatabaseSync {
 	if (!one('SELECT id FROM lore_meta WHERE id = 1')) {
 		withTransaction(() => {
 			const id = randomUUID();
-			db.prepare('INSERT INTO lores (id, title, state_json, created_at) VALUES (?, ?, NULL, ?)')
-				.run(id, '망원동의 세 사람', new Date().toISOString());
+			db.prepare('INSERT INTO lores (id, title, state_json, start_json, created_at) VALUES (?, ?, NULL, ?, ?)')
+				.run(id, '망원동의 세 사람', JSON.stringify(deriveSessionStart(captureSnapshot())), new Date().toISOString());
 			db.prepare('INSERT INTO lore_meta (id, active_lore_id) VALUES (1, ?)').run(id);
 			db.prepare(`INSERT INTO lore_save_slots (lore_id, slot, saved_at, turn, snapshot_json)
 				SELECT ?, slot, saved_at, turn, snapshot_json FROM save_slots`).run(id);
@@ -315,6 +320,7 @@ export function getDb(): DatabaseSync {
 				updateCharacterTemplate(characterFromRow(row), Number(row.sort_order));
 			}
 		}
+		ensureLoreSessionStarts();
 	});
 	return db;
 }
@@ -795,8 +801,8 @@ export function createLore(title: string, worldSetting: string, eraRules: string
 		characters: [], characterTemplates: [], events: [], memories: [], modules: [], enabledModuleIds: []
 	};
 	withTransaction(() => {
-		getDb().prepare('INSERT INTO lores (id, title, state_json, created_at) VALUES (?, ?, ?, ?)')
-			.run(id, cleanTitle, JSON.stringify(snapshot), new Date().toISOString());
+		getDb().prepare('INSERT INTO lores (id, title, state_json, start_json, created_at) VALUES (?, ?, ?, ?, ?)')
+			.run(id, cleanTitle, JSON.stringify(snapshot), JSON.stringify(deriveSessionStart(snapshot)), new Date().toISOString());
 		activateLore(id);
 	});
 	return id;
@@ -879,6 +885,13 @@ interface Snapshot {
 	enabledModuleIds?: string[];
 }
 
+interface SessionStart {
+	day: number;
+	minute: number;
+	location: string;
+	worldMemory: string;
+}
+
 function captureSnapshot(): Snapshot {
 	return {
 		world: rows('SELECT * FROM world_state'),
@@ -890,6 +903,66 @@ function captureSnapshot(): Snapshot {
 		modules: getModuleRows(),
 		enabledModuleIds: rows('SELECT id FROM modules WHERE enabled = 1').map((row) => String(row.id))
 	};
+}
+
+function checkedSessionStart(value: unknown): SessionStart {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('로어의 세션 시작 정보가 올바르지 않습니다.');
+	const start = value as Record<string, unknown>;
+	if (!Number.isInteger(start.day) || Number(start.day) < 1 || !Number.isInteger(start.minute) ||
+		Number(start.minute) < 0 || Number(start.minute) >= 1440 || typeof start.location !== 'string' ||
+		!start.location.trim() || typeof start.worldMemory !== 'string') {
+		throw new Error('로어의 세션 시작 정보가 올바르지 않습니다.');
+	}
+	return {
+		day: Number(start.day),
+		minute: Number(start.minute),
+		location: start.location,
+		worldMemory: start.worldMemory
+	};
+}
+
+function deriveSessionStart(snapshot: Snapshot): SessionStart {
+	const world = snapshot.world[0];
+	const config = snapshot.config?.[0];
+	if (Number(world.turn) === 0 && snapshot.events.length === 0) {
+		return checkedSessionStart({
+			day: Number(world.day),
+			minute: Number(world.minute),
+			location: String(world.location),
+			worldMemory: String(config?.world_memory ?? '')
+		});
+	}
+	const firstEvent = [...snapshot.events].sort((left, right) => Number(left.id) - Number(right.id))[0];
+	return checkedSessionStart({
+		day: Number(firstEvent?.day ?? world.day),
+		minute: Math.max(0, Number(firstEvent?.minute ?? world.minute) - (firstEvent ? 5 : 0)),
+		location: String(firstEvent?.location ?? world.location),
+		worldMemory: String(firstEvent?.summary ?? '')
+	});
+}
+
+function ensureLoreSessionStarts(): void {
+	const activeId = activeLoreId();
+	for (const lore of rows('SELECT id, state_json, start_json FROM lores')) {
+		if (lore.start_json) {
+			checkedSessionStart(parse(lore.start_json));
+			continue;
+		}
+		const snapshot = lore.id === activeId
+			? captureSnapshot()
+			: checkedSnapshot(parse(lore.state_json), true);
+		getDb().prepare('UPDATE lores SET start_json = ? WHERE id = ?')
+			.run(JSON.stringify(deriveSessionStart(snapshot)), String(lore.id));
+	}
+}
+
+function getLoreSessionStart(id: string): SessionStart {
+	const lore = one('SELECT start_json FROM lores WHERE id = ?', id);
+	if (!lore) throw new Error('현재 로어를 찾을 수 없습니다.');
+	if (lore.start_json) return checkedSessionStart(parse(lore.start_json));
+	const start = deriveSessionStart(captureSnapshot());
+	getDb().prepare('UPDATE lores SET start_json = ? WHERE id = ?').run(JSON.stringify(start), id);
+	return start;
 }
 
 function checkedSnapshot(value: unknown, full: boolean): Snapshot {
@@ -976,13 +1049,14 @@ function withCharacterTemplates(snapshot: Snapshot): Snapshot {
 }
 
 export function exportLoreJson(id: string): string {
-	const lore = one('SELECT title, state_json FROM lores WHERE id = ?', id);
+	const lore = one('SELECT title, state_json, start_json FROM lores WHERE id = ?', id);
 	if (!lore) throw new Error('내보낼 로어를 찾을 수 없습니다.');
 	const state = withCharacterTemplates(migrateSnapshot(id === activeLoreId() ? captureSnapshot() : checkedSnapshot(parse(lore.state_json), true)));
+	const sessionStart = lore.start_json ? checkedSessionStart(parse(lore.start_json)) : deriveSessionStart(state);
 	const saves = rows('SELECT slot, saved_at, turn, snapshot_json FROM lore_save_slots WHERE lore_id = ? ORDER BY slot', id)
 		.map((row) => ({ slot: Number(row.slot), savedAt: String(row.saved_at), turn: Number(row.turn),
 			state: migrateSnapshot(parse<Snapshot>(row.snapshot_json)) }));
-	return JSON.stringify({ format: 'newera-lore', version: 1, title: String(lore.title), state, saves }, null, 2);
+	return JSON.stringify({ format: 'newera-lore', version: 1, title: String(lore.title), sessionStart, state, saves }, null, 2);
 }
 
 export function importLoreJson(raw: string): string {
@@ -996,6 +1070,9 @@ export function importLoreJson(raw: string): string {
 		throw new Error('지원하지 않는 로어 파일입니다.');
 	}
 	const state = withCharacterTemplates(migrateSnapshot(checkedSnapshot(bundle.state, true)));
+	const sessionStart = bundle.sessionStart === undefined
+		? deriveSessionStart(state)
+		: checkedSessionStart(bundle.sessionStart);
 	const saves = bundle.saves.map((entry: unknown) => {
 		if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('저장 슬롯 형식이 올바르지 않습니다.');
 		const save = entry as Record<string, unknown>;
@@ -1006,8 +1083,8 @@ export function importLoreJson(raw: string): string {
 	if (new Set(saves.map((save) => save.slot)).size !== saves.length) throw new Error('중복된 저장 슬롯이 있습니다.');
 	const id = randomUUID();
 	withTransaction(() => {
-		getDb().prepare('INSERT INTO lores (id, title, state_json, created_at) VALUES (?, ?, ?, ?)')
-			.run(id, (bundle.title as string).trim(), JSON.stringify(state), new Date().toISOString());
+		getDb().prepare('INSERT INTO lores (id, title, state_json, start_json, created_at) VALUES (?, ?, ?, ?, ?)')
+			.run(id, (bundle.title as string).trim(), JSON.stringify(state), JSON.stringify(sessionStart), new Date().toISOString());
 		for (const save of saves) {
 			getDb().prepare('INSERT INTO lore_save_slots (lore_id, slot, saved_at, turn, snapshot_json) VALUES (?, ?, ?, ?, ?)')
 				.run(id, save.slot, save.savedAt, save.turn, JSON.stringify(save.state));
@@ -1033,12 +1110,23 @@ export function saveGame(slot: number): void {
 	});
 }
 
-export function resetSaveSlot(slot: number): void {
-	if (!Number.isInteger(slot) || slot < 1 || slot > 3) throw new Error('저장 슬롯이 올바르지 않습니다.');
+export function resetCurrentSession(): void {
 	withTransaction(() => {
-		const result = getDb().prepare('DELETE FROM lore_save_slots WHERE lore_id = ? AND slot = ?')
-			.run(activeLoreId(), slot);
-		if (result.changes === 0) throw new Error('이 로어의 슬롯에는 저장된 게임이 없습니다.');
+		const db = getDb();
+		const start = getLoreSessionStart(activeLoreId());
+		const templates = getCharacterTemplates();
+		const config = getScenarioConfig();
+		db.exec('DELETE FROM memories; DELETE FROM events; DELETE FROM characters; DELETE FROM world_state;');
+		db.prepare('INSERT INTO world_state (id, turn, day, minute, location) VALUES (1, 0, ?, ?, ?)')
+			.run(start.day, start.minute, start.location);
+		templates.forEach((template, index) => updateCharacter(template, index));
+		updateScenarioConfig({
+			...config,
+			worldMemory: start.worldMemory,
+			sceneNote: '',
+			pendingProposal: null,
+			playerSuggestions: null
+		});
 	});
 }
 
