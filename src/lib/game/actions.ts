@@ -112,6 +112,25 @@ export function calculateSource(actionId: ActionId, character: Character | null)
 	}
 }
 
+const PALAM_SOURCE_KEYS = ['rapport', 'comfort', 'arousal', 'pleasure', 'embarrassment', 'tension', 'frustration', 'satisfaction'] as const;
+
+export function applyPalamSource(
+	character: Character,
+	source: Source
+): { character: Character; changes: Record<string, number> } {
+	const palam = { ...character.palam };
+	const changes: Record<string, number> = {};
+	for (const key of PALAM_SOURCE_KEYS) {
+		const requested = source[key] ?? 0;
+		if (!requested) continue;
+		const before = palam[key];
+		const after = clampPercent(before + requested);
+		palam[key] = after;
+		if (after !== before) changes[key] = after - before;
+	}
+	return { character: { ...character, palam }, changes };
+}
+
 export function applyEffects(
 	actionId: ActionId,
 	character: Character | null,
@@ -121,6 +140,8 @@ export function applyEffects(
 		return { character, changes: {} };
 	}
 	if (!character) throw new Error('상대를 선택해 주세요.');
+	const currentReaction = applyPalamSource(character, source);
+	character = currentReaction.character;
 	const expKey = actionId === 'talk' || actionId === 'listen' ? 'social'
 		: actionId === 'flirt' ? 'seduction' : actionId === 'kiss' ? 'romantic' : 'intimacy';
 	const expGain = actionId === 'intimacy' ? 8 : actionId === 'kiss' ? 5 : 3;
@@ -145,21 +166,12 @@ export function applyEffects(
 				trust: clampPercent(relation.trust + trustGain),
 				desire: clampPercent(relation.desire + desireGain)
 			} },
-			palam: {
-				...character.palam,
-				rapport: clampPercent(character.palam.rapport + (source.rapport ?? 0)),
-				comfort: clampPercent(character.palam.comfort + (source.comfort ?? 0)),
-				arousal: clampPercent(character.palam.arousal + (source.arousal ?? 0)),
-				pleasure: clampPercent(character.palam.pleasure + (source.pleasure ?? 0))
-			},
 			mark: nextMark
 		},
 		changes: {
-			...(source.rapport ? { rapport: source.rapport } : {}),
+			...currentReaction.changes,
 			...(source.trust ? { trust: source.trust } : {}),
 			...(source.desire ? { desire: source.desire } : {}),
-			...(source.arousal ? { arousal: source.arousal } : {}),
-			...(source.pleasure ? { pleasure: source.pleasure } : {}),
 			[`${expKey}Exp`]: expGain
 		}
 	};

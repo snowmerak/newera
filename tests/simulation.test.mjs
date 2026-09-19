@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { actionUnavailableReason, attachRenderedText, createSimulation, resolveAction } from '../src/lib/game/simulation.ts';
 import { renderSemanticEvent } from '../src/lib/game/simulation-renderer.ts';
-import { actionReason, applyEffects, calculateSource } from '../src/lib/game/actions.ts';
+import { actionReason, applyEffects, applyPalamSource, calculateSource } from '../src/lib/game/actions.ts';
 import { DEFAULT_TALENT, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_ABL, DEFAULT_EXP, DEFAULT_RELATION, DEFAULT_PALAM,
 	clampBase, normalizeTalent, normalizeExp, normalizeMarks, normalizeRelations, normalizePalam } from '../src/lib/game/types.ts';
 
@@ -171,4 +171,22 @@ test('main game action resolves SOURCE before state update without automatic abi
 	assert.equal(result.character.relations.player.trust, 1);
 	const rest = applyEffects('rest', null, calculateSource('rest', null));
 	assert.deepEqual(rest, { character: null, changes: {} });
+});
+
+test('all current-scene PALAM fields accept signed reaction deltas', () => {
+	const character = initialState().characters[0];
+	character.palam = { rapport: 5, comfort: 5, arousal: 5, pleasure: 5, embarrassment: 5, tension: 5, frustration: 5, satisfaction: 5 };
+	const result = applyPalamSource(character, {
+		rapport: 2, comfort: -3, arousal: 4, pleasure: 1,
+		embarrassment: 6, tension: 7, frustration: -9, satisfaction: 8
+	});
+	assert.deepEqual(result.character.palam, {
+		rapport: 7, comfort: 2, arousal: 9, pleasure: 6,
+		embarrassment: 11, tension: 12, frustration: 0, satisfaction: 13
+	});
+	assert.deepEqual(result.changes, {
+		rapport: 2, comfort: -3, arousal: 4, pleasure: 1,
+		embarrassment: 6, tension: 7, frustration: -5, satisfaction: 8
+	});
+	assert.deepEqual(character.palam, { rapport: 5, comfort: 5, arousal: 5, pleasure: 5, embarrassment: 5, tension: 5, frustration: 5, satisfaction: 5 });
 });

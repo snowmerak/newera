@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ACTIONS, actionReason, applyEffects, calculateSource, eventSummary } from '$lib/game/actions';
+import { ACTIONS, actionReason, applyEffects, applyPalamSource, calculateSource, eventSummary } from '$lib/game/actions';
 import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type MemoryRecord, type Proposal, type Source, type WorldState } from '$lib/game/types';
 import {
 	getCharacter,
@@ -101,6 +101,17 @@ type TurnRequest =
 	| { kind: 'free'; text: string; targetId: string }
 	| { kind: 'accept' | 'decline' };
 
+function combineSources(...sources: Source[]): Source {
+	const combined: Source = {};
+	for (const source of sources) {
+		for (const [key, value] of Object.entries(source) as Array<[keyof Source, number | undefined]>) {
+			if (typeof value !== 'number' || value === 0) continue;
+			combined[key] = (combined[key] ?? 0) + value;
+		}
+	}
+	return combined;
+}
+
 async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	const view = getGameView();
 	const { world, characters, config } = view;
@@ -171,10 +182,14 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		: null;
 	const accepted = request.kind === 'accept' || actionId === 'rest' ||
 		((request.kind === 'act' || request.kind === 'free') && (focus ? response?.accepted === true : request.kind === 'free'));
-	const source: Source = actionId && accepted ? calculateSource(actionId, sceneFocus) : {};
-	const effects = actionId && accepted
+	const actionSource: Source = actionId && accepted ? calculateSource(actionId, sceneFocus) : {};
+	const reactionSource: Source = response?.palamDelta ?? {};
+	const source = combineSources(actionSource, reactionSource);
+	const effects = actionId && accepted && actionId !== 'rest'
 		? applyEffects(actionId, sceneFocus, source)
-		: { character: sceneFocus, changes: {} as Record<string, number> };
+		: sceneFocus && response
+			? applyPalamSource(sceneFocus, reactionSource)
+			: { character: sceneFocus, changes: {} as Record<string, number> };
 	const minutes = actionId && accepted ? Math.max(ACTIONS[actionId].duration, beat.minutes) : beat.minutes;
 	const nextWorld = advanceTime(world, minutes, beat.location);
 	let proposal: Proposal | null = null;
@@ -212,7 +227,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	const committed = withTransaction(() => {
 		updateWorld(nextWorld);
 		if (sceneChanged) for (const character of characters) updateCharacter({ ...character, palam: { ...DEFAULT_PALAM } });
-		if (effects.character && accepted && actionId !== 'rest') updateCharacter(effects.character);
+		if (effects.character && response) updateCharacter(effects.character);
 		updateScenarioConfig({
 			...config,
 			worldMemory: beat.worldMemory,

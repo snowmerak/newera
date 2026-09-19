@@ -210,6 +210,9 @@ export interface Source {
 	rapport?: number;
 	comfort?: number;
 	tension?: number;
+	embarrassment?: number;
+	frustration?: number;
+	satisfaction?: number;
 	trust?: number;
 	affection?: number;
 	desire?: number;

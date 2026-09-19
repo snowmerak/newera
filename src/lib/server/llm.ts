@@ -1,4 +1,4 @@
-import type { ActionId, Character, EventRecord, MemoryRecord, ScenarioConfig, WorldState } from '$lib/game/types';
+import { PALAM_METADATA, type ActionId, type Character, type EventRecord, type MemoryRecord, type PalamStats, type ScenarioConfig, type WorldState } from '$lib/game/types';
 
 const baseUrl = (process.env.NEWERA_LLM_BASE_URL || 'http://localhost:1234/v1').replace(/\/$/, '');
 export const llmModel = process.env.NEWERA_LLM_MODEL || 'gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-mtp';
@@ -17,6 +17,7 @@ export interface WorldBeat {
 export interface CharacterTurn {
 	narrative: string;
 	accepted: boolean;
+	palamDelta: PalamStats;
 	proposal: { actionId: Exclude<ActionId, 'rest'>; text: string } | null;
 	memory: string | null;
 	sceneNote: string;
@@ -111,11 +112,17 @@ function characterTurnOutput(mode: CharacterTurnMode, availableActions: ActionId
 			properties: {
 				narrative: { type: 'string', minLength: 1 },
 				accepted: { type: 'boolean' },
+				palamDelta: {
+					type: 'object',
+					additionalProperties: false,
+					properties: Object.fromEntries(PALAM_METADATA.map(({ key }) => [key, { type: 'integer', minimum: -12, maximum: 12 }])),
+					required: PALAM_METADATA.map(({ key }) => key)
+				},
 				proposal,
 				memory: { type: ['string', 'null'] },
 				sceneNote: { type: 'string', minLength: 1 }
 			},
-			required: ['narrative', 'accepted', 'proposal', 'memory', 'sceneNote']
+			required: ['narrative', 'accepted', 'palamDelta', 'proposal', 'memory', 'sceneNote']
 		}
 	};
 }
@@ -170,6 +177,20 @@ async function completion(system: string, input: unknown, output: StructuredOutp
 function requiredText(value: unknown, label: string): string {
 	if (typeof value !== 'string' || !value.trim()) throw new Error(`모델 응답의 ${label} 항목이 비어 있습니다.`);
 	return value.trim();
+}
+
+function checkedPalamDelta(value: unknown): PalamStats {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('모델 응답의 palamDelta 항목이 올바르지 않습니다.');
+	}
+	const source = value as Record<string, unknown>;
+	return Object.fromEntries(PALAM_METADATA.map(({ key }) => {
+		const delta = source[key];
+		if (!Number.isInteger(delta) || Number(delta) < -12 || Number(delta) > 12) {
+			throw new Error(`모델 응답의 palamDelta.${key} 항목이 올바르지 않습니다.`);
+		}
+		return [key, Number(delta)];
+	})) as unknown as PalamStats;
 }
 
 const singleCharacterAttempts = 2;
@@ -411,7 +432,9 @@ export async function generateCharacterTurn(input: {
 			'previousSceneNote와 recentResolvedInteractions는 직전까지 실제로 확정된 상태와 장면이다. 이미 끝난 귀가, 만남, 이동, 착석, 접촉이나 대화를 처음부터 다시 쓰지 않는다. worldScene에서 명시적으로 바뀐 부분만 반영하고 나머지 물리 상태는 이어간다.',
 			'한국어 텍스트 미연시 장면을 쓰되 짧고 구체적으로 쓴다. 장면마다 인물의 선택이나 대화 내용이 한 가지는 달라져야 한다. 평범한 대화와 호감 표현마다 큰 감정의 결론을 내리지 않는다.',
 			'뺨이 붉어짐, 고개를 끄덕임, 다정한 눈빛, 마음이 편안해짐 같은 상투적인 반응과 감정 수식어를 반복하지 않는다. 같은 말을 되풀이하지 말고 인물의 실제 관심사와 현재 상황을 대사에 반영한다.',
-			'스키마의 narrative에는 장면, accepted에는 행동의 수락 여부, proposal에는 제안, memory에는 이후 행동을 바꿀 사실, sceneNote에는 응답 직후의 현재 상태를 넣는다.',
+			'palamDelta는 이번 응답으로 바뀌는 현재 장면 반응의 증감량이다. 절대값이 아니며 각 항목을 -12에서 12 사이 정수로 넣는다.',
+			'호감·신뢰 같은 장기 관계와 PALAM을 구분한다. 자유 입력이 고정 COMMAND에 연결되지 않아도 인물이 의미 있게 반응했다면 palamDelta를 모두 0으로 두지 않는다. 거절은 긴장·좌절·부끄러움을 올리거나 교감·편안함을 낮출 수 있다.',
+			'스키마의 narrative에는 장면, accepted에는 행동의 수락 여부, palamDelta에는 현재 반응 변화, proposal에는 제안, memory에는 이후 행동을 바꿀 사실, sceneNote에는 응답 직후의 현재 상태를 넣는다.',
 			'memory는 장면 문장을 복사하거나 일반적인 감정 평가를 쓰지 않는다. 실제로 일어난 일만 3인칭 사실 문장으로 쓴다. 중요한 새 사실이 없으면 반드시 null을 반환한다.',
 			'sceneNote에는 응답이 끝난 뒤의 정확한 위치, 플레이어와의 자세나 거리, 진행 중인 행동과 미해결 의도를 1~3개의 사실 문장으로 쓴다. 다음 턴이 그대로 이어질 수 있어야 하며 분위기와 감상은 쓰지 않는다.',
 			'idle 외의 모드에서는 proposal을 null로 한다.'
@@ -462,6 +485,7 @@ export async function generateCharacterTurn(input: {
 		return {
 			narrative,
 			accepted: result.accepted === true,
+			palamDelta: checkedPalamDelta(result.palamDelta),
 			proposal,
 			memory: typeof result.memory === 'string' && result.memory.trim() ? result.memory.trim() : null,
 			sceneNote: requiredText(result.sceneNote, 'sceneNote')
