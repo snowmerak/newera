@@ -637,6 +637,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.ok(!(await songSoiImport.text()).includes('"type":"failure"'));
 			assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, '송소이와 함께 사는 날들');
 			assert.equal(db.prepare('SELECT name FROM characters').get().name, '송소이');
+			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'explicit');
 			assert.equal(JSON.parse(db.prepare('SELECT relation_json FROM characters').get().relation_json).player.attachment, 86);
 
 			const genrePresets = [
