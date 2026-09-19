@@ -14,6 +14,7 @@ let refuseNextAction = false;
 let failNextWorld = false;
 let crowdedWorldOnce = true;
 let crowdedCharacterOnce = true;
+let pausedWorld = null;
 const modelServer = createServer(async (request, response) => {
 	const chunks = [];
 	for await (const chunk of request) chunks.push(chunk);
@@ -36,6 +37,12 @@ const modelServer = createServer(async (request, response) => {
 		: 'character';
 	modelCalls.push({ kind, input, responseFormat: body.response_format });
 	const world = kind === 'world';
+	if (world && pausedWorld) {
+		const pause = pausedWorld;
+		pausedWorld = null;
+		pause.started();
+		await pause.wait;
+	}
 	if (world && failNextWorld) {
 		failNextWorld = false;
 		response.statusCode = 503;
@@ -141,7 +148,8 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(firstPage.includes('저장 슬롯'));
 		assert.ok(firstPage.includes('aria-label="대화와 장면"'));
 		assert.ok(firstPage.includes('aria-label="행동 요청"'));
-		assert.ok(firstPage.includes('aria-label="추천 행동"'));
+		assert.ok(firstPage.includes('class="composer-form"'));
+		assert.equal(modelCalls.filter((call) => call.kind === 'suggest').length, 0);
 		assert.ok(firstPage.includes('사이드바 숨기기'));
 		assert.ok(!firstPage.includes('LLM에게 행동 제안 받기'));
 		assert.ok(!firstPage.includes('플레이어 체력'));
@@ -252,8 +260,16 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.deepEqual(JSON.parse(liveHarinStats.palam_json), { rapport: 6, comfort: 5, arousal: 3, pleasure: 2, embarrassment: 4, tension: 9, frustration: 1, satisfaction: 8 });
 			const suggestedPage = await (await fetch(`${base}/?target=seoyeon`)).text();
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 2);
-			assert.equal(JSON.parse(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json).options.length, 3);
-			assert.ok(suggestedPage.includes('서연에게 책을 추천한다'));
+			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
+			assert.ok(!suggestedPage.includes('서연에게 책을 추천한다'));
+			const suggestionResponse = await fetch(`${base}/api/suggestions`, {
+				method: 'POST', headers: { Origin: base, 'content-type': 'application/json' },
+				body: JSON.stringify({ targetId: 'seoyeon' })
+			});
+			assert.equal(suggestionResponse.status, 200);
+			assert.deepEqual((await suggestionResponse.json()).options,
+				['서연에게 책을 추천한다', '서연과 대화한다', '잠시 쉰다']);
+			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
 			const satisfactionBeforeCustom = JSON.parse(db.prepare("SELECT palam_json FROM characters WHERE id = 'seoyeon'").get().palam_json).satisfaction;
 			await post('freeAct', { text: '서연에게 책을 추천한다', targetId: 'seoyeon' });
 			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'custom');
@@ -278,8 +294,39 @@ test('world and character turns, proposals, settings, save/load', async () => {
 				{ rapport: -1, comfort: -1, embarrassment: 1, tension: 2, frustration: 1 });
 			assert.ok(JSON.parse(db.prepare("SELECT palam_json FROM characters WHERE id = 'seoyeon'").get().palam_json).tension > 0);
 			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'seoyeon'").get().relation_json, relationBeforeRefusal);
+			let releaseWorld;
+			let markWorldStarted;
+			const worldStarted = new Promise((resolve) => { markWorldStarted = resolve; });
+			const worldRelease = new Promise((resolve) => { releaseWorld = resolve; });
+			pausedWorld = { started: markWorldStarted, wait: worldRelease };
 			failNextWorld = true;
-			await post('advance', {}, true);
+			const failedTurn = post('advance', {}, true);
+			await worldStarted;
+			let saveFinishedBeforeWorld = false;
+			try {
+				saveFinishedBeforeWorld = await Promise.race([
+					post('save', { slot: '2' }).then(() => true),
+					new Promise((resolve) => setTimeout(() => resolve(false), 1500))
+				]);
+				assert.equal(saveFinishedBeforeWorld, true, 'save waited for an unrelated LLM turn');
+			} finally {
+				releaseWorld();
+			}
+			await failedTurn;
+			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
+			let releaseStaleWorld;
+			let markStaleWorldStarted;
+			const staleWorldStarted = new Promise((resolve) => { markStaleWorldStarted = resolve; });
+			const staleWorldRelease = new Promise((resolve) => { releaseStaleWorld = resolve; });
+			pausedWorld = { started: markStaleWorldStarted, wait: staleWorldRelease };
+			const staleTurn = post('advance', {}, true);
+			await staleWorldStarted;
+			try {
+				await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다' });
+			} finally {
+				releaseStaleWorld();
+			}
+			await staleTurn;
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
 			await post('save', { slot: '1' });
 			await post('advance');

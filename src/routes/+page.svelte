@@ -9,13 +9,30 @@
 	let { data, form }: PageProps = $props();
 	let loreOpen = $state(false);
 	let sidebarHidden = $state(false);
-	let busy = $state(false);
+	let turnBusy = $state(false);
+	let stateBusy = $state(false);
+	let saveBusy = $state(false);
+	let navigationBusy = $state(false);
+	let suggestionLoading = $state(false);
+	let lazySuggestionSet = $state<{ key: string; options: string[] } | null>(null);
 	let chatThread: HTMLDivElement;
 	let targetId = $derived(data.selectedTargetId);
 	let selected = $derived(data.characters.find((character) => character.id === targetId) ?? null);
 	let proposalCharacter = $derived(data.characters.find((character) => character.id === data.config.pendingProposal?.characterId));
-	let suggestions = $derived(data.config.playerSuggestions?.turn === data.world.turn && data.config.playerSuggestions.targetId === (targetId || null)
+	let interactionBusy = $derived(turnBusy || stateBusy || navigationBusy);
+	let suggestionKey = $derived(JSON.stringify({
+		loreId: data.lore.id,
+		world: data.world,
+		worldSetting: data.config.worldSetting,
+		eraRules: data.config.eraRules,
+		sceneNote: data.config.sceneNote,
+		targetId: targetId || null,
+		character: selected
+	}));
+	let storedSuggestions = $derived(data.config.playerSuggestions?.turn === data.world.turn && data.config.playerSuggestions.targetId === (targetId || null)
 		? data.config.playerSuggestions.options : []);
+	let suggestions = $derived(storedSuggestions.length ? storedSuggestions
+		: lazySuggestionSet?.key === suggestionKey ? lazySuggestionSet.options : []);
 	let conversationEvents = $derived([...data.events.slice(0, 12)].reverse());
 	$effect(() => {
 		data.world.turn;
@@ -23,6 +40,32 @@
 		void tick().then(() => {
 			if (chatThread) chatThread.scrollTop = chatThread.scrollHeight;
 		});
+	});
+	$effect(() => {
+		const key = suggestionKey;
+		const requestedTargetId = targetId;
+		if (data.config.pendingProposal || storedSuggestions.length || lazySuggestionSet?.key === key) {
+			suggestionLoading = false;
+			return;
+		}
+		const controller = new AbortController();
+		suggestionLoading = true;
+		void fetch('/api/suggestions', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ targetId: requestedTargetId }),
+			signal: controller.signal
+		}).then(async (response) => {
+			const result = await response.json() as { options?: unknown };
+			if (!response.ok || !Array.isArray(result.options)) throw new Error('행동 선택지를 만들지 못했습니다.');
+			const options = result.options.filter((option): option is string => typeof option === 'string');
+			if (suggestionKey === key) lazySuggestionSet = { key, options };
+		}).catch((error: unknown) => {
+			if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn(error);
+		}).finally(() => {
+			if (suggestionKey === key) suggestionLoading = false;
+		});
+		return () => controller.abort();
 	});
 	let visibleMemories = $derived.by(() => {
 		const seen = new Set<string>();
@@ -33,10 +76,25 @@
 		}).slice(0, 6);
 	});
 
-	const submit: SubmitFunction = () => {
-		busy = true;
+	const submitTurn: SubmitFunction = () => {
+		turnBusy = true;
 		return async ({ update }) => {
-			try { await update(); } finally { busy = false; }
+			try { await update(); } finally { turnBusy = false; }
+		};
+	};
+
+	const submitState: SubmitFunction = () => {
+		stateBusy = true;
+		lazySuggestionSet = null;
+		return async ({ update }) => {
+			try { await update(); } finally { stateBusy = false; }
+		};
+	};
+
+	const submitSave: SubmitFunction = () => {
+		saveBusy = true;
+		return async ({ update }) => {
+			try { await update(); } finally { saveBusy = false; }
 		};
 	};
 
@@ -46,11 +104,11 @@
 
 	async function changeTarget(event: Event & { currentTarget: HTMLSelectElement }): Promise<void> {
 		const id = event.currentTarget.value;
-		busy = true;
+		navigationBusy = true;
 		try {
 			await goto(`/?target=${encodeURIComponent(id || 'none')}`, { replaceState: true, keepFocus: true, noScroll: true });
 		} finally {
-			busy = false;
+			navigationBusy = false;
 		}
 	}
 
@@ -97,8 +155,8 @@
 				<h2 class="lore-sidebar-title">로어</h2>
 				<nav class="lore-items" aria-label="로어 선택">
 					{#each data.lores as lore}
-						<form method="POST" action="?/switchLore" use:enhance={submit}>
-							<button class="lore-item" class:active={lore.active} name="id" value={lore.id} disabled={busy || lore.active} onclick={afterLoreSwitch}>{lore.title}</button>
+						<form method="POST" action="?/switchLore" use:enhance={submitState}>
+							<button class="lore-item" class:active={lore.active} name="id" value={lore.id} disabled={interactionBusy || lore.active} onclick={afterLoreSwitch}>{lore.title}</button>
 						</form>
 					{/each}
 				</nav>
@@ -108,13 +166,13 @@
 						{@const saved = data.saves.find((save) => save.slot === number)}
 						<div class="save-slot"><div><strong>슬롯 {number}</strong><span>{saved ? `${saved.turn}턴 저장 · ${new Date(saved.savedAt).toLocaleString('ko-KR')}` : '비어 있음'}</span></div>
 							<div class="save-slot-actions">
-								<form method="POST" action="?/save" use:enhance={submit}><button name="slot" value={number} disabled={busy}>저장</button></form>
-								<form method="POST" action="?/load" use:enhance={submit}><button name="slot" value={number} disabled={busy || !saved}>불러오기</button></form>
+								<form method="POST" action="?/save" use:enhance={submitSave}><button name="slot" value={number} disabled={saveBusy || stateBusy}>저장</button></form>
+								<form method="POST" action="?/load" use:enhance={submitState}><button name="slot" value={number} disabled={interactionBusy || saveBusy || !saved}>불러오기</button></form>
 							</div>
 						</div>
 					{/each}</div>
-					<form class="session-reset-form" method="POST" action="?/resetSession" use:enhance={submit} onsubmit={confirmSessionReset}>
-						<button disabled={busy || data.world.turn === 0}>현재 세션 초기화</button>
+					<form class="session-reset-form" method="POST" action="?/resetSession" use:enhance={submitState} onsubmit={confirmSessionReset}>
+						<button disabled={interactionBusy || saveBusy || data.world.turn === 0}>현재 세션 초기화</button>
 						<small>수동 세이브는 남겨 두고 현재 진행만 처음으로 되돌립니다.</small>
 					</form>
 				</section>
@@ -163,7 +221,7 @@
 					<div><h2>무엇을 할까요?</h2><p>{selected ? `${selected.name}에게 할 행동을 선택하거나 직접 입력하세요.` : '행동을 선택하거나 직접 입력하세요.'}</p></div>
 					<div class="target-row">
 						<label for="target">대상</label>
-						<select id="target" value={targetId} onchange={changeTarget} disabled={busy}>
+						<select id="target" value={targetId} onchange={changeTarget} disabled={interactionBusy}>
 							<option value="">지정 안 함</option>
 							{#each data.characters as character}<option value={character.id}>{character.name}</option>{/each}
 						</select>
@@ -172,32 +230,35 @@
 
 				{#if data.config.pendingProposal}
 					<div class="quick-replies proposal-replies" aria-label="제안에 답하기">
-						<form method="POST" action="?/proposal" use:enhance={submit}><button class="accent" name="answer" value="accept" disabled={busy}>수락한다</button></form>
-						<form method="POST" action="?/proposal" use:enhance={submit}><button name="answer" value="decline" disabled={busy}>거절한다</button></form>
+						<form method="POST" action="?/proposal" use:enhance={submitTurn}><button class="accent" name="answer" value="accept" disabled={interactionBusy}>수락한다</button></form>
+						<form method="POST" action="?/proposal" use:enhance={submitTurn}><button name="answer" value="decline" disabled={interactionBusy}>거절한다</button></form>
 					</div>
 				{:else if suggestions.length}
-					<form method="POST" action="?/freeAct" use:enhance={submit} class="quick-replies" aria-label="추천 행동">
+					<form method="POST" action="?/freeAct" use:enhance={submitTurn} class="quick-replies" aria-label="추천 행동">
 						<input type="hidden" name="targetId" value={targetId} />
 						{#each suggestions as suggestion, index}
-							<button name="text" value={suggestion} disabled={busy}><span>{index + 1}</span>{suggestion}</button>
+							<button name="text" value={suggestion} disabled={interactionBusy}><span>{index + 1}</span>{suggestion}</button>
 						{/each}
 					</form>
+				{:else if suggestionLoading}
+					<p class="suggestion-loading" role="status">선택지를 만들고 있습니다. 직접 입력은 바로 사용할 수 있습니다.</p>
 				{/if}
 
-				<form method="POST" action="?/freeAct" use:enhance={submit} class="composer-form">
+				<form method="POST" action="?/freeAct" use:enhance={submitTurn} class="composer-form">
 					<input type="hidden" name="targetId" value={targetId} />
 					<label class="sr-only" for="free-action">직접 행동 입력</label>
 					<textarea id="free-action" name="text" rows="2" required placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '주변을 살피거나 이동하는 등 원하는 행동을 적어 주세요'}></textarea>
-					<button disabled={busy}>보내기</button>
+					<button disabled={interactionBusy}>보내기</button>
 				</form>
 
 				<div class="request-footer">
-					<form method="POST" action="?/advance" use:enhance={submit}><button class="continue-button" disabled={busy}>아무 행동 없이 다음 장면으로 <span aria-hidden="true">→</span></button></form>
+					<form method="POST" action="?/advance" use:enhance={submitTurn}><button class="continue-button" disabled={interactionBusy}>아무 행동 없이 다음 장면으로 <span aria-hidden="true">→</span></button></form>
 					<p>인물을 지정하지 않으면 이동·탐색·휴식 같은 행동을 할 수 있습니다.</p>
 				</div>
 			</section>
 
-			{#if busy}<p class="feedback" role="status">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
+			{#if turnBusy}<p class="feedback" role="status">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
+			{#if saveBusy}<p class="feedback" role="status">현재 진행을 저장하고 있어요…</p>{/if}
 			{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
 
 			<div class="details-area">

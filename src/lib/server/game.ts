@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ACTIONS, actionReason, applyEffects, applyPalamSource, calculateSource, eventSummary } from '$lib/game/actions';
-import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type MemoryRecord, type Proposal, type Source, type WorldState } from '$lib/game/types';
+import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, type ActionId, type ActionRequirement, type Character, type CharacterStatsInput, type EventRecord, type GameView, type MemoryRecord, type Proposal, type ScenarioConfig, type Source, type WorldState } from '$lib/game/types';
 import {
 	getCharacter,
 	getCharacterTemplates,
@@ -20,18 +20,26 @@ import {
 } from './db';
 import { embed, embeddingModel, generateCharacterTurn, generatePlayerSuggestions, generateWorldBeat, interpretPlayerAction } from './llm';
 
-let tail: Promise<void> = Promise.resolve();
+let turnTail: Promise<void> = Promise.resolve();
+let gameplayEpoch = 0;
+const suggestionJobs = new Map<string, Promise<string[]>>();
 
-export async function runExclusive<T>(operation: () => Promise<T> | T): Promise<T> {
-	const previous = tail;
+async function runTurnExclusive<T>(operation: () => Promise<T>): Promise<T> {
+	const previous = turnTail;
 	let release!: () => void;
-	tail = new Promise<void>((resolve) => { release = resolve; });
+	turnTail = new Promise<void>((resolve) => { release = resolve; });
 	await previous;
 	try {
 		return await operation();
 	} finally {
 		release();
 	}
+}
+
+export function mutateGameState<T>(operation: () => T): T {
+	const result = operation();
+	gameplayEpoch += 1;
+	return result;
 }
 
 export function advanceTime(world: WorldState, minutes: number, location: string): WorldState {
@@ -112,10 +120,40 @@ function combineSources(...sources: Source[]): Source {
 	return combined;
 }
 
+function gameStateKey(view: GameView, effectiveConfig: ScenarioConfig): string {
+	return JSON.stringify({
+		loreId: view.lore.id,
+		world: view.world,
+		config: {
+			worldSetting: view.config.worldSetting,
+			eraRules: view.config.eraRules,
+			worldMemory: view.config.worldMemory,
+			sceneNote: view.config.sceneNote,
+			pendingProposal: view.config.pendingProposal
+		},
+		effectiveWorldSetting: effectiveConfig.worldSetting,
+		effectiveEraRules: effectiveConfig.eraRules,
+		characters: view.characters,
+		latestEventId: view.events[0]?.id ?? null
+	});
+}
+
+function currentGameStateKey(): string {
+	return gameStateKey(getGameView(), getEffectiveScenarioConfig());
+}
+
+function assertGameStateCurrent(epoch: number, stateKey: string): void {
+	if (gameplayEpoch !== epoch || currentGameStateKey() !== stateKey) {
+		throw new Error('생성 중 게임 상태가 변경되어 이전 결과를 폐기했습니다. 다시 시도해 주세요.');
+	}
+}
+
 async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	const view = getGameView();
 	const { world, characters, config } = view;
 	const llmConfig = getEffectiveScenarioConfig();
+	const startingEpoch = gameplayEpoch;
+	const startingStateKey = gameStateKey(view, llmConfig);
 	let actionId: ActionId | null = null;
 	let targetId: string | null = null;
 	let intent: string | null = null;
@@ -134,9 +172,10 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		// The selected UI target is authoritative when the interpreter recognizes a
 		// targeted command but omits its target. Small local models occasionally
 		// return this otherwise contradictory pair (for example, talk + null).
-		targetId = interpreted.targetId ?? (
+			targetId = interpreted.targetId ?? (
 			actionId && ACTIONS[actionId].needsTarget ? request.targetId || null : null
 		);
+		assertGameStateCurrent(startingEpoch, startingStateKey);
 		if (actionId) {
 			const reason = actionReason(actionId, targetId ? getCharacter(targetId) : null);
 			if (reason) throw new Error(reason);
@@ -160,6 +199,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 	}
 
 	const beat = await generateWorldBeat({ world, config: llmConfig, characters, recentEvents: view.events, intent, targetId });
+	assertGameStateCurrent(startingEpoch, startingStateKey);
 	// An idle world beat, rest, a long gap or a move begins a fresh scene.
 	const sceneChanged = beat.location !== world.location || request.kind === 'advance' || actionId === 'rest'
 		|| beat.minutes >= 60 || world.minute + beat.minutes >= 1440;
@@ -230,6 +270,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		? response?.memory ?? (accepted && (actionId === 'kiss' || actionId === 'intimacy') ? summary : null)
 		: null;
 	const committed = withTransaction(() => {
+		assertGameStateCurrent(startingEpoch, startingStateKey);
 		updateWorld(nextWorld);
 		if (sceneChanged) for (const character of characters) updateCharacter({ ...character, palam: { ...DEFAULT_PALAM } });
 		if (effects.character && response) updateCharacter(effects.character);
@@ -242,6 +283,7 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 		});
 		const eventId = insertEvent(event);
 		const memoryId = focus && memorySummary ? insertMemory(eventId, focus.id, memorySummary, nextWorld.turn) : null;
+		gameplayEpoch += 1;
 		return { eventId, memoryId };
 	});
 	if (committed.memoryId && memorySummary) {
@@ -255,55 +297,59 @@ async function runTurn(request: TurnRequest): Promise<EventRecord> {
 }
 
 export function advanceWorld(): Promise<EventRecord> {
-	return runExclusive(() => runTurn({ kind: 'advance' }));
+	return runTurnExclusive(() => runTurn({ kind: 'advance' }));
 }
 
 export function performAction(rawActionId: string, targetId: string): Promise<EventRecord> {
 	if (!Object.hasOwn(ACTIONS, rawActionId)) throw new Error('알 수 없는 행동입니다.');
-	return runExclusive(() => runTurn({ kind: 'act', actionId: rawActionId as ActionId, targetId }));
+	return runTurnExclusive(() => runTurn({ kind: 'act', actionId: rawActionId as ActionId, targetId }));
 }
 
 export function performFreeAction(text: string, targetId: string): Promise<EventRecord> {
-	return runExclusive(() => runTurn({ kind: 'free', text, targetId }));
+	return runTurnExclusive(() => runTurn({ kind: 'free', text, targetId }));
 }
 
 export function ensurePlayerSuggestions(targetId: string): Promise<string[]> {
-	return runExclusive(async () => {
-		const view = getGameView();
-		const character = targetId ? view.characters.find((candidate) => candidate.id === targetId) ?? null : null;
-		if (targetId && !character) throw new Error('선택한 인물을 찾을 수 없습니다.');
-		if (view.config.pendingProposal) return [];
-		if (view.config.playerSuggestions?.turn === view.world.turn &&
-			view.config.playerSuggestions.targetId === (character?.id ?? null) &&
-			view.config.playerSuggestions.options.length >= 2) {
-			return view.config.playerSuggestions.options;
-		}
+	const view = getGameView();
+	const character = targetId ? view.characters.find((candidate) => candidate.id === targetId) ?? null : null;
+	if (targetId && !character) return Promise.reject(new Error('선택한 인물을 찾을 수 없습니다.'));
+	if (view.config.pendingProposal) return Promise.resolve([]);
+	if (view.config.playerSuggestions?.turn === view.world.turn &&
+		view.config.playerSuggestions.targetId === (character?.id ?? null) &&
+		view.config.playerSuggestions.options.length >= 2) {
+		return Promise.resolve(view.config.playerSuggestions.options);
+	}
+	const effectiveConfig = getEffectiveScenarioConfig();
+	const startingEpoch = gameplayEpoch;
+	const startingStateKey = gameStateKey(view, effectiveConfig);
+	const jobKey = `${startingEpoch}:${startingStateKey}:${character?.id ?? ''}`;
+	const existing = suggestionJobs.get(jobKey);
+	if (existing) return existing;
+	const job = (async () => {
 		const availableActions = (Object.keys(ACTIONS) as ActionId[])
 			.filter((id) => !actionReason(id, character))
 			.map((id) => ({ id, title: ACTIONS[id].title }));
 		const options = await generatePlayerSuggestions({
 			world: view.world,
-			config: getEffectiveScenarioConfig(),
+			config: effectiveConfig,
 			character,
 			characters: view.characters,
 			currentScene: view.latestNarrative,
 			recentEvents: view.events,
 			availableActions
 		});
-		updateScenarioConfig({
-			...view.config,
-			playerSuggestions: { turn: view.world.turn, targetId: character?.id ?? null, options }
-		});
-		return options;
-	});
+		return gameplayEpoch === startingEpoch && currentGameStateKey() === startingStateKey ? options : [];
+	})().finally(() => suggestionJobs.delete(jobKey));
+	suggestionJobs.set(jobKey, job);
+	return job;
 }
 
 export function respondToProposal(answer: 'accept' | 'decline'): Promise<EventRecord> {
-	return runExclusive(() => runTurn({ kind: answer }));
+	return runTurnExclusive(() => runTurn({ kind: answer }));
 }
 
-export function saveScenarioSettings(worldSetting: string, eraRules: string): Promise<void> {
-	return runExclusive(() => {
+export function saveScenarioSettings(worldSetting: string, eraRules: string): void {
+	mutateGameState(() => withTransaction(() => {
 		if (!worldSetting.trim() || !eraRules.trim()) throw new Error('세계관과 era 규칙을 모두 입력해 주세요.');
 		const config = getGameView().config;
 		updateScenarioConfig({
@@ -315,11 +361,11 @@ export function saveScenarioSettings(worldSetting: string, eraRules: string): Pr
 			pendingProposal: null,
 			playerSuggestions: null
 		});
-	});
+	}));
 }
 
-export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: CharacterStatsInput; marks?: string[]; actionRequirements?: ActionRequirement[] }): Promise<string> {
-	return runExclusive(() => withTransaction(() => {
+export function saveCharacterSettings(input: { id: string; name: string; age: number; profile: string; stats?: CharacterStatsInput; marks?: string[]; actionRequirements?: ActionRequirement[] }): string {
+	return mutateGameState(() => withTransaction(() => {
 		const name = input.name.trim();
 		const profile = input.profile.trim();
 		if (!name || !profile) throw new Error('인물 이름과 설정을 입력해 주세요.');

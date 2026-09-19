@@ -2,10 +2,10 @@ import { createSimulation, resolveAction, selectActiveCharacter } from '$lib/gam
 import { renderSemanticEvent } from '$lib/game/simulation-renderer';
 import type { CharacterStatsInput, EventRecord } from '$lib/game/types';
 import { getGameView, insertEvent, updateCharacter, updateScenarioConfig, updateWorld, withTransaction } from './db';
-import { advanceTime, runExclusive } from './game';
+import { advanceTime, mutateGameState } from './game';
 
 export function performConversation(targetId: string): Promise<EventRecord> {
-	return runExclusive(() => {
+	return Promise.resolve(mutateGameState(() => {
 		const view = getGameView();
 		const initial = selectActiveCharacter(createSimulation(view.characters, view.world.location), targetId);
 		const result = resolveAction(initial, 'conversation');
@@ -28,7 +28,7 @@ export function performConversation(targetId: string): Promise<EventRecord> {
 			return insertEvent(event);
 		});
 		return { id, ...event };
-	});
+	}));
 }
 
 export function editSimulationCharacter(input: {
@@ -36,7 +36,7 @@ export function editSimulationCharacter(input: {
 	stats: CharacterStatsInput;
 	marks?: string[];
 }): Promise<void> {
-	return runExclusive(() => {
+	mutateGameState(() => {
 		const view = getGameView();
 		const character = view.characters.find((candidate) => candidate.id === input.id);
 		if (!character) throw new Error('인물을 찾을 수 없습니다.');
@@ -51,4 +51,5 @@ export function editSimulationCharacter(input: {
 			updateScenarioConfig({ ...view.config, pendingProposal: null, playerSuggestions: null });
 		});
 	});
+	return Promise.resolve();
 }

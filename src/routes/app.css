@@ -120,6 +120,7 @@ form { margin: 0; }
 .quick-replies button { width: 100%; min-height: 46px; display: flex; align-items: center; gap: 12px; padding: 10px 13px; color: #eae5db; background: #292a30; border: 1px solid #505056; border-radius: 3px; text-align: left; line-height: 1.45; }
 .quick-replies button:hover:not(:disabled) { border-color: #b99d70; background: #313138; }
 .quick-replies button span { width: 23px; height: 23px; flex: none; display: grid; place-items: center; color: #d9bd8b; border: 1px solid #6b604f; border-radius: 50%; font: 12px Georgia, serif; }
+.suggestion-loading { margin: 0 0 14px; color: #aaa69d; font-size: 12px; }
 .proposal-replies { grid-template-columns: 1fr 1fr; }
 .proposal-replies form { min-width: 0; }
 .proposal-replies button { justify-content: center; text-align: center; }

@@ -1,9 +1,9 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getGameView, loadGame, resetCurrentSession, saveGame, switchLore } from '$lib/server/db';
-import { advanceWorld, ensurePlayerSuggestions, performAction, performFreeAction, respondToProposal, runExclusive } from '$lib/server/game';
+import { advanceWorld, mutateGameState, performAction, performFreeAction, respondToProposal } from '$lib/server/game';
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = ({ url }) => {
 	const view = getGameView();
 	const requestedTarget = url.searchParams.get('target');
 	const selectedTargetId = requestedTarget === null
@@ -11,19 +11,14 @@ export const load: PageServerLoad = async ({ url }) => {
 		: requestedTarget === 'none'
 			? ''
 			: view.characters.some((character) => character.id === requestedTarget) ? requestedTarget : '';
-	try {
-		await ensurePlayerSuggestions(selectedTargetId);
-	} catch (error) {
-		console.warn('기본 행동 선택지를 생성하지 못했습니다:', error);
-	}
-	return { ...getGameView(), selectedTargetId };
+	return { ...view, selectedTargetId };
 };
 
 export const actions: Actions = {
 	switchLore: async ({ request }) => {
 		const body = await request.formData();
 		try {
-			await runExclusive(() => switchLore(String(body.get('id') ?? '')));
+			mutateGameState(() => switchLore(String(body.get('id') ?? '')));
 			return { message: '로어를 전환했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, { message: error instanceof Error ? error.message : '로어를 전환하지 못했습니다.', level: 'error' as const });
@@ -72,7 +67,7 @@ export const actions: Actions = {
 	save: async ({ request }) => {
 		const body = await request.formData();
 		try {
-			await runExclusive(() => saveGame(Number(body.get('slot'))));
+			saveGame(Number(body.get('slot')));
 			return { message: '현재 진행을 저장했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, {
@@ -84,7 +79,7 @@ export const actions: Actions = {
 	load: async ({ request }) => {
 		const body = await request.formData();
 		try {
-			await runExclusive(() => loadGame(Number(body.get('slot'))));
+			mutateGameState(() => loadGame(Number(body.get('slot'))));
 			return { message: '저장된 진행을 불러왔습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, {
@@ -95,7 +90,7 @@ export const actions: Actions = {
 	},
 	resetSession: async () => {
 		try {
-			await runExclusive(() => resetCurrentSession());
+			mutateGameState(() => resetCurrentSession());
 			return { message: '현재 세션을 처음 상태로 초기화했습니다.', level: 'success' as const };
 		} catch (error) {
 			return fail(400, {
