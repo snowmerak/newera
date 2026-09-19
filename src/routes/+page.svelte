@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
-	import type { EventRecord } from '$lib/game/types';
+	import { PALAM_METADATA, type EventRecord } from '$lib/game/types';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { tick } from 'svelte';
 	import type { PageProps } from './$types';
@@ -201,10 +201,31 @@
 			{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
 
 			<div class="details-area">
-				<details><summary>상태와 기억</summary>
+				<details open><summary>상태와 기억{#if selected}<span>{selected.name} 현재 반응</span>{/if}</summary>
 					{#if selected}
 						<h3>{selected.name}</h3>
-						<p class="minor">{selected.trait.join(' · ')} · 호감 {selected.relations.player.affection} · 신뢰 {selected.relations.player.trust} · 욕망 {selected.relations.player.desire}</p>
+						<p class="minor">{selected.trait.join(' · ')}</p>
+						<div class="relation-readout" aria-label={`${selected.name}의 장기 관계`}>
+							<span>호감 <strong>{selected.relations.player.affection}</strong></span>
+							<span>신뢰 <strong>{selected.relations.player.trust}</strong></span>
+							<span>욕망 <strong>{selected.relations.player.desire}</strong></span>
+							<span>애착 <strong>{selected.relations.player.attachment}</strong></span>
+							<span>질투 <strong>{selected.relations.player.jealousy}</strong></span>
+							<span>반감 <strong>{selected.relations.player.resentment}</strong></span>
+						</div>
+						<section class="palam-readout" aria-labelledby="palam-heading">
+							<div class="palam-readout-head"><div><h4 id="palam-heading">현재 장면의 반응</h4><p>PALAM은 이 장면에서만 유지되며 새 장면에서 초기화됩니다.</p></div><span>0–100</span></div>
+							<div class="palam-grid">
+								{#each PALAM_METADATA as field}
+									{@const value = selected.palam[field.key]}
+									<div class="palam-item">
+										<div><strong>{field.label}</strong><span>{value}</span></div>
+										<div class="palam-meter" role="progressbar" aria-label={`${field.label} ${value}`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={value}><i style:width={`${value}%`}></i></div>
+										<p>{field.description}</p>
+									</div>
+								{/each}
+							</div>
+						</section>
 						{#if visibleMemories.length}
 							<ul class="memory-list">{#each visibleMemories as memory}<li>{memory.summary}</li>{/each}</ul>
 						{:else}<p class="minor">기록된 구체적 기억은 아직 없습니다. 이전 행동은 아래 기록에서 볼 수 있습니다.</p>{/if}

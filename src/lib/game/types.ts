@@ -22,6 +22,17 @@ export interface ExperienceStats { social: number; romantic: number; seduction: 
 export interface RelationStats { affection: number; trust: number; desire: number; attachment: number; jealousy: number; resentment: number }
 export interface PalamStats { rapport: number; comfort: number; arousal: number; pleasure: number; embarrassment: number; tension: number; frustration: number; satisfaction: number }
 
+export const PALAM_METADATA = [
+	{ key: 'rapport', label: '교감', description: '현재 대화와 행동이 서로 잘 통하는 정도' },
+	{ key: 'comfort', label: '편안함', description: '현재 상황에서 경계를 풀고 안정된 정도' },
+	{ key: 'arousal', label: '흥분', description: '현재 장면에서의 성적 흥분' },
+	{ key: 'pleasure', label: '쾌감', description: '현재 느끼는 신체적·감정적 쾌감' },
+	{ key: 'embarrassment', label: '부끄러움', description: '현재 느끼는 수치심과 당혹스러움' },
+	{ key: 'tension', label: '긴장', description: '현재 상황에서의 경계·압박·기대' },
+	{ key: 'frustration', label: '좌절', description: '풀리지 않은 욕구와 불만이 쌓인 정도' },
+	{ key: 'satisfaction', label: '만족', description: '현재 장면의 결과에 충족된 정도' }
+] as const satisfies ReadonlyArray<{ key: keyof PalamStats; label: string; description: string }>;
+
 export const ACTION_REQUIREMENT_ACTIONS = ['talk', 'listen', 'flirt', 'kiss', 'intimacy'] as const;
 export type RequirementActionId = typeof ACTION_REQUIREMENT_ACTIONS[number];
 export const ACTION_REQUIREMENT_STATS = [
