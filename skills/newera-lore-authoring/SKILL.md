@@ -11,7 +11,7 @@ Create a lore that can be imported from newera's `/lores` page. Preserve the use
 
 1. Read [references/format.md](references/format.md).
 2. Copy [assets/example-source.json](assets/example-source.json) to the requested workspace and replace the example content. Write the easier `newera-lore-source` format; do not hand-escape `character_json`.
-3. Make every character an explicitly described adult aged 20 or older. Give each character an ID that matches `^[a-z0-9][a-z0-9._-]*$`.
+3. Preserve each character's stated age without applying a minimum. Give each character an ID that matches `^[a-z0-9][a-z0-9._-]*$`.
 4. Keep persistent `TALENT`, `ABL`, `EXP`, `MARK`, and `RELATION` distinct from current-scene `PALAM`. Set numbers from the stated starting relationship instead of reflexively using zero.
 5. Express gated behavior with `actionRequirements`. A missing requirement means that stat does not gate that action.
 6. Build and validate with the scripts in this skill directory:

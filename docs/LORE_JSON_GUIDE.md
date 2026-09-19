@@ -54,7 +54,7 @@ npm run lore:validate -- my-lore.json
 }
 ```
 
-모든 등장인물은 만 20세 이상이어야 한다. 생략한 수치는 빌더가 중립적인 기본값으로 채운다. 이미 연인, 동료 또는 원수인 설정이라면 `EXP`, `MARK`, `RELATION`을 직접 적어 관계의 과거와 현재 수치가 모순되지 않게 한다.
+나이는 정수로 기록하며 빌더가 최소 나이를 강제하지 않는다. 생략한 수치는 빌더가 중립적인 기본값으로 채운다. 이미 연인, 동료 또는 원수인 설정이라면 `EXP`, `MARK`, `RELATION`을 직접 적어 관계의 과거와 현재 수치가 모순되지 않게 한다.
 
 전체 필드, 수치 의미, 행동 조건 경로와 완성형 번들 구조는 Agent Skill의 [형식 참고서](../skills/newera-lore-authoring/references/format.md)에 정리되어 있다. 바로 수정할 수 있는 전체 예제는 [example-source.json](../skills/newera-lore-authoring/assets/example-source.json)이다.
 

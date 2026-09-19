@@ -1,7 +1,5 @@
 import { ACTION_REQUIREMENT_LABELS, clampCount, clampPercent, relationTo, type ActionId, type ActionRequirementStat, type Character, type Source } from './types.ts';
 
-export const PLAYER_AGE = 25;
-
 type ActionDefinition = {
 	title: string;
 	detail: string;
@@ -62,9 +60,6 @@ export function actionReason(
 	const action = ACTIONS[actionId];
 	if (!action.needsTarget) return null;
 	if (!character) return '상대를 선택해 주세요';
-	if (action.category === 'adult' && (PLAYER_AGE < 20 || character.age < 20)) {
-		return '성인 인물에게만 가능한 행동입니다';
-	}
 	const unmet = character.actionRequirements
 		.filter((requirement) => requirement.actionId === actionId && requirementValue(character, requirement.stat) < requirement.minimum)
 		.map((requirement) => `${ACTION_REQUIREMENT_LABELS[requirement.stat]} ${requirement.minimum}`);

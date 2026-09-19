@@ -58,6 +58,11 @@ function whole(value, path, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) {
   return value;
 }
 
+function integer(value, path) {
+  if (!Number.isSafeInteger(value)) error(path, '정수여야 합니다.');
+  return value;
+}
+
 function numbers(value, path, defaults, maximum) {
   const supplied = value === undefined ? {} : object(value, path);
   for (const key of Object.keys(supplied)) {
@@ -106,7 +111,7 @@ function normalizeCharacter(value, index, allowNamespacedId = false) {
   if (!(allowNamespacedId ? RELATION_ID_PATTERN : ID_PATTERN).test(id)) {
     error(`${path}.id`, `영문 소문자, 숫자, 점, 밑줄, 하이픈${allowNamespacedId ? ', 콜론' : ''}만 사용할 수 있습니다.`);
   }
-  const age = whole(input.age, `${path}.age`, 20, 120);
+  const age = integer(input.age, `${path}.age`);
   const base = numbers(input.base, `${path}.base`, DEFAULT_BASE);
   if (base.maxEnergy < 1 || base.energy > base.maxEnergy) error(`${path}.base`, 'energy는 maxEnergy 이하여야 하고 maxEnergy는 1 이상이어야 합니다.');
   const relationsInput = input.relations === undefined ? {} : object(input.relations, `${path}.relations`);

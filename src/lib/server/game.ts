@@ -485,7 +485,7 @@ export function saveCharacterSettings(input: { id: string; name: string; age: nu
 		const name = input.name.trim();
 		const profile = input.profile.trim();
 		if (!name || !profile) throw new Error('인물 이름과 설정을 입력해 주세요.');
-		if (!Number.isInteger(input.age) || input.age < 20) throw new Error('등장인물은 성인이어야 합니다.');
+		if (!Number.isSafeInteger(input.age)) throw new Error('등장인물의 나이는 정수여야 합니다.');
 		const existingTemplate = input.id ? getCharacterTemplates().find((character) => character.id === input.id) ?? null : null;
 		if (input.id && !existingTemplate) throw new Error('인물을 찾을 수 없습니다.');
 		const character: Character = existingTemplate ?? {

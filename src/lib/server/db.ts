@@ -1108,7 +1108,7 @@ function checkedSnapshot(value: unknown, full: boolean): Snapshot {
 	}
 	for (const character of snapshot.characters as Row[]) {
 		if (typeof character.id !== 'string' || typeof character.name !== 'string' ||
-			!Number.isInteger(character.age) || Number(character.age) < 20 ||
+			!Number.isSafeInteger(character.age) ||
 			(typeof character.profile !== 'string' && typeof character.introduction !== 'string')) {
 			throw new Error('로어의 등장인물 설정이 올바르지 않습니다.');
 		}
@@ -1119,7 +1119,11 @@ function checkedSnapshot(value: unknown, full: boolean): Snapshot {
 			if (typeof template.id !== 'string' || !Number.isInteger(template.sort_order) || typeof template.character_json !== 'string') {
 				throw new Error('로어의 인물 원본 데이터가 올바르지 않습니다.');
 			}
-			try { normalizeCharacter(parse<Character>(template.character_json)); } catch { throw new Error('로어의 인물 원본 데이터가 올바르지 않습니다.'); }
+			try {
+				const character = parse<Character>(template.character_json);
+				if (!Number.isSafeInteger(character.age)) throw new Error('invalid age');
+				normalizeCharacter(character);
+			} catch { throw new Error('로어의 인물 원본 데이터가 올바르지 않습니다.'); }
 		}
 	}
 	if (snapshot.modules !== undefined) {
@@ -1133,7 +1137,7 @@ function checkedSnapshot(value: unknown, full: boolean): Snapshot {
 			if (!manifest || manifest.schemaVersion !== 1 || manifest.id !== module.id || typeof manifest.name !== 'string' ||
 				!Array.isArray(manifest.characters) || manifest.characters.some((character) =>
 					!character || typeof character.id !== 'string' || !character.id.startsWith(`mod:${manifest.id}:`) ||
-					!Number.isInteger(character.age) || character.age < 20)) {
+					!Number.isSafeInteger(character.age))) {
 				throw new Error('로어의 모듈 목록이 올바르지 않습니다.');
 			}
 		}

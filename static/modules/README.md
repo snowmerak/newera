@@ -39,7 +39,7 @@
 
 - `world`와 `characters` 중 하나만 넣어도 됩니다. 함께 넣으면 한 모듈로 적용됩니다.
 - 모듈 ID와 인물 ID는 영문 소문자, 숫자, `.`, `_`, `-`를 사용합니다. 인물의 실제 ID는 `mod:<모듈 ID>:<인물 ID>`로 만들어집니다.
-- 인물은 20세 이상이어야 합니다. `profile`, `name`, `age`, `id`가 필수입니다. 스탯을 생략하면 기본값이 적용됩니다.
+- `profile`, `name`, 정수형 `age`, `id`가 필수입니다. 나이의 최소·최대 제한은 없습니다. 스탯을 생략하면 기본값이 적용됩니다.
 - `talent`, `relations`의 각 관계, `palam`은 0~100입니다. `abl`과 `exp`는 0 이상의 정수이며 상한이 없습니다. `base.energy`는 `base.maxEnergy`를 넘을 수 없습니다.
 - `relations`는 이 인물에서 대상 ID로 향하는 관계입니다. `player`는 플레이어를 뜻합니다. 옛 모듈의 단일 `relation` 객체, `exp.conversation`/`exp.empathy`, `palam.trust`는 가져올 때 새 수치로 변환됩니다.
 - `mark`는 첫 데이트·첫 입맞춤 같은 사건의 문자열 목록이며 사용자 정의 태그도 허용합니다. JSON은 모듈 설치 형식이고, 일반 인물 편집은 `/lores`의 입력칸을 사용합니다.

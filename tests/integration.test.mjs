@@ -386,7 +386,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(modelCalls.find((call) => call.kind === 'character').input.character.name, '서연');
 			const characterModule = readFileSync(join(process.cwd(), 'static/modules/example-character.json'), 'utf8');
 			const worldModule = readFileSync(join(process.cwd(), 'static/modules/example-world.json'), 'utf8');
-			await postModule('underage.json', JSON.stringify({ schemaVersion: 1, id: 'invalid.age', name: 'invalid', version: '1', characters: [{ id: 'a', name: 'a', age: 19, profile: 'profile' }] }), true);
+			await postModule('invalid-age.json', JSON.stringify({ schemaVersion: 1, id: 'invalid.age', name: 'invalid', version: '1', characters: [{ id: 'a', name: 'a', age: 19.5, profile: 'profile' }] }), true);
 			const invalidTalentModule = JSON.parse(characterModule);
 			invalidTalentModule.characters[0].talent.pride = 101;
 			await postModule('invalid-talent.json', JSON.stringify(invalidTalentModule), true);
@@ -608,13 +608,20 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedOriginalId).n, 2);
 			const migratedSave = JSON.parse(db.prepare('SELECT snapshot_json FROM lore_save_slots WHERE lore_id = ? AND slot = 1').get(importedOriginalId).snapshot_json);
 			assert.equal(JSON.parse(migratedSave.characters.find((character) => character.id === harinId).exp_json).social, 17);
-			const badBundle = JSON.parse(originalBundle);
-			badBundle.state.characters[0].age = 19;
-			const invalidFile = new FormData();
-			invalidFile.append('loreFile', new Blob([JSON.stringify(badBundle)], { type: 'application/json' }), 'invalid.json');
-			const invalidImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: invalidFile });
-			assert.ok((await invalidImport.text()).includes('"type":"failure"'));
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 3);
+			const unrestrictedAgeBundle = JSON.parse(originalBundle);
+			const unrestrictedCharacter = unrestrictedAgeBundle.state.characters[0];
+			unrestrictedCharacter.age = 19;
+			const unrestrictedTemplate = unrestrictedAgeBundle.state.characterTemplates.find((template) => template.id === unrestrictedCharacter.id);
+			const unrestrictedTemplateCharacter = JSON.parse(unrestrictedTemplate.character_json);
+			unrestrictedTemplateCharacter.age = 19;
+			unrestrictedTemplate.character_json = JSON.stringify(unrestrictedTemplateCharacter);
+			const loreCountBeforeUnrestrictedImport = db.prepare('SELECT count(*) AS n FROM lores').get().n;
+			const unrestrictedFile = new FormData();
+			unrestrictedFile.append('loreFile', new Blob([JSON.stringify(unrestrictedAgeBundle)], { type: 'application/json' }), 'unrestricted-age.json');
+			const unrestrictedImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: unrestrictedFile });
+			assert.ok(!(await unrestrictedImport.text()).includes('"type":"failure"'));
+			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, loreCountBeforeUnrestrictedImport + 1);
+			assert.equal(db.prepare('SELECT age FROM characters WHERE id = ?').get(unrestrictedCharacter.id).age, 19);
 			const legacyModule = JSON.parse(characterModule);
 			legacyModule.id = 'example.legacy-character';
 			legacyModule.characters[0].id = 'legacy';
@@ -666,7 +673,6 @@ test('world and character turns, proposals, settings, save/load', async () => {
 				assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, title);
 				assert.equal(db.prepare('SELECT name FROM characters ORDER BY sort_order LIMIT 1').get().name, firstCharacter);
 				assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
-				assert.equal(db.prepare('SELECT count(*) AS n FROM characters WHERE age < 20').get().n, 0);
 				assert.ok(JSON.parse(db.prepare('SELECT action_requirements_json FROM characters ORDER BY sort_order LIMIT 1').get().action_requirements_json).length >= 7);
 			}
 		} finally {

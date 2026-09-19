@@ -32,6 +32,7 @@ test('each character owns editable numeric action requirements without a fixed k
 	const character = initialState().characters[0];
 	assert.equal(actionReason('flirt', character), '신뢰 2 필요');
 	character.actionRequirements = [];
+	character.age = 19;
 	assert.equal(actionReason('intimacy', character), null);
 	assert.ok(!character.mark.includes('firstKiss'));
 	character.actionRequirements = [

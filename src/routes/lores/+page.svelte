@@ -107,7 +107,7 @@
 					{#if selected}
 						{#key selected.id}<form method="POST" action="?/character" use:enhance={submit} class="settings-form">
 							<input type="hidden" name="id" value={selected.id} />
-							<div class="form-pair"><label>이름<input name="name" required value={selected.name} /></label><label>나이<input name="age" type="number" min="20" required value={selected.age} /></label></div>
+							<div class="form-pair"><label>이름<input name="name" required value={selected.name} /></label><label>나이<input name="age" type="number" required value={selected.age} /></label></div>
 							<label for="character-profile">인물 설정</label><textarea id="character-profile" name="profile" rows="6" required value={selected.profile}></textarea>
 							<details class="nested"><summary>새 세션의 초기 era 수치</summary><CharacterStatsFields stats={selected} /></details>
 							<CharacterMarksFields marks={selected.mark} />
@@ -117,7 +117,7 @@
 						</form>{/key}
 					{/if}
 					<details class="nested"><summary>새 인물 추가</summary><form method="POST" action="?/character" use:enhance={submit} class="settings-form">
-						<div class="form-pair"><label>이름<input name="name" required /></label><label>나이<input name="age" type="number" min="20" value="25" required /></label></div>
+						<div class="form-pair"><label>이름<input name="name" required /></label><label>나이<input name="age" type="number" value="25" required /></label></div>
 						<label for="new-profile">인물 설정</label><textarea id="new-profile" name="profile" rows="5" required></textarea>
 						<details class="nested"><summary>초기 era 수치</summary><CharacterStatsFields stats={initialStats} /></details>
 						<CharacterMarksFields marks={[]} />

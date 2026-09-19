@@ -96,8 +96,8 @@ export function parseModuleManifest(raw: string): ModuleManifest {
 		}
 		localIds.add(localId);
 		const age = source.age;
-		if (typeof age !== 'number' || !Number.isSafeInteger(age) || age < 20 || age > 120) {
-			throw new Error('모듈 등장인물은 20세 이상의 성인이어야 합니다.');
+		if (typeof age !== 'number' || !Number.isSafeInteger(age)) {
+			throw new Error('모듈 등장인물의 나이는 정수여야 합니다.');
 		}
 		const profile = text(source.profile, `characters[${index}].profile`, 20_000);
 		const base = numbers(source.base, 'BASE', { energy: 20, maxEnergy: 20 }) as Character['base'];
