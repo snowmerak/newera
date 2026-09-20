@@ -42,6 +42,8 @@ npm run dev
   - 남성향 생활형 연애: [심야의 해운대 게스트하우스](static/lore-presets/midnight-haeundae-guesthouse.json)
   - 여성향 오피스 로맨스: [크리스마스 전의 90일](static/lore-presets/ninety-days-before-christmas.json)
   - 여성향 도시 미스터리 로맨스: [청연시 이상현상 전담반](static/lore-presets/blue-moon-anomaly-unit.json)
+  - 남성향 생활 에로: [자는 사이, 연애는 보류](static/lore-presets/fwb-jiwoo.json)
+  - 여성향 강제 능욕: [아직 열쇠를 가진 남자](static/lore-presets/keyholder-jaehyeon.json)
 
 직접 로어 JSON을 만들 때는 [로어 JSON 작성 가이드](docs/LORE_JSON_GUIDE.md)를 참고하세요. `newera-lore-source` 원본을 완성형 import 파일로 변환하고 검증하는 도구와, 같은 작업을 수행하는 설치 가능한 [`newera-lore-authoring` Agent Skill](skills/newera-lore-authoring/SKILL.md)이 포함되어 있습니다.
 
