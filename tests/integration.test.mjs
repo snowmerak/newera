@@ -168,6 +168,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(sidebar.includes('>현재 세션 초기화</button>'));
 		assert.ok(!firstPage.split('<main class="reader">')[1].split('</main>')[0].includes('aria-label="저장 슬롯"'));
 		assert.ok(firstPage.includes('현재 세션'));
+		assert.ok(firstPage.includes('href="/session/export"'));
 		assert.ok(firstPage.includes('저장 슬롯'));
 		assert.ok(firstPage.includes('aria-label="대화와 장면"'));
 		assert.ok(firstPage.includes('aria-label="행동 요청"'));
@@ -191,6 +192,11 @@ test('world and character turns, proposals, settings, save/load', async () => {
 		assert.ok(managementPage.includes('name="narrativeMode"'));
 		assert.ok(managementPage.includes('노골적'));
 		assert.ok(!managementPage.includes('href="/simulator"'));
+		const emptySessionResponse = await fetch(`${base}/session/export`);
+		assert.equal(emptySessionResponse.status, 200);
+		assert.match(emptySessionResponse.headers.get('content-type'), /^text\/markdown; charset=utf-8/);
+		assert.match(emptySessionResponse.headers.get('content-disposition'), /newera-session-.*\.md/);
+		assert.match(await emptySessionResponse.text(), /아직 첫 장면이 시작되지 않았다/);
 		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다', narrativeMode: 'explicit' });
 		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
 		await post('advance');
@@ -260,6 +266,7 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '망원동에 비가 내린다.');
 			assert.equal(db.prepare('SELECT scene_note FROM scenario_config').get().scene_note, '서연과 플레이어가 서점 앞에서 마주 보고 있다.');
 			assert.equal(JSON.parse(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json).actionId, 'talk');
+			assert.match(await (await fetch(`${base}/session/export`)).text(), /잠깐 이야기할래요\?/);
 			assert.equal(db.prepare('SELECT summary FROM memories ORDER BY id DESC LIMIT 1').get().summary, '서연이 서점 앞에서 대화를 제안했다.');
 			const firstEvent = db.prepare('SELECT id, turn, summary FROM events ORDER BY id LIMIT 1').get();
 			db.prepare('INSERT INTO memories (event_id, character_id, summary, created_turn) VALUES (?, ?, ?, ?)').run(
@@ -513,8 +520,28 @@ test('world and character turns, proposals, settings, save/load', async () => {
 			const resetPage = await (await fetch(base)).text();
 			assert.ok(resetPage.includes('TURN 0'));
 			assert.ok(!resetPage.includes(simulatedEvent.narrative));
+			const insertTranscriptTurn = db.prepare(`INSERT INTO events
+				(turn, day, minute, location, action_id, character_id, summary, source_json, changes_json, narrative, renderer)
+				VALUES (?, 1, 1080, '시작 장소', 'advance', NULL, ?, '{}', '{}', ?, 'template')`);
+			for (let turn = 1; turn <= 35; turn += 1) {
+				insertTranscriptTurn.run(turn, `기록 ${turn}`, `장면 ${turn}`);
+			}
+			const longSessionMarkdown = await (await fetch(`${base}/session/export`)).text();
+			assert.equal((longSessionMarkdown.match(/^## \d+턴/gm) ?? []).length, 35);
+			assert.ok(longSessionMarkdown.indexOf('> 장면 1\n') < longSessionMarkdown.indexOf('> 장면 35\n'));
+			db.exec('DELETE FROM events');
 			await post('switchLore', { id: originalLoreId });
 			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
+			const sessionMarkdown = await (await fetch(`${base}/session/export`)).text();
+			assert.match(sessionMarkdown, /> 서연에게 책을 추천한다/);
+			const sessionEvents = db.prepare('SELECT narrative FROM events ORDER BY id').all();
+			assert.equal((sessionMarkdown.match(/^## \d+턴/gm) ?? []).length, sessionEvents.length);
+			let previousPosition = -1;
+			for (const event of sessionEvents) {
+				const position = sessionMarkdown.indexOf(event.narrative.split('\n')[0], previousPosition + 1);
+				assert.ok(position > previousPosition, '세션의 장면이 시간순으로 모두 포함되어야 합니다.');
+				previousPosition = position;
+			}
 			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
 			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
 			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '비가 잦은 망원동');

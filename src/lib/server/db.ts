@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, clampBase, normalizeAbl, normalizeActionRequirements, normalizeExp, normalizeMarks, normalizeNarrativeMode, normalizePalam, normalizeRelations, normalizeTalent } from '$lib/game/types';
+import { eventRequestText } from '$lib/game/event-text';
 import type {
 	Character,
 	CharacterLore,
@@ -987,6 +988,51 @@ export function getGameView(): GameView {
 			`아직 첫 장면이 시작되지 않았다.\n\n${config.worldSetting}`,
 		latestRenderer: latestEvents[0]?.renderer ?? 'template'
 	};
+}
+
+function markdownHeading(value: string): string {
+	return value.replace(/[\r\n]+/g, ' ').replace(/([\\`*_{}\[\]()#+.!|>~-])/g, '\\$1');
+}
+
+function markdownQuote(value: string): string {
+	return value.split(/\r?\n/).map((line) => `> ${line}`).join('\n');
+}
+
+function clockLabel(minute: number): string {
+	return `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+}
+
+export function exportSessionMarkdown(): { loreId: string; markdown: string } {
+	const lore = getLores().find((candidate) => candidate.active);
+	if (!lore) throw new Error('현재 로어를 찾을 수 없습니다.');
+	const world = getWorld();
+	const config = getScenarioConfig();
+	const names = new Map(getCharacters().map((character) => [character.id, character.name]));
+	const events = rows(`SELECT turn, day, minute, location, action_id, character_id, summary, narrative
+		FROM events ORDER BY id`);
+	const parts = [
+		`# ${markdownHeading(lore.title)} · 세션 대화`,
+		`현재 진행: ${world.turn}턴 · ${world.day}일차 ${clockLabel(world.minute)} · ${markdownHeading(world.location)}`
+	];
+	if (events.length === 0) {
+		parts.push('## 시작 장면', markdownQuote(`아직 첫 장면이 시작되지 않았다.\n\n${config.worldSetting}`));
+	} else {
+		for (const event of events) {
+			const speaker = event.character_id === null ? '세계' : names.get(String(event.character_id)) ?? '세계';
+			parts.push(
+				`## ${Number(event.turn)}턴 · ${Number(event.day)}일차 ${clockLabel(Number(event.minute))} · ${markdownHeading(String(event.location))}`,
+				'### 나',
+				markdownQuote(eventRequestText({ actionId: String(event.action_id) as EventRecord['actionId'], characterId: event.character_id === null ? null : String(event.character_id), summary: String(event.summary) })),
+				`### ${markdownHeading(speaker)}`,
+				markdownQuote(String(event.narrative))
+			);
+		}
+	}
+	if (config.pendingProposal) {
+		const speaker = names.get(config.pendingProposal.characterId) ?? '등장인물';
+		parts.push(`## ${markdownHeading(speaker)}의 현재 제안`, markdownQuote(config.pendingProposal.text));
+	}
+	return { loreId: lore.id, markdown: `${parts.join('\n\n')}\n` };
 }
 
 interface Snapshot {

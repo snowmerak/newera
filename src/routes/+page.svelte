@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto, invalidateAll } from '$app/navigation';
-	import { PALAM_METADATA, type EventRecord } from '$lib/game/types';
+	import { eventRequestText } from '$lib/game/event-text';
+	import { PALAM_METADATA } from '$lib/game/types';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { tick } from 'svelte';
 	import type { PageProps } from './$types';
@@ -154,12 +155,6 @@
 		return data.characters.find((character) => character.id === id)?.name ?? '세계';
 	}
 
-	function requestText(event: EventRecord): string {
-		if (event.actionId === 'advance') return '다음 장면을 기다린다.';
-		if (event.summary.startsWith('플레이어 시도: ')) return event.summary.slice('플레이어 시도: '.length).split(' — ')[0];
-		return event.summary;
-	}
-
 	function confirmSessionReset(event: SubmitEvent): void {
 		if (!window.confirm(`${data.lore.title}의 현재 세션을 처음부터 다시 시작할까요?\n진행된 턴, 사건, 기억과 캐릭터 수치 변화가 초기화됩니다. 수동 세이브 슬롯은 유지됩니다.`)) {
 			event.preventDefault();
@@ -216,7 +211,7 @@
 		<main class="reader">
 			<div class="lore-heading"><div><p class="eyebrow">PLAYING LORE</p><h1>{data.lore.title}</h1></div><a href="/lores">설정 관리 →</a></div>
 			<section class="session-panel" aria-label="현재 세션">
-				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴</small></div>
+				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴</small><a class="session-export" href="/session/export" download>대화 내보내기 · Markdown</a></div>
 			</section>
 
 			<section class="conversation-panel" aria-label="대화와 장면">
@@ -227,7 +222,7 @@
 							<div class="chat-turn">
 								<article class="chat-message player-message">
 									<div class="chat-message-meta"><strong>나</strong><span>{event.day}일차 {timeLabel(event.minute)}</span></div>
-									<p>{requestText(event)}</p>
+									<p>{eventRequestText(event)}</p>
 								</article>
 								<article class="chat-message story-message">
 									<div class="chat-message-meta"><strong>{characterName(event.characterId)}</strong><span>{event.location}</span></div>

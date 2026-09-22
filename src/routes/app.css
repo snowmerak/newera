@@ -45,6 +45,9 @@ form { margin: 0; }
 .session-panel > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
 .session-panel strong { color: #f0e8dc; font-size: 16px; }
 .session-panel small { color: #b0a99d; font-size: 12px; }
+.session-export { margin-left: auto; padding: 7px 10px; color: #e8d2aa; border: 1px solid #897555; font-size: 12px; text-decoration: none; white-space: nowrap; }
+.session-export:hover { color: #fff0d0; border-color: #c2a77a; background: #333027; }
+.session-export:focus-visible { outline: 2px solid #d6b989; outline-offset: 3px; }
 .save-panel { margin-bottom: 32px; }
 .save-panel-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 11px; }
 .save-panel-title h2 { margin: 0; color: #e6dfd2; font-size: 14px; font-weight: 600; }
