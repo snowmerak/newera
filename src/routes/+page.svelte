@@ -3,6 +3,9 @@
 	import { invalidateAll } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { actorName, residents, templateFor, interactionsFor } from '$lib/theater/runtime';
+	import { eventContent } from '$lib/theater/event-content';
+	import { memoryForEvent } from '$lib/theater/memory';
+	import type { ModelSelection } from '$lib/theater/types';
 	import type { PageProps } from './$types';
 	let { data, form }: PageProps = $props();
 	let submitting = $state(false);
@@ -16,6 +19,44 @@
 	let generating = $derived(data.generation?.status === 'pending' || data.generation?.status === 'running');
 	let busy = $derived(submitting || generating);
 	let events = $derived(world.state.events.slice(-100));
+	let eventsById = $derived(new Map(world.state.events.map((event) => [event.id, event])));
+	let modelCatalog = $state<{ models: string[]; defaults: ModelSelection } | null>(null);
+	let modelsLoading = $state(false);
+	let modelsSaving = $state(false);
+	let modelsError = $state('');
+	let decisionModel = $state('');
+	let textModel = $state('');
+	let modelContext = $derived(JSON.stringify([world.id, world.models?.decisionModel ?? null, world.models?.textModel ?? null]));
+	$effect(() => {
+		const [, savedDecision, savedText] = JSON.parse(modelContext) as [string, string | null, string | null];
+		decisionModel = savedDecision ?? modelCatalog?.defaults.decisionModel ?? '';
+		textModel = savedText ?? modelCatalog?.defaults.textModel ?? '';
+	});
+	async function loadModels() {
+		if (modelsLoading) return;
+		modelsLoading = true;
+		modelsError = '';
+		try {
+			const response = await fetch('/api/models', { cache: 'no-store' });
+			const catalog = await response.json();
+			if (!response.ok) throw new Error(catalog.message || '모델 목록을 불러오지 못했습니다.');
+			modelCatalog = catalog;
+		} catch (error) { modelsError = error instanceof Error ? error.message : '모델 목록을 불러오지 못했습니다.'; }
+		finally { modelsLoading = false; }
+	}
+	const submitModels: SubmitFunction = () => {
+		modelsSaving = true;
+		return async ({ update, result }) => {
+			try {
+				await update({ reset: false });
+				if (result.type === 'success') {
+					const saved = result.data?.models as ModelSelection | null;
+					decisionModel = saved?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '';
+					textModel = saved?.textModel ?? modelCatalog?.defaults.textModel ?? '';
+				}
+			} finally { modelsSaving = false; }
+		};
+	};
 	const submitTurn: SubmitFunction = () => {
 		submitting = true;
 		return async ({ update }) => { try { await update(); } finally { submitting = false; } };
@@ -25,6 +66,7 @@
 	});
 	$effect(() => {
 		const generation = data.generation;
+		const revision = data.world.revision;
 		if (!generation || !['pending', 'running'].includes(generation.status)) return;
 		const controller = new AbortController();
 		let stopped = false;
@@ -34,12 +76,12 @@
 				const response = await fetch(`/api/generation?id=${encodeURIComponent(generation!.id)}`, { signal: controller.signal, cache: 'no-store' });
 				if (!response.ok) throw new Error('생성 상태를 확인하지 못했습니다.');
 				const result = await response.json();
-				if (!result.generation || !['pending', 'running'].includes(result.generation.status)) {
+				if (!result.generation || result.generation.revision > revision || !['pending', 'running'].includes(result.generation.status)) {
 					if (!stopped) await invalidateAll();
 					return;
 				}
 			} catch { if (stopped) return; }
-			if (!stopped) timer = setTimeout(poll, 1000);
+			if (!stopped) timer = setTimeout(poll, 250);
 		}
 		timer = setTimeout(poll, 300);
 		return () => { stopped = true; controller.abort(); clearTimeout(timer); };
@@ -77,19 +119,41 @@
 		<div class="cast-strip" aria-label="현재 씬의 등장인물">
 			{#each characters as instance}<span class:companion={instance.companion}>{instance.name}{instance.companion ? ' · 동행' : ''}</span>{:else}<span>지금 이곳에는 나 혼자 있다.</span>{/each}
 		</div>
+		<details class="model-settings" ontoggle={(event) => { if (event.currentTarget.open && !modelCatalog) void loadModels(); }}>
+			<summary>이 세션의 모델 설정</summary>
+			<small>판단: {world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정'} · 생성: {world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정'}</small>
+			<p>현재 세계관의 다음 진행부터 적용됩니다. 진행 중인 작업은 시작할 때 선택한 모델을 유지합니다.</p>
+			<form method="POST" action="?/models" use:enhance={submitModels} class="model-form">
+				<input type="hidden" name="worldId" value={world.id} />
+				<label>판단 모델<select name="decisionModel" bind:value={decisionModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
+					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
+					{#if decisionModel && !modelCatalog?.models.includes(decisionModel)}<option value={decisionModel} disabled>{decisionModel} (목록에 없음)</option>{/if}
+					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
+				</select></label>
+				<label>생성 모델<select name="textModel" bind:value={textModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
+					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
+					{#if textModel && !modelCatalog?.models.includes(textModel)}<option value={textModel} disabled>{textModel} (목록에 없음)</option>{/if}
+					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
+				</select></label>
+				<div class="model-buttons"><button disabled={modelsLoading || modelsSaving || !modelCatalog?.models.includes(decisionModel) || !modelCatalog?.models.includes(textModel)}>모델 적용</button><button name="mode" value="defaults" formnovalidate disabled={modelsSaving}>기본 설정 사용</button><button type="button" onclick={loadModels} disabled={modelsLoading || modelsSaving}>목록 새로고침</button></div>
+			</form>
+			{#if modelsError}<p class="feedback error" role="alert">{modelsError}</p>{/if}
+		</details>
 		<div class="event-thread" aria-live="polite">
 			{#each events as event (event.id)}
 				{@const eventScene = world.definition.scenes.find((entry) => entry.id === event.sceneId)}
+				{@const content = eventContent(event)}
 				<article class="stage-event" class:player={event.actorId === 'player'} class:dialogue={event.kind === 'speak'}>
 					<div class="event-byline"><strong>{actorName(world, event.actorId)}</strong><span>{eventScene?.name} · {event.tick}</span>{#if event.targetId}<span>→ {actorName(world, event.targetId)}</span>{/if}</div>
-					<p>{event.text}</p>
+					{#if content.narrative}<div class="event-action"><span class="event-content-label">행동</span><p>{content.narrative}</p></div>{/if}
+					{#if content.utterance}<div class="event-speech"><span class="event-content-label">대사</span><blockquote>{content.utterance}</blockquote></div>{/if}
 					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}
 					{#if event.decision}<details class="decision-detail"><summary>선택 기록</summary><small>{event.decision.acted === undefined ? '이전 판단' : event.decision.acted ? '행동한다' : '지켜본다'} · {event.decision.choice} · 판단 {event.decision.model}{#if event.decision.generationModel} · 생성 {event.decision.generationModel}{/if}</small></details>{/if}
 				</article>
 			{:else}<div class="empty-stage"><p>아직 아무도 말을 꺼내지 않았다.</p><span>말을 걸거나, 주변 사물을 살피거나, 잠시 기다려 보세요.</span></div>{/each}
 		</div>
-		{#if generating}<p class="generation-status" role="status">현장의 인물들이 각자의 다음 행동을 고르고 있습니다…</p>{/if}
-		{#if data.generation?.status === 'failed'}<p class="feedback error" role="alert">{data.generation.error}</p>{/if}
+		{#if generating}<p class="generation-status" role="status">현장의 인물들이 각자의 다음 행동을 고르고 있습니다…{#if data.generation?.progress} ({data.generation.progress.nextActorIndex}/{data.generation.progress.actorIds.length}){/if}</p>{/if}
+		{#if data.generation?.status === 'failed'}<p class="feedback error" role="alert">{data.generation.error} 이미 확정된 말과 행동은 유지됩니다.</p>{/if}
 		{#if form?.message}<p class="feedback" role="status">{form.message}</p>{/if}
 		<section class="player-console"><p class="eyebrow">YOUR NEXT LINE</p>
 			<form method="POST" action="?/turn" use:enhance={submitTurn} class="speech-form">
@@ -108,7 +172,20 @@
 				{#each interactionsFor(world, instance) as interaction}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="interact" /><input type="hidden" name="targetId" value={instance.id} /><button name="interactionId" value={interaction.id} disabled={busy}>{interaction.label}</button></form>{/each}
 			</div></article>{/each}
 		</div></section>{/if}
-		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>{#each characters as instance}<h3>{instance.name}</h3>{#if instance.memo}<p>메모: {instance.memo.summary}</p><p>현재 의도: {instance.memo.currentIntention}</p><p>감정: {instance.memo.feelings.join(', ') || '없음'}</p><p>미해결 문제: {instance.memo.openThreads.join(', ') || '없음'}</p>{/if}<ul>{#each instance.memories.slice(-8) as memory}<li>{memory.text}</li>{:else}<li>아직 기억한 사건이 없습니다.</li>{/each}</ul>{/each}</details>
+		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>
+			{#each characters as instance}<h3>{instance.name}</h3>
+				{#if instance.memo}<p>메모: {instance.memo.summary}</p><p>현재 의도: {instance.memo.currentIntention}</p><p>감정: {instance.memo.feelings.join(', ') || '없음'}</p><p>미해결 문제: {instance.memo.openThreads.join(', ') || '없음'}</p>{/if}
+				<ul>{#each instance.memories.slice(-8) as memory}
+					{@const event = eventsById.get(memory.eventId)}
+					{@const witnessed = event ? memoryForEvent(event) : 'body' in memory ? memory : null}
+					<li>{#if witnessed}
+						<strong>{witnessed.actorId === 'player' ? '플레이어' : actorName(world, witnessed.actorId)}</strong>{#if witnessed.targetId} → {actorName(world, witnessed.targetId)}{/if}
+						{#if witnessed.body.narrative}<p>행동: {witnessed.body.narrative}</p>{/if}
+						{#if witnessed.body.utterance}<p>대사: {witnessed.body.utterance}</p>{/if}
+					{:else if 'text' in memory}이전 기록 (주체 미확인): {memory.text}{/if}</li>
+				{:else}<li>아직 기억한 사건이 없습니다.</li>{/each}</ul>
+			{/each}
+		</details>
 		<footer class="reader-footer"><a href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>공연 기록 내려받기</a><details><summary>처음부터 다시</summary><p>현재 진행을 초기 배치로 되돌립니다. 저장 슬롯은 유지됩니다.</p><form method="POST" action="?/reset" use:enhance><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button disabled={busy}>현재 진행 초기화</button></form></details></footer>
 	</main>
 </div>

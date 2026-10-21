@@ -54,11 +54,29 @@ export interface WorldDefinition {
 	templates: EntityTemplate[];
 	spawns: Spawn[];
 }
-export interface EntityMemory {
+export interface EventBody {
+	narrative: string | null;
+	utterance: string | null;
+}
+export interface WitnessedEvent {
+	eventId: string;
+	tick: number;
+	sceneId: string;
+	kind: EventKind;
+	/** Assigned by the host that executed the event, never by a model. */
+	actorId: string;
+	targetId: string | null;
+	body: EventBody;
+	interactionId?: string;
+	destinationId?: string;
+	changes?: Properties;
+}
+export interface LegacyMemory {
 	eventId: string;
 	tick: number;
 	text: string;
 }
+export type EntityMemory = WitnessedEvent | LegacyMemory;
 export interface EntityInstance extends Spawn {
 	active: boolean;
 	memories: EntityMemory[];
@@ -72,6 +90,7 @@ export interface CharacterMemo {
 }
 export interface ActorExpression {
 	actionId: string;
+	targetId: string | null;
 	narrative: string | null;
 	utterance: string | null;
 	memoUpdate: CharacterMemo | null;
@@ -109,11 +128,16 @@ export interface WorldState {
 	instances: EntityInstance[];
 	events: StageEvent[];
 }
+export interface ModelSelection {
+	decisionModel: string;
+	textModel: string;
+}
 export interface World {
 	id: string;
 	revision: number;
 	definition: WorldDefinition;
 	state: WorldState;
+	models?: ModelSelection | null;
 }
 export interface WorldSummary { id: string; name: string; revision: number }
 export interface StageAction {
@@ -129,6 +153,10 @@ export type PlayerRequest =
 	| { kind: 'wait' }
 	| { kind: 'move'; destinationId: string }
 	| { kind: 'interact'; targetId: string; interactionId: string };
+export interface TurnProgress {
+	actorIds: string[];
+	nextActorIndex: number;
+}
 export interface GenerationJob {
 	id: string;
 	worldId: string;
@@ -137,6 +165,8 @@ export interface GenerationJob {
 	request: PlayerRequest;
 	createdAt: string;
 	error: string | null;
+	progress: TurnProgress | null;
+	models: ModelSelection | null;
 }
 export interface SaveSlot { slot: number; tick: number; savedAt: string }
 export interface StageView {

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { resolveTurn, type Director } from '$lib/theater/ensemble';
 import type { PlayerRequest } from '$lib/theater/types';
-import { createDirector } from './oev';
-import { checkJob, claimJob, enqueue, failJob, finishJob, getWorld, heartbeatJob, runnableJobs } from './stage-store';
+import { createDirector, modelSettings } from './oev';
+import { checkJob, claimJob, enqueue, failJob, finishJob, getWorld, heartbeatJob, runnableJobs, saveJobProgress } from './stage-store';
 
 const workerId = randomUUID();
 const scheduled = new Set<string>();
@@ -21,13 +21,16 @@ async function processJob(id: string): Promise<void> {
 		checkpoint();
 		// Empty scenes and object-only turns do not need a model connection.
 		let connected: Promise<Director> | undefined;
-		const connection = () => connected ??= createDirector(controller.signal);
+		const connection = () => connected ??= createDirector(controller.signal, job.models, checkpoint);
 		const director: Director = {
 			decide: async (state) => (await connection()).decide(state),
 			perform: async (state, actions) => (await connection()).perform(state, actions)
 		};
-		const result = await resolveTurn(getWorld(job.worldId), job.request, director, checkpoint);
-		finishJob(job, workerId, result);
+		await resolveTurn(getWorld(job.worldId), job.request, director, checkpoint, {
+			progress: job.progress,
+			onProgress: (world, progress) => saveJobProgress(job, workerId, world, progress)
+		});
+		finishJob(job, workerId);
 	} catch (error) {
 		failJob(id, workerId, error instanceof Error ? error.message : '장면 진행에 실패했습니다.');
 	} finally { clearInterval(timer); }
@@ -43,6 +46,7 @@ export function ensureStageWorker(): void {
 	for (const id of runnableJobs(new Date(Date.now() - leaseMs).toISOString())) schedule(id);
 }
 export function queueStageTurn(worldId: string, revision: number, request: PlayerRequest): void {
-	const job = enqueue(worldId, revision, request);
+	const settings = modelSettings();
+	const job = enqueue(worldId, revision, request, { decisionModel: settings.decisionModel, textModel: settings.textModel });
 	schedule(job.id);
 }

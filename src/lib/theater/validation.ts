@@ -1,4 +1,5 @@
-import type { CharacterMemo, Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
+import type { CharacterMemo, Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ModelSelection, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
+import { memoryForEvent } from './memory.ts';
 
 export function record(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}: JSON 객체가 필요합니다.`);
@@ -19,6 +20,10 @@ export function checkedMemo(value: unknown): CharacterMemo {
 	if (Object.keys(source).length !== keys.length || keys.some((key) => !Object.hasOwn(source, key))) throw new Error('개인 메모: 허용되지 않거나 누락된 항목이 있습니다.');
 	const notes = (value: unknown, label: string): string[] => list(value, label, 8).map((entry) => text(entry, label, 300));
 	return { summary: text(source.summary, '메모 요약', 1200, true), currentIntention: text(source.currentIntention, '현재 의도', 600, true), feelings: notes(source.feelings, '현재 감정'), openThreads: notes(source.openThreads, '미해결 문제') };
+}
+export function checkedModelSelection(value: unknown): ModelSelection {
+	const source = record(value, '모델 선택');
+	return { decisionModel: text(source.decisionModel, '판단 모델', 200), textModel: text(source.textModel, '생성 모델', 200) };
 }
 function list(value: unknown, label: string, maximum = 500): unknown[] {
 	if (!Array.isArray(value) || value.length > maximum) throw new Error(`${label}: 최대 ${maximum}개의 배열이 필요합니다.`);
@@ -117,7 +122,17 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 		if (instance.companion && (template.kind !== 'character' || (active && instance.sceneId !== activeSceneId))) throw new Error('동행의 위치가 현재 씬과 다릅니다.');
 		const memories = list(row.memories, 'memories', 100000).map((item): EntityMemory => {
 			const memory = record(item, 'memory');
-			return { eventId: text(memory.eventId, 'memory.eventId', 160), tick: integer(memory.tick, 'memory.tick', tick), text: text(memory.text, 'memory.text', 20000) };
+			const base = { eventId: text(memory.eventId, 'memory.eventId', 160), tick: integer(memory.tick, 'memory.tick', tick) };
+			if (memory.body === undefined) return { ...base, text: text(memory.text, 'memory.text', 20000) };
+			const body = record(memory.body, 'memory.body');
+			return {
+				...base, sceneId: identifier(memory.sceneId, 'memory.sceneId'), kind: eventKind(memory.kind),
+				actorId: identifier(memory.actorId, 'memory.actorId'), targetId: memory.targetId === null ? null : identifier(memory.targetId, 'memory.targetId'),
+				body: { narrative: body.narrative === null ? null : text(body.narrative, 'memory.body.narrative', 20000), utterance: body.utterance === null ? null : text(body.utterance, 'memory.body.utterance', 20000) },
+				...(memory.interactionId !== undefined ? { interactionId: identifier(memory.interactionId, 'memory.interactionId') } : {}),
+				...(memory.destinationId !== undefined ? { destinationId: identifier(memory.destinationId, 'memory.destinationId') } : {}),
+				...(memory.changes !== undefined ? { changes: properties(memory.changes, 'memory.changes') } : {})
+			};
 		});
 		const memo = row.memo === undefined || row.memo === null ? null : checkedMemo(row.memo);
 		if (memo && template.kind !== 'character') throw new Error('개인 메모는 캐릭터에만 저장할 수 있습니다.');
@@ -154,6 +169,21 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 		}
 		return result;
 	}), 'events');
+	const eventsById = new Map(events.map((event) => [event.id, event]));
+	for (const instance of instances) {
+		instance.memories = instance.memories.map((memory): EntityMemory => {
+			const event = eventsById.get(memory.eventId);
+			if ('body' in memory) {
+				if (!definition.scenes.some((scene) => scene.id === memory.sceneId) ||
+					(!['player', 'stage'].includes(memory.actorId) && !instances.some((entry) => entry.id === memory.actorId)) ||
+					(memory.targetId !== null && memory.targetId !== 'player' && !instances.some((entry) => entry.id === memory.targetId)) ||
+					(memory.destinationId !== undefined && !definition.scenes.some((scene) => scene.id === memory.destinationId))) throw new Error('기억의 주체 또는 대상 참조가 올바르지 않습니다.');
+				if (event && (event.actorId !== memory.actorId || event.targetId !== memory.targetId || event.kind !== memory.kind || event.tick !== memory.tick || event.sceneId !== memory.sceneId || event.interactionId !== memory.interactionId || event.destinationId !== memory.destinationId)) throw new Error('기억의 주체 또는 대상이 원래 사건과 다릅니다.');
+			}
+			// The referenced event is authoritative, including for old first-person text memories.
+			return event ? memoryForEvent(event) : memory;
+		});
+	}
 	const day = integer(source.day, 'day');
 	if (day < 1) throw new Error('날짜는 1일차부터 시작합니다.');
 	return { tick, day, minute: integer(source.minute, 'minute', 1439), activeSceneId, instances, events };

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { exampleWorld } from '$lib/theater/fixtures';
 import { actionForRequest, initialState, templateFor } from '$lib/theater/runtime';
-import type { GenerationJob, PlayerRequest, SaveSlot, StageView, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
-import { record, text, validateDefinition, validateState } from '$lib/theater/validation';
+import type { GenerationJob, ModelSelection, PlayerRequest, SaveSlot, StageView, TurnProgress, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
+import { checkedModelSelection, record, text, validateDefinition, validateState } from '$lib/theater/validation';
 
 type Row = Record<string, unknown>;
 let database: DatabaseSync | undefined;
@@ -18,7 +18,7 @@ export function store(): DatabaseSync {
 	db.exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
 		CREATE TABLE IF NOT EXISTS theater_worlds (
 			id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, definition_json TEXT NOT NULL,
-			state_json TEXT NOT NULL, created_at TEXT NOT NULL
+			state_json TEXT NOT NULL, created_at TEXT NOT NULL, model_settings_json TEXT
 		);
 		CREATE TABLE IF NOT EXISTS theater_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS theater_saves (
@@ -28,10 +28,15 @@ export function store(): DatabaseSync {
 		CREATE TABLE IF NOT EXISTS theater_jobs (
 			id TEXT PRIMARY KEY, world_id TEXT NOT NULL REFERENCES theater_worlds(id), revision INTEGER NOT NULL,
 			request_json TEXT NOT NULL, status TEXT NOT NULL, worker_id TEXT, heartbeat_at TEXT,
-			created_at TEXT NOT NULL, completed_at TEXT, error TEXT
+			created_at TEXT NOT NULL, completed_at TEXT, error TEXT, progress_json TEXT, models_json TEXT
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS theater_jobs_active ON theater_jobs(world_id) WHERE status IN ('pending', 'running');
 		CREATE INDEX IF NOT EXISTS theater_jobs_recent ON theater_jobs(world_id, created_at DESC);`);
+	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'progress_json')) {
+		db.exec('ALTER TABLE theater_jobs ADD COLUMN progress_json TEXT');
+	}
+	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'models_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN models_json TEXT');
+	if (!(db.prepare('PRAGMA table_info(theater_worlds)').all() as Row[]).some((column) => column.name === 'model_settings_json')) db.exec('ALTER TABLE theater_worlds ADD COLUMN model_settings_json TEXT');
 	database = db;
 	try {
 		transaction(() => {
@@ -66,7 +71,14 @@ export function selectWorld(id: string): void { getWorld(id); setActive(id); }
 export function getWorld(id = activeWorldId()): World {
 	const row = store().prepare('SELECT * FROM theater_worlds WHERE id = ?').get(id) as Row | undefined;
 	if (!row) throw new Error('세계관을 찾을 수 없습니다.');
-	return { id: String(row.id), revision: Number(row.revision), definition: JSON.parse(String(row.definition_json)), state: JSON.parse(String(row.state_json)) };
+	return { id: String(row.id), revision: Number(row.revision), definition: JSON.parse(String(row.definition_json)), state: JSON.parse(String(row.state_json)), models: row.model_settings_json ? checkedModelSelection(JSON.parse(String(row.model_settings_json))) : null };
+}
+
+/** Operational session preferences apply to the next accepted job, without invalidating an active job. */
+export function setWorldModels(id: string, selection: ModelSelection | null): void {
+	const models = selection === null ? null : checkedModelSelection(selection);
+	const changed = store().prepare('UPDATE theater_worlds SET model_settings_json = ? WHERE id = ?').run(models ? JSON.stringify(models) : null, id);
+	if (Number(changed.changes) !== 1) throw new Error('세계관을 찾을 수 없습니다.');
 }
 export function listWorlds(): WorldSummary[] {
 	return (store().prepare('SELECT id, revision, definition_json FROM theater_worlds ORDER BY created_at, rowid').all() as Row[])
@@ -186,7 +198,7 @@ export function importWorld(raw: string): string {
 }
 
 function jobFromRow(row: Row): GenerationJob {
-	return { id: String(row.id), worldId: String(row.world_id), revision: Number(row.revision), status: row.status as GenerationJob['status'], request: JSON.parse(String(row.request_json)), createdAt: String(row.created_at), error: row.error === null ? null : String(row.error) };
+	return { id: String(row.id), worldId: String(row.world_id), revision: Number(row.revision), status: row.status as GenerationJob['status'], request: JSON.parse(String(row.request_json)), createdAt: String(row.created_at), error: row.error === null ? null : String(row.error), progress: row.progress_json ? JSON.parse(String(row.progress_json)) : null, models: row.models_json ? checkedModelSelection(JSON.parse(String(row.models_json))) : null };
 }
 export function getJob(id: string): GenerationJob | null {
 	const row = store().prepare('SELECT * FROM theater_jobs WHERE id = ?').get(id) as Row | undefined;
@@ -196,15 +208,16 @@ export function latestJob(worldId: string): GenerationJob | null {
 	const row = store().prepare('SELECT * FROM theater_jobs WHERE world_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(worldId) as Row | undefined;
 	return row ? jobFromRow(row) : null;
 }
-export function enqueue(worldId: string, revision: number, request: PlayerRequest): GenerationJob {
+export function enqueue(worldId: string, revision: number, request: PlayerRequest, defaults: ModelSelection): GenerationJob {
 	return transaction(() => {
 		const world = getWorld(worldId);
 		if (world.revision !== revision) throw new Error('장면이 변경되었습니다. 다시 시도해 주세요.');
 		actionForRequest(world, request);
 		if (store().prepare("SELECT id FROM theater_jobs WHERE world_id = ? AND status IN ('pending', 'running')").get(worldId)) throw new Error('이 세계관의 장면을 이미 진행하고 있습니다.');
 		const id = randomUUID();
-		store().prepare("INSERT INTO theater_jobs (id, world_id, revision, request_json, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)")
-			.run(id, worldId, revision, JSON.stringify(request), new Date().toISOString());
+		const models = checkedModelSelection(world.models ?? defaults);
+		store().prepare("INSERT INTO theater_jobs (id, world_id, revision, request_json, status, created_at, models_json) VALUES (?, ?, ?, ?, 'pending', ?, ?)")
+			.run(id, worldId, revision, JSON.stringify(request), new Date().toISOString(), JSON.stringify(models));
 		return getJob(id)!;
 	});
 }
@@ -217,19 +230,31 @@ export function claimJob(id: string, workerId: string, staleBefore: string): Gen
 	return Number(changed.changes) === 1 ? getJob(id) : null;
 }
 export function checkJob(job: GenerationJob, workerId: string): void {
-	const row = store().prepare('SELECT status, worker_id FROM theater_jobs WHERE id = ?').get(job.id) as Row | undefined;
+	const row = store().prepare('SELECT status, worker_id, revision FROM theater_jobs WHERE id = ?').get(job.id) as Row | undefined;
 	if (!row || row.status !== 'running' || row.worker_id !== workerId) throw new Error('생성 작업의 실행 권한을 잃었습니다.');
-	if (getWorld(job.worldId).revision !== job.revision) throw new Error('생성 중 세계관이 변경되어 이전 결과를 폐기했습니다.');
+	if (Number(row.revision) !== job.revision || getWorld(job.worldId).revision !== job.revision) throw new Error('생성 중 세계관이 변경되어 이전 결과를 폐기했습니다.');
 }
 export function heartbeatJob(id: string, workerId: string): void {
 	store().prepare("UPDATE theater_jobs SET heartbeat_at = ? WHERE id = ? AND status = 'running' AND worker_id = ?").run(new Date().toISOString(), id, workerId);
 }
-export function finishJob(job: GenerationJob, workerId: string, world: World): void {
+export function saveJobProgress(job: GenerationJob, workerId: string, world: World, progress: TurnProgress): void {
 	transaction(() => {
 		checkJob(job, workerId);
 		if (world.id !== job.worldId || world.revision !== job.revision) throw new Error('생성 결과의 세계관이 일치하지 않습니다.');
 		const state = validateState(world.state, world.definition);
 		store().prepare('UPDATE theater_worlds SET state_json = ?, revision = revision + 1 WHERE id = ? AND revision = ?').run(JSON.stringify(state), job.worldId, job.revision);
+		store().prepare('UPDATE theater_jobs SET revision = ?, progress_json = ?, heartbeat_at = ? WHERE id = ? AND worker_id = ?')
+			.run(job.revision + 1, JSON.stringify(progress), new Date().toISOString(), job.id, workerId);
+	});
+	// Publish the new in-process revision only after the state and resume cursor are both durable.
+	job.revision += 1;
+	job.progress = structuredClone(progress);
+	world.revision = job.revision;
+}
+export function finishJob(job: GenerationJob, workerId: string): void {
+	transaction(() => {
+		checkJob(job, workerId);
+		if (!job.progress || job.progress.nextActorIndex !== job.progress.actorIds.length) throw new Error('아직 처리하지 않은 인물이 있습니다.');
 		store().prepare("UPDATE theater_jobs SET status = 'completed', completed_at = ? WHERE id = ? AND worker_id = ?").run(new Date().toISOString(), job.id, workerId);
 	});
 }

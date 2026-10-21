@@ -1,7 +1,9 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld } from '$lib/server/stage-store';
+import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld, setWorldModels } from '$lib/server/stage-store';
 import { ensureStageWorker, queueStageTurn } from '$lib/server/stage';
+import { getModelCatalog } from '$lib/server/oev';
+import { checkedModelSelection } from '$lib/theater/validation';
 
 export const load: PageServerLoad = () => { ensureStageWorker(); return getStageView(); };
 
@@ -9,6 +11,21 @@ function failed(error: unknown) {
 	return fail(400, { message: error instanceof Error ? error.message : '요청을 처리하지 못했습니다.' });
 }
 export const actions: Actions = {
+	models: async ({ request }) => {
+		try {
+			const body = await request.formData();
+			const worldId = String(body.get('worldId'));
+			if (body.get('mode') === 'defaults') {
+				setWorldModels(worldId, null);
+				return { message: '이 세션은 다음 진행부터 기본 모델을 사용합니다.', models: null };
+			}
+			const selection = checkedModelSelection({ decisionModel: body.get('decisionModel'), textModel: body.get('textModel') });
+			const catalog = await getModelCatalog(request.signal);
+			if (!catalog.models.includes(selection.decisionModel) || !catalog.models.includes(selection.textModel)) throw new Error('OEV에서 사용 가능한 생성 모델을 선택해 주세요.');
+			setWorldModels(worldId, selection);
+			return { message: '이 세션의 판단·생성 모델을 저장했습니다. 다음 진행부터 적용됩니다.', models: selection };
+		} catch (error) { return failed(error); }
+	},
 	turn: async ({ request }) => {
 		try {
 			const body = await request.formData();

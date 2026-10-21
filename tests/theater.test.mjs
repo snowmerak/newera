@@ -3,11 +3,61 @@ import { test } from 'node:test';
 import { exampleWorld } from '../src/lib/theater/fixtures.ts';
 import { initialState, beginTurn, availableActions, applyAction, observation } from '../src/lib/theater/runtime.ts';
 import { resolveTurn } from '../src/lib/theater/ensemble.ts';
+import { eventContent } from '../src/lib/theater/event-content.ts';
+import { memoryForEvent } from '../src/lib/theater/memory.ts';
 import { validateDefinition, validateState } from '../src/lib/theater/validation.ts';
 import { buildBundle, validateBundle } from '../skills/newera-lore-authoring/scripts/lore-format.mjs';
 
 function world() { const definition = exampleWorld(); return { id: 'test-world', revision: 0, definition, state: initialState(definition) }; }
 const instance = (world, id) => world.state.instances.find((entry) => entry.id === id);
+
+test('event display separates structured actions and speech with a fallback for older records', () => {
+	const stage = world();
+	const speech = beginTurn(stage, { kind: 'speak', text: '안녕하세요.', targetId: 'seoyeon' });
+	assert.deepEqual(eventContent(speech), { narrative: null, utterance: '안녕하세요.' });
+	assert.deepEqual(eventContent({ ...speech, text: '고개를 끄덕인다.\n같이 준비해요.', narrative: '고개를 끄덕인다.', utterance: '같이 준비해요.' }), { narrative: '고개를 끄덕인다.', utterance: '같이 준비해요.' });
+	const action = beginTurn(stage, { kind: 'interact', targetId: 'desk-bell', interactionId: 'ring' });
+	assert.deepEqual(eventContent(action), { narrative: '데스크의 종을 한 번 누른다.', utterance: null });
+});
+
+test('witness memories keep the player as subject of switching off a light', () => {
+	const stage = world();
+	beginTurn(stage, { kind: 'move', destinationId: 'stage' });
+	beginTurn(stage, { kind: 'interact', targetId: 'stage-light', interactionId: 'on' });
+	const off = beginTurn(stage, { kind: 'interact', targetId: 'stage-light', interactionId: 'off' });
+	for (const id of ['jieun', 'harin']) {
+		const actor = instance(stage, id);
+		const seen = observation(stage, actor);
+		const memory = seen.self.memories.find((memory) => memory.eventId === off.id);
+		assert.equal(memory.actorId, 'player');
+		assert.equal(memory.targetId, 'stage-light');
+		assert.equal(memory.kind, 'interact');
+		assert.equal(memory.interactionId, 'off');
+		assert.deepEqual(memory.changes, { on: false });
+		assert.deepEqual(memory.body, { narrative: '작업등 스위치를 내린다.', utterance: null });
+		assert.equal(Object.hasOwn(memory, 'text'), false);
+		assert.ok(!JSON.stringify(seen).includes('나:'));
+		assert.deepEqual(seen.recentEvents.at(-1), memory);
+	}
+	assert.equal(instance(stage, 'seoyeon').memories.some((memory) => memory.eventId === off.id), false);
+});
+
+test('legacy first-person memories resolve through the original event without prose rewriting', () => {
+	const stage = world();
+	const event = beginTurn(stage, { kind: 'speak', text: '내가 조명을 확인할게.', targetId: 'harin' });
+	const harin = instance(stage, 'harin');
+	harin.memories = [{ eventId: event.id, tick: event.tick, text: '나: 내가 조명을 확인할게.' }, { eventId: 'unlinked', tick: event.tick, text: '나: 주체를 확인할 수 없는 옛 기록' }];
+	const seen = observation(stage, harin);
+	assert.deepEqual(seen.self.memories, [memoryForEvent(event)]);
+	assert.equal(seen.self.memories[0].actorId, 'player');
+	assert.equal(seen.self.memories[0].body.utterance, '내가 조명을 확인할게.', 'quoted speech must remain unchanged');
+	const restored = validateState(stage.state, stage.definition);
+	const memories = restored.instances.find((entry) => entry.id === 'harin').memories;
+	assert.deepEqual(memories[0], memoryForEvent(event));
+	assert.deepEqual(memories[1], harin.memories[1], 'unlinked legacy records must be preserved without guessing their author');
+	memories[0].actorId = 'harin';
+	assert.throws(() => validateState(restored, stage.definition), /원래 사건과 다릅니다/);
+});
 
 test('prefab instances keep separate state and conditional interactions', () => {
 	const stage = world();
@@ -38,9 +88,9 @@ test('companions retain identity, private state and memories across scene transi
 	beginTurn(stage, { kind: 'move', destinationId: 'stage' });
 	assert.equal(instance(stage, 'harin').sceneId, 'stage');
 	assert.equal(instance(stage, 'harin').state.secret, 'a personal fact');
-	assert.ok(instance(stage, 'harin').memories.some((memory) => memory.text.includes('Only the lobby')));
+	assert.ok(instance(stage, 'harin').memories.some((memory) => memory.body.utterance?.includes('Only the lobby')));
 	assert.equal(instance(stage, 'seoyeon').sceneId, 'lobby');
-	assert.equal(instance(stage, 'jieun').memories.some((memory) => memory.text.includes('Only the lobby')), false);
+	assert.equal(instance(stage, 'jieun').memories.some((memory) => memory.body.utterance?.includes('Only the lobby')), false);
 	const seen = observation(stage, instance(stage, 'jieun'));
 	assert.ok(!JSON.stringify(seen).includes('Only the lobby'));
 	assert.ok(!JSON.stringify(seen).includes('a personal fact'));
@@ -58,12 +108,15 @@ test('ensemble makes one decision per resident, and later actors observe resolve
 		},
 		async perform(state, actions) {
 			assert.ok(actions.every((action) => action.kind !== 'wait'));
-			return { actionId: 'speak:player', narrative: null, utterance: `${state.self.name} answers.`, memoUpdate: { summary: `${state.self.id} private thought`, currentIntention: 'Listen.', feelings: ['curious'], openThreads: [] }, model: 'fake-generation' };
+			return { actionId: 'speak:player', targetId: 'player', narrative: '대본을 접는다.', utterance: `${state.self.name} answers.`, memoUpdate: { summary: `${state.self.id} private thought`, currentIntention: 'Listen.', feelings: ['curious'], openThreads: [] }, model: 'fake-generation' };
 		}
 	};
 	const result = await resolveTurn(stage, { kind: 'speak', text: 'Hello.', targetId: 'seoyeon' }, director);
 	assert.deepEqual(calls.map((state) => state.self.id), ['seoyeon', 'harin']);
-	assert.ok(calls[1].recentEvents.some((entry) => entry.text === '서연 answers.'));
+	assert.ok(calls[1].recentEvents.some((entry) => entry.actorId === 'seoyeon' && entry.body.utterance === '서연 answers.'));
+	const witnessed = calls[1].self.memories.find((entry) => entry.actorId === 'seoyeon');
+	assert.deepEqual(witnessed.body, { narrative: '대본을 접는다.', utterance: '서연 answers.' }, 'both body fields must be recorded before witnesses receive the event');
+	assert.equal(witnessed.targetId, 'player');
 	assert.equal(result.state.events.filter((entry) => entry.kind === 'speak').length, 3);
 	assert.equal(stage.state.tick, 0);
 	assert.equal(stage.state.events.length, 0);
@@ -79,8 +132,32 @@ test('failed or forged decisions cannot mutate the authoritative input', async (
 	const request = { kind: 'wait' };
 	await assert.rejects(resolveTurn(stage, request, { async decide() { throw new Error('offline'); } }), /offline/);
 	assert.equal(stage.state.tick, 0);
-	await assert.rejects(resolveTurn(stage, request, { async decide() { return { act: true, model: 'fake' }; }, async perform() { return { actionId: 'speak:offstage', narrative: null, utterance: 'forged', memoUpdate: null, model: 'fake' }; } }), /실행할 수 없는 행동/);
+	await assert.rejects(resolveTurn(stage, request, { async decide() { return { act: true, model: 'fake' }; }, async perform() { return { actionId: 'speak:offstage', targetId: 'offstage', narrative: null, utterance: 'forged', memoUpdate: null, model: 'fake' }; } }), /실행할 수 없는 행동/);
 	assert.equal(stage.state.events.length, 0);
+});
+
+test('incremental execution publishes complete actions and resumes from the saved cursor', async () => {
+	let saved;
+	let progress;
+	const checkpoints = [];
+	const persist = (world, position) => { saved = structuredClone(world); progress = structuredClone(position); checkpoints.push(saved); };
+	await assert.rejects(resolveTurn(world(), { kind: 'speak', text: '먼저 답해 줘.', targetId: 'harin' }, {
+		async decide(state) { return { act: true, model: 'fake' }; },
+		async perform(state) {
+			return { actionId: 'speak:player', targetId: 'player', narrative: '고개를 끄덕인다.', utterance: state.self.id === 'harin' ? '먼저 답할게.' : null, memoUpdate: null, model: 'fake' };
+		}
+	}, () => {}, { onProgress: persist }), /대사가 필요/);
+	assert.equal(checkpoints.length, 2, 'only the input and complete first action are published');
+	assert.deepEqual(progress, { actorIds: ['harin', 'seoyeon'], nextActorIndex: 1 });
+	assert.deepEqual(saved.state.events.map((event) => event.actorId), ['player', 'harin']);
+	const ids = saved.state.events.map((event) => event.id);
+	const result = await resolveTurn(saved, { kind: 'speak', text: '먼저 답해 줘.', targetId: 'harin' }, {
+		async decide(state) { assert.equal(state.self.id, 'seoyeon'); return { act: false, model: 'fake' }; },
+		async perform() { assert.fail('waiting must skip generation'); }
+	}, () => {}, { progress, onProgress: persist });
+	assert.equal(result.state.tick, 1);
+	assert.deepEqual(result.state.events.slice(0, 2).map((event) => event.id), ids);
+	assert.equal(progress.nextActorIndex, 2);
 });
 
 test('waiting skips generation and retains private memo; invalid later generation rolls back the whole round', async () => {
@@ -96,7 +173,7 @@ test('waiting skips generation and retains private memo; invalid later generatio
 	await assert.rejects(resolveTurn(stage, { kind: 'wait' }, {
 		async decide() { return { act: true, model: 'fake' }; },
 		async perform() {
-			return { actionId: 'speak:player', narrative: null, utterance: ++count === 1 ? 'Valid.' : null, memoUpdate: { summary: 'Changed.', currentIntention: '', feelings: [], openThreads: [] }, model: 'fake' };
+			return { actionId: 'speak:player', targetId: 'player', narrative: null, utterance: ++count === 1 ? 'Valid.' : null, memoUpdate: { summary: 'Changed.', currentIntention: '', feelings: [], openThreads: [] }, model: 'fake' };
 		}
 	}), /대사가 필요/);
 	assert.equal(instance(stage, 'seoyeon').memo.summary, 'Remember this.');
@@ -108,7 +185,7 @@ test('structured physical action runs only declared effects', async () => {
 	instance(stage, 'seoyeon').memo = { summary: 'Keep my note.', currentIntention: '', feelings: [], openThreads: [] };
 	const result = await resolveTurn(stage, { kind: 'wait' }, {
 		async decide(state) { return { act: state.self.id === 'seoyeon', model: 'fake' }; },
-		async perform() { return { actionId: 'interact:desk-bell:ring', narrative: '손끝으로 종을 누른다.', utterance: null, memoUpdate: null, model: 'fake' }; }
+		async perform() { return { actionId: 'interact:desk-bell:ring', targetId: 'desk-bell', narrative: '손끝으로 종을 누른다.', utterance: null, memoUpdate: null, model: 'fake' }; }
 	});
 	assert.equal(instance(result, 'desk-bell').state.rung, true);
 	assert.equal(instance(stage, 'desk-bell').state.rung, false);
@@ -126,6 +203,19 @@ test('actor movement respects exits; companions follow the player rather than mo
 	assert.equal(stage.state.activeSceneId, 'lobby');
 	assert.ok(!observation(stage, instance(stage, 'harin')).present.some((entry) => entry.id === 'seoyeon'));
 	assert.throws(() => beginTurn(stage, { kind: 'move', destinationId: 'unknown' }), /할 수 없는 행동/);
+});
+
+test('generated movement description is attached once to the departure, preserving arrival text', async () => {
+	const result = await resolveTurn(world(), { kind: 'wait' }, {
+		async decide(state) { return { act: state.self.id === 'seoyeon', model: 'fake' }; },
+		async perform() { return { actionId: 'move:stage', targetId: null, narrative: '대본을 들고 무대로 향한다.', utterance: null, memoUpdate: null, model: 'fake' }; }
+	});
+	const movement = result.state.events.filter((event) => event.actorId === 'seoyeon');
+	assert.deepEqual(movement.map((event) => event.kind), ['leave', 'enter']);
+	assert.equal(movement[0].narrative, '대본을 들고 무대로 향한다.');
+	assert.equal(movement[1].narrative, undefined);
+	assert.notEqual(eventContent(movement[1]).narrative, movement[0].narrative);
+	validateState(result.state, result.definition);
 });
 
 test('definition and snapshot validation reject broken references, duplicate IDs and invalid state', () => {

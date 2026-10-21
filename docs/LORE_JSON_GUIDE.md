@@ -65,6 +65,26 @@
 
 ## 진행의 메모와 생성 기록
 
+캐릭터의 `memories`는 목격한 사건의 주체와 대상을 분리해 저장한다. 예를 들어 플레이어가 작업등을 끈 사건은 다음과 같다.
+
+```json
+{
+  "eventId": "event-light-off",
+  "tick": 4,
+  "sceneId": "stage",
+  "kind": "interact",
+  "actorId": "player",
+  "targetId": "stage-light",
+  "interactionId": "off",
+  "body": { "narrative": "작업등 스위치를 내린다.", "utterance": null },
+  "changes": { "on": false }
+}
+```
+
+`actorId`는 실제 실행 주체를 실행기가 붙인 값이다. 모델 출력은 `actionId`, `targetId`, `narrative`, `utterance`, `memoUpdate`이며 주체를 지정할 수 없다. `targetId`는 선택한 행동의 대상과 일치해야 한다. `body.utterance`는 해당 주체가 한 말의 원문이므로 발언 속 주장이 실제 행동 기록과 같다고 가정하지 않는다.
+
+기존 `{ "eventId": "...", "tick": 4, "text": "..." }` 기억도 읽을 수 있다. 연결된 사건이 있으면 그 사건의 주체·대상·본문을 복원하며 문자열을 자연어로 재작성하지 않는다. 연결된 사건이 없는 옛 문자열은 보존하지만 모델 입력에서 제외한다. 구조화된 기억의 주체·대상이 연결된 사건과 다르면 가져오기를 거부한다.
+
 현재 진행의 캐릭터 인스턴스는 `memories`(목격 사건)와 별도로 선택 필드 `memo`를 가진다. 생략하거나 null이면 개인 메모가 없다. 객체일 때는 `summary`(최대 1200자), `currentIntention`(최대 600자), `feelings`, `openThreads`가 모두 필요하다. 두 목록은 각각 최대 8개, 항목당 300자다. 생성 모델은 자기 메모만 갱신하며 다른 캐릭터의 입력에는 노출하지 않는다. 원형이나 초기 배치의 `state`에 이 중첩 메모를 넣지 않는다.
 
 사건에는 선택 필드 `narrative`(행동 묘사), `utterance`(대사)가 추가될 수 있다. `decision`에는 판단 모델·행동 ID와 `acted`(행동 여부), `generationModel`을 기록한다. 기존 version 2 사건의 `reaction`, `intensity`는 읽을 수 있으나 새 판단에서는 생성하지 않는다. 내보내기와 슬롯은 이 필드를 유지한다.

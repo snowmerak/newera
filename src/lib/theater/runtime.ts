@@ -1,4 +1,5 @@
-import type { DecisionTrace, EntityInstance, EntityTemplate, Interaction, PlayerRequest, Properties, StageAction, StageEvent, World, WorldDefinition, WorldState } from './types.ts';
+import type { DecisionTrace, EntityInstance, EntityTemplate, EventBody, Interaction, PlayerRequest, Properties, StageAction, StageEvent, World, WorldDefinition, WorldState } from './types.ts';
+import { memoryForEvent, witnessedMemories } from './memory.ts';
 
 export function initialState(definition: WorldDefinition): WorldState {
 	return {
@@ -37,7 +38,7 @@ function event(world: World, input: Omit<StageEvent, 'id' | 'tick'>): StageEvent
 	// A private memory records only events witnessed in this scene. No world-wide transcript is leaked to actors.
 	for (const instance of residents(world, input.sceneId)) {
 		if (templateFor(world, instance).kind !== 'character') continue;
-		instance.memories.push({ eventId: result.id, tick: result.tick, text: `${actorName(world, input.actorId)}: ${input.text}` });
+		instance.memories.push(memoryForEvent(result));
 	}
 	return result;
 }
@@ -60,13 +61,13 @@ function reactObjects(world: World, trigger: StageEvent): void {
 	}
 }
 
-function move(world: World, actorId: string, destinationId: string, text: string): StageEvent {
+function move(world: World, actorId: string, destinationId: string, text: string, body?: EventBody): StageEvent {
 	const actor = actorId === 'player' ? null : world.state.instances.find((instance) => instance.id === actorId && instance.active);
 	const originId = actor ? actor.sceneId : world.state.activeSceneId;
 	const scene = world.definition.scenes.find((candidate) => candidate.id === originId);
 	if (!scene?.exits.includes(destinationId)) throw new Error('현재 씬에서 이동할 수 없는 곳입니다.');
 	const destination = world.definition.scenes.find((candidate) => candidate.id === destinationId)!;
-	const departing = event(world, { sceneId: originId, kind: 'leave', actorId, targetId: null, destinationId, text });
+	const departing = event(world, { sceneId: originId, kind: 'leave', actorId, targetId: null, destinationId, text, narrative: body?.narrative ?? undefined, utterance: body?.utterance ?? undefined });
 	reactObjects(world, departing);
 	const followers = actorId === 'player'
 		? residents(world, originId).filter((instance) => instance.companion)
@@ -83,29 +84,32 @@ function move(world: World, actorId: string, destinationId: string, text: string
 		const entered = event(world, { sceneId: destinationId, kind: 'enter', actorId: follower.id, targetId: null, text: '함께 도착했다.' });
 		reactObjects(world, entered);
 	}
-	return arrival;
+	// The generated description belongs to the departure; arrival has its own scene event.
+	return departing;
 }
 
-export function applyAction(world: World, actorId: string, action: StageAction, text: string, decision?: DecisionTrace): StageEvent {
+export function applyAction(world: World, actorId: string, action: StageAction, text: string, decision?: DecisionTrace, body?: EventBody): StageEvent {
 	const actor = actorId === 'player' ? null : instanceInScene(world, actorId, world.state.activeSceneId);
 	if (actor && templateFor(world, actor).kind !== 'character') throw new Error('오브젝트는 자율 행동을 선택할 수 없습니다.');
 	if (action.kind === 'move') {
 		if (!action.destinationId) throw new Error('이동할 씬이 필요합니다.');
-		const result = move(world, actorId, action.destinationId, text);
+		const result = move(world, actorId, action.destinationId, text, body);
 		result.decision = decision;
 		return result;
 	}
 	if (action.targetId && action.targetId !== 'player') instanceInScene(world, action.targetId, world.state.activeSceneId);
 	if (action.targetId === actorId) throw new Error('자기 자신을 대상으로 할 수 없습니다.');
 	let changes: Properties | undefined;
+	let narrative = body?.narrative ?? undefined;
 	if (action.kind === 'interact') {
 		const target = instanceInScene(world, action.targetId ?? '', world.state.activeSceneId);
 		const interaction = interactionsFor(world, target).find((candidate) => candidate.id === action.interactionId);
 		if (!interaction) throw new Error('현재 상태에서 사용할 수 없는 상호작용입니다.');
 		changes = { ...interaction.effects };
+		if (!body) narrative = interaction.description || interaction.label;
 		Object.assign(target.state, changes);
 	}
-	const result = event(world, { sceneId: world.state.activeSceneId, kind: action.kind, actorId, targetId: action.targetId, text, interactionId: action.interactionId, changes, decision });
+	const result = event(world, { sceneId: world.state.activeSceneId, kind: action.kind, actorId, targetId: action.targetId, text, interactionId: action.interactionId, changes, decision, narrative, utterance: body?.utterance ?? undefined });
 	reactObjects(world, result);
 	return result;
 }
@@ -160,18 +164,19 @@ export function beginTurn(world: World, request: PlayerRequest): StageEvent {
 
 export function observation(world: World, actor: EntityInstance): Record<string, unknown> {
 	const template = templateFor(world, actor);
-	const witnessed = new Set(actor.memories.slice(-12).map((memory) => memory.eventId));
+	const memories = witnessedMemories(world.state.events, actor.memories, 16);
 	return {
 		world: { name: world.definition.name, description: world.definition.description, rules: world.definition.rules },
 		scene: world.definition.scenes.find((scene) => scene.id === actor.sceneId),
 		time: { tick: world.state.tick, day: world.state.day, minute: world.state.minute },
-		self: { ...actor, memories: actor.memories.slice(-16), description: template.description, personality: template.personality, goals: template.goals },
+		self: { ...actor, memories, description: template.description, personality: template.personality, goals: template.goals },
+		player: { id: 'player', name: '플레이어', present: actor.sceneId === world.state.activeSceneId },
 		present: residents(world, actor.sceneId).filter((other) => other.id !== actor.id).map((other) => ({
 			id: other.id, name: other.name, kind: templateFor(world, other).kind, description: templateFor(world, other).description,
 			state: templateFor(world, other).kind === 'object' ? other.state : undefined
 		})),
 		playerPresent: actor.sceneId === world.state.activeSceneId,
 		// Restrict even recent events to what this instance actually witnessed.
-		recentEvents: world.state.events.filter((entry) => witnessed.has(entry.id)).slice(-12)
+		recentEvents: witnessedMemories(world.state.events, actor.memories, 12)
 	};
 }
