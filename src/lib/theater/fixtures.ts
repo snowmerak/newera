@@ -1,0 +1,35 @@
+import type { WorldDefinition } from './types.ts';
+
+export function exampleWorld(): WorldDefinition {
+	return {
+		name: '비가 그친 뒤의 극장',
+		description: '오래된 동네 극장. 오늘 밤 첫 공연을 앞두고 배우들과 무대 장치가 각자의 사정으로 움직인다.',
+		rules: '인물은 자신이 보거나 들은 사건에만 반응한다. 다른 사람의 말과 선택을 대신 결정하지 않는다. 닫힌 문은 열고 나서 지나간다.',
+		startingSceneId: 'lobby',
+		scenes: [
+			{ id: 'lobby', name: '극장 로비', description: '젖은 우산이 입구에 기대어 있다. 안내 데스크 너머로 작은 연습실과 무대가 이어진다.', exits: ['rehearsal', 'stage'] },
+			{ id: 'rehearsal', name: '연습실', description: '거울 벽과 낡은 피아노. 막 접어둔 대본에는 누군가의 메모가 가득하다.', exits: ['lobby', 'stage'] },
+			{ id: 'stage', name: '무대', description: '커튼이 내려간 무대. 객석은 아직 비어 있고 조명 스위치가 켜지기를 기다린다.', exits: ['lobby', 'rehearsal'] }
+		],
+		templates: [
+			{ id: 'actor', kind: 'character', name: '서연', description: '오늘 처음 주연을 맡은 배우.', personality: '세심하고 솔직하다. 긴장하면 대본의 가장자리부터 접는다.', goals: ['공연 전에 동료와 마지막 장면을 맞춰본다'], initialState: { mood: '긴장함' }, interactions: [], reactions: [] },
+			{ id: 'director', kind: 'character', name: '지은', description: '무대를 준비하는 연출가.', personality: '짧고 정확하게 말하지만 동료가 곤란하면 먼저 돕는다.', goals: ['조명을 점검하고 공연을 준비한다'], initialState: { mood: '집중함' }, interactions: [], reactions: [] },
+			{ id: 'companion', kind: 'character', name: '하린', description: '플레이어와 함께 극장을 찾은 친구.', personality: '호기심이 많고 자기 의견이 분명하다. 친구의 선택에 항상 동의하지는 않는다.', goals: ['극장의 사람들을 알아가고 친구와 저녁을 보낸다'], initialState: { mood: '기대함' }, interactions: [], reactions: [] },
+			{ id: 'light', kind: 'object', name: '작업등', description: '연습실의 오래된 작업등. 스위치를 누르면 불이 들어온다.', personality: '', goals: [], initialState: { on: false }, interactions: [
+				{ id: 'on', label: '불을 켠다', description: '작업등 스위치를 올린다.', conditions: [{ key: 'on', equals: false }], effects: { on: true } },
+				{ id: 'off', label: '불을 끈다', description: '작업등 스위치를 내린다.', conditions: [{ key: 'on', equals: true }], effects: { on: false } }
+			], reactions: [] },
+			{ id: 'bell', kind: 'object', name: '안내 종', description: '로비 데스크 위의 작은 종.', personality: '', goals: [], initialState: { rung: false }, interactions: [
+				{ id: 'ring', label: '종을 울린다', description: '데스크의 종을 한 번 누른다.', conditions: [], effects: { rung: true } }
+			], reactions: [{ id: 'sound', on: 'interact', targeted: true, conditions: [{ key: 'rung', equals: true }], effects: {}, text: '맑은 종소리가 로비에 울린다.' }] }
+		],
+		spawns: [
+			{ id: 'seoyeon', templateId: 'actor', sceneId: 'lobby', name: '서연', companion: false, state: {} },
+			{ id: 'jieun', templateId: 'director', sceneId: 'stage', name: '지은', companion: false, state: {} },
+			{ id: 'harin', templateId: 'companion', sceneId: 'lobby', name: '하린', companion: true, state: {} },
+			{ id: 'rehearsal-light', templateId: 'light', sceneId: 'rehearsal', name: '연습실 작업등', companion: false, state: {} },
+			{ id: 'stage-light', templateId: 'light', sceneId: 'stage', name: '무대 작업등', companion: false, state: {} },
+			{ id: 'desk-bell', templateId: 'bell', sceneId: 'lobby', name: '안내 종', companion: false, state: {} }
+		]
+	};
+}

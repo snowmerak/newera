@@ -1,0 +1,128 @@
+export type Value = string | number | boolean | null;
+export type Properties = Record<string, Value>;
+export type EntityKind = 'character' | 'object';
+export type EventKind = 'speak' | 'interact' | 'wait' | 'move' | 'enter' | 'leave' | 'change';
+
+export interface Condition { key: string; equals: Value }
+export interface Interaction {
+	id: string;
+	label: string;
+	description: string;
+	conditions: Condition[];
+	effects: Properties;
+}
+export interface ObjectReaction {
+	id: string;
+	on: EventKind;
+	/** Whether this object must be the explicit target of the triggering event. */
+	targeted: boolean;
+	conditions: Condition[];
+	effects: Properties;
+	text: string;
+}
+export interface EntityTemplate {
+	id: string;
+	kind: EntityKind;
+	name: string;
+	description: string;
+	personality: string;
+	goals: string[];
+	initialState: Properties;
+	interactions: Interaction[];
+	reactions: ObjectReaction[];
+}
+export interface Scene {
+	id: string;
+	name: string;
+	description: string;
+	exits: string[];
+}
+export interface Spawn {
+	id: string;
+	templateId: string;
+	sceneId: string;
+	name: string;
+	companion: boolean;
+	state: Properties;
+}
+export interface WorldDefinition {
+	name: string;
+	description: string;
+	rules: string;
+	startingSceneId: string;
+	scenes: Scene[];
+	templates: EntityTemplate[];
+	spawns: Spawn[];
+}
+export interface EntityMemory {
+	eventId: string;
+	tick: number;
+	text: string;
+}
+export interface EntityInstance extends Spawn {
+	active: boolean;
+	memories: EntityMemory[];
+}
+export interface DecisionTrace {
+	model: string;
+	choice: string;
+	reaction: number;
+	intensity: number;
+}
+export interface StageEvent {
+	id: string;
+	tick: number;
+	sceneId: string;
+	kind: EventKind;
+	actorId: string;
+	targetId: string | null;
+	text: string;
+	interactionId?: string;
+	destinationId?: string;
+	changes?: Properties;
+	decision?: DecisionTrace;
+}
+export interface WorldState {
+	tick: number;
+	day: number;
+	minute: number;
+	activeSceneId: string;
+	instances: EntityInstance[];
+	events: StageEvent[];
+}
+export interface World {
+	id: string;
+	revision: number;
+	definition: WorldDefinition;
+	state: WorldState;
+}
+export interface WorldSummary { id: string; name: string; revision: number }
+export interface StageAction {
+	id: string;
+	kind: 'wait' | 'speak' | 'interact' | 'move';
+	label: string;
+	targetId: string | null;
+	interactionId?: string;
+	destinationId?: string;
+}
+export type PlayerRequest =
+	| { kind: 'speak'; text: string; targetId: string | null }
+	| { kind: 'wait' }
+	| { kind: 'move'; destinationId: string }
+	| { kind: 'interact'; targetId: string; interactionId: string };
+export interface GenerationJob {
+	id: string;
+	worldId: string;
+	revision: number;
+	status: 'pending' | 'running' | 'completed' | 'failed';
+	request: PlayerRequest;
+	createdAt: string;
+	error: string | null;
+}
+export interface SaveSlot { slot: number; tick: number; savedAt: string }
+export interface StageView {
+	world: World;
+	worlds: WorldSummary[];
+	generation: GenerationJob | null;
+	saves: SaveSlot[];
+}

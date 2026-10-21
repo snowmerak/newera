@@ -1,15 +1,9 @@
 import { json } from '@sveltejs/kit';
-import { getActiveLoreId, getGenerationJob, getLatestGenerationJob } from '$lib/server/db';
-import { ensureGenerationWorker } from '$lib/server/game';
 import type { RequestHandler } from './$types';
+import { getJob } from '$lib/server/stage-store';
+import { ensureStageWorker } from '$lib/server/stage';
 
 export const GET: RequestHandler = ({ url }) => {
-	ensureGenerationWorker();
-	const requestedId = url.searchParams.get('id');
-	const loreId = getActiveLoreId();
-	const generation = requestedId ? getGenerationJob(requestedId) : getLatestGenerationJob(loreId);
-	if (generation && generation.loreId !== loreId) {
-		return json({ generation: null }, { headers: { 'cache-control': 'no-store' } });
-	}
-	return json({ generation }, { headers: { 'cache-control': 'no-store' } });
+	ensureStageWorker();
+	return json({ generation: getJob(url.searchParams.get('id') || '') }, { headers: { 'cache-control': 'no-store' } });
 };

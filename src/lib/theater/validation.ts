@@ -1,0 +1,143 @@
+import type { Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
+
+export function record(value: unknown, label: string): Record<string, unknown> {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}: JSON 객체가 필요합니다.`);
+	return value as Record<string, unknown>;
+}
+export function text(value: unknown, label: string, maximum = 20000, allowEmpty = false): string {
+	if (typeof value !== 'string' || (!allowEmpty && !value.trim()) || value.length > maximum) throw new Error(`${label}: 문자열 길이를 확인해 주세요 (최대 ${maximum}자).`);
+	return value.trim();
+}
+export function identifier(value: unknown, label: string): string {
+	const id = text(value, label, 120);
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/.test(id) || ['__proto__', 'constructor', 'prototype'].includes(id)) throw new Error(`${label}: 사용할 수 없는 ID입니다.`);
+	return id;
+}
+function list(value: unknown, label: string, maximum = 500): unknown[] {
+	if (!Array.isArray(value) || value.length > maximum) throw new Error(`${label}: 최대 ${maximum}개의 배열이 필요합니다.`);
+	return value;
+}
+function scalar(value: unknown): value is Value {
+	return value === null || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && value.length <= 4000);
+}
+export function properties(value: unknown, label: string): Properties {
+	const source = record(value, label);
+	if (Object.keys(source).length > 100) throw new Error(`${label}: 상태 항목이 너무 많습니다.`);
+	for (const [key, entry] of Object.entries(source)) {
+		if (!key.trim() || key.length > 100 || ['__proto__', 'constructor', 'prototype'].includes(key) || !scalar(entry)) throw new Error(`${label}: 상태는 이름과 문자열·숫자·참거짓·null 값으로 구성해야 합니다.`);
+	}
+	return { ...source } as Properties;
+}
+function integer(value: unknown, label: string, maximum = Number.MAX_SAFE_INTEGER): number {
+	if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > maximum) throw new Error(`${label}: 정수 범위를 확인해 주세요.`);
+	return Number(value);
+}
+function boolean(value: unknown, label: string): boolean {
+	if (typeof value !== 'boolean') throw new Error(`${label}: 참거짓 값이 필요합니다.`);
+	return value;
+}
+function unique<T extends { id: string }>(values: T[], label: string): T[] {
+	if (new Set(values.map((value) => value.id)).size !== values.length) throw new Error(`${label}: ID가 중복됩니다.`);
+	return values;
+}
+function conditions(value: unknown): Condition[] {
+	return list(value, 'conditions', 100).map((entry) => {
+		const source = record(entry, 'condition');
+		if (!scalar(source.equals)) throw new Error('condition.equals: 상태 값이 필요합니다.');
+		return { key: text(source.key, 'condition.key', 100), equals: source.equals };
+	});
+}
+function interaction(value: unknown): Interaction {
+	const source = record(value, 'interaction');
+	return { id: identifier(source.id, 'interaction.id'), label: text(source.label, 'interaction.label', 200), description: text(source.description, 'interaction.description', 4000, true), conditions: conditions(source.conditions), effects: properties(source.effects, 'interaction.effects') };
+}
+const eventKinds: EventKind[] = ['speak', 'interact', 'wait', 'move', 'enter', 'leave', 'change'];
+function eventKind(value: unknown): EventKind {
+	if (!eventKinds.includes(value as EventKind)) throw new Error('이벤트 종류가 올바르지 않습니다.');
+	return value as EventKind;
+}
+function reaction(value: unknown): ObjectReaction {
+	const source = record(value, 'reaction');
+	return { id: identifier(source.id, 'reaction.id'), on: eventKind(source.on), targeted: boolean(source.targeted, 'reaction.targeted'), conditions: conditions(source.conditions), effects: properties(source.effects, 'reaction.effects'), text: text(source.text, 'reaction.text', 4000) };
+}
+function spawn(value: unknown): Spawn {
+	const source = record(value, 'instance');
+	if (source.id === 'player' || source.id === 'stage') throw new Error('player와 stage는 인스턴스 ID로 사용할 수 없습니다.');
+	return { id: identifier(source.id, 'instance.id'), templateId: identifier(source.templateId, 'instance.templateId'), sceneId: identifier(source.sceneId, 'instance.sceneId'), name: text(source.name, 'instance.name', 200), companion: boolean(source.companion, 'instance.companion'), state: properties(source.state, 'instance.state') };
+}
+export function validateDefinition(value: unknown): WorldDefinition {
+	const source = record(value, '세계관');
+	const scenes = unique(list(source.scenes, 'scenes', 200).map((entry): Scene => {
+		const row = record(entry, 'scene');
+		return { id: identifier(row.id, 'scene.id'), name: text(row.name, 'scene.name', 200), description: text(row.description, 'scene.description'), exits: [...new Set(list(row.exits, 'scene.exits', 200).map((exit) => identifier(exit, 'exit')))] };
+	}), 'scenes');
+	if (!scenes.length) throw new Error('세계관에는 최소 하나의 씬이 필요합니다.');
+	const templates = unique(list(source.templates, 'templates').map((entry): EntityTemplate => {
+		const row = record(entry, 'template');
+		if (row.kind !== 'character' && row.kind !== 'object') throw new Error('원형 종류는 character 또는 object여야 합니다.');
+		return {
+			id: identifier(row.id, 'template.id'), kind: row.kind, name: text(row.name, 'template.name', 200), description: text(row.description, 'template.description'),
+			personality: text(row.personality, 'template.personality', 12000, true), goals: list(row.goals, 'template.goals', 30).map((goal) => text(goal, 'goal', 1000)),
+			initialState: properties(row.initialState, 'template.initialState'), interactions: unique(list(row.interactions, 'template.interactions', 100).map(interaction), 'interactions'),
+			reactions: unique(list(row.reactions, 'template.reactions', 100).map(reaction), 'reactions')
+		};
+	}), 'templates');
+	const spawns = unique(list(source.spawns, 'spawns', 1000).map(spawn), 'spawns');
+	const startingSceneId = identifier(source.startingSceneId, 'startingSceneId');
+	if (!scenes.some((scene) => scene.id === startingSceneId)) throw new Error('시작 씬이 존재하지 않습니다.');
+	for (const scene of scenes) {
+		if (scene.exits.some((exit) => exit === scene.id || !scenes.some((candidate) => candidate.id === exit))) throw new Error('씬의 출구가 존재하지 않거나 자기 자신을 가리킵니다.');
+	}
+	for (const instance of spawns) {
+		const template = templates.find((candidate) => candidate.id === instance.templateId);
+		if (!template || !scenes.some((scene) => scene.id === instance.sceneId)) throw new Error('인스턴스의 원형 또는 씬이 존재하지 않습니다.');
+		if (instance.companion && (template.kind !== 'character' || instance.sceneId !== startingSceneId)) throw new Error('동행 캐릭터는 시작 씬에 배치해야 합니다.');
+	}
+	return { name: text(source.name, '세계관 이름', 200), description: text(source.description, '세계관 설명', 40000), rules: text(source.rules, '세계관 규칙', 20000, true), startingSceneId, scenes, templates, spawns };
+}
+
+export function validateState(value: unknown, definition: WorldDefinition): WorldState {
+	const source = record(value, '진행 상태');
+	const tick = integer(source.tick, 'tick');
+	const activeSceneId = identifier(source.activeSceneId, 'activeSceneId');
+	if (!definition.scenes.some((scene) => scene.id === activeSceneId)) throw new Error('현재 씬이 존재하지 않습니다.');
+	const instances = unique(list(source.instances, 'instances', 1000).map((entry): EntityInstance => {
+		const row = record(entry, 'instance');
+		const instance = spawn(row);
+		const template = definition.templates.find((candidate) => candidate.id === instance.templateId);
+		if (!template || !definition.scenes.some((scene) => scene.id === instance.sceneId)) throw new Error('인스턴스 참조가 올바르지 않습니다.');
+		const active = boolean(row.active, 'instance.active');
+		if (instance.companion && (template.kind !== 'character' || (active && instance.sceneId !== activeSceneId))) throw new Error('동행의 위치가 현재 씬과 다릅니다.');
+		const memories = list(row.memories, 'memories', 100000).map((item): EntityMemory => {
+			const memory = record(item, 'memory');
+			return { eventId: text(memory.eventId, 'memory.eventId', 160), tick: integer(memory.tick, 'memory.tick', tick), text: text(memory.text, 'memory.text', 20000) };
+		});
+		return { ...instance, active, memories };
+	}), 'instances');
+	const events = unique(list(source.events, 'events', 100000).map((entry): StageEvent => {
+		const row = record(entry, 'event');
+		const sceneId = identifier(row.sceneId, 'event.sceneId');
+		const actorId = text(row.actorId, 'event.actorId', 120);
+		const targetId = row.targetId === null ? null : text(row.targetId, 'event.targetId', 120);
+		if (!definition.scenes.some((scene) => scene.id === sceneId) ||
+			(!['player', 'stage'].includes(actorId) && !instances.some((instance) => instance.id === actorId)) ||
+			(targetId !== null && targetId !== 'player' && !instances.some((instance) => instance.id === targetId))) throw new Error('이벤트 참조가 올바르지 않습니다.');
+		const result: StageEvent = { id: text(row.id, 'event.id', 160), tick: integer(row.tick, 'event.tick', tick), sceneId, kind: eventKind(row.kind), actorId, targetId, text: text(row.text, 'event.text', 20000) };
+		if (row.interactionId !== undefined) result.interactionId = identifier(row.interactionId, 'event.interactionId');
+		if (row.destinationId !== undefined) {
+			result.destinationId = identifier(row.destinationId, 'event.destinationId');
+			if (!definition.scenes.some((scene) => scene.id === result.destinationId)) throw new Error('이벤트의 목적지가 존재하지 않습니다.');
+		}
+		if (row.changes !== undefined) result.changes = properties(row.changes, 'event.changes');
+		if (row.decision !== undefined) {
+			const trace = record(row.decision, 'decision');
+			if (typeof trace.reaction !== 'number' || trace.reaction < 0 || trace.reaction > 1 || !Number.isFinite(trace.reaction) ||
+				typeof trace.intensity !== 'number' || trace.intensity < 0 || trace.intensity > 2 || !Number.isFinite(trace.intensity)) throw new Error('판단 기록의 수치가 올바르지 않습니다.');
+			result.decision = { model: text(trace.model, 'decision.model', 200), choice: text(trace.choice, 'decision.choice', 500), reaction: trace.reaction, intensity: trace.intensity };
+		}
+		return result;
+	}), 'events');
+	const day = integer(source.day, 'day');
+	if (day < 1) throw new Error('날짜는 1일차부터 시작합니다.');
+	return { tick, day, minute: integer(source.minute, 'minute', 1439), activeSceneId, instances, events };
+}

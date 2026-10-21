@@ -17,7 +17,7 @@ try {
   const summary = validateBundle(bundle);
   await writeFile(outputPath, `${JSON.stringify(bundle, null, 2)}\n`, 'utf8');
   console.log(`생성 완료: ${outputPath}`);
-  console.log(`로어: ${summary.title} · 인물 ${summary.characterCount}명 · 묘사 ${summary.narrativeMode}`);
+  console.log(`세계관: ${summary.title} · 씬 ${summary.sceneCount}개 · 인스턴스 ${summary.instanceCount}개`);
 } catch (cause) {
   console.error(`생성 실패: ${cause instanceof Error ? cause.message : String(cause)}`);
   process.exit(1);

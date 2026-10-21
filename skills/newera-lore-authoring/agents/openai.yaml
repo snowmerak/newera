@@ -1,4 +1,4 @@
 interface:
-  display_name: "newera 로어 제작"
-  short_description: "newera용 세계관·성인 캐릭터 로어 JSON 제작 및 검증"
-  default_prompt: "Use $newera-lore-authoring to create an importable newera lore JSON from my setting and character notes."
+  display_name: "newera 세계관과 씬 제작"
+  short_description: "세계관·씬·원형·인스턴스와 동행을 담은 JSON 제작 및 검증"
+  default_prompt: "Use $newera-lore-authoring to create an importable newera theater world with scenes, character and object templates, instances and companions."

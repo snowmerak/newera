@@ -1,150 +1,33 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import type { SubmitFunction } from '@sveltejs/kit';
-	import CharacterStatsFields from '$lib/components/CharacterStatsFields.svelte';
-	import CharacterMarksFields from '$lib/components/CharacterMarksFields.svelte';
-	import ActionRequirementsFields from '$lib/components/ActionRequirementsFields.svelte';
-	import { DEFAULT_ABL, DEFAULT_ACTION_REQUIREMENTS, DEFAULT_EXP, DEFAULT_PALAM, DEFAULT_RELATION, DEFAULT_TALENT, NARRATIVE_MODES, type Character } from '$lib/game/types';
+	import { templateFor } from '$lib/theater/runtime';
 	import type { PageProps } from './$types';
-
 	let { data, form }: PageProps = $props();
-	let busy = $state(false);
-	let selectedId = $state('');
-	let selected = $derived(data.characterTemplates.find((character) => character.id === selectedId) ?? null);
-	let activeWorld = $derived(data.worldLore.find((world) => world.active) ?? data.worldLore[0]);
-
-	const submit: SubmitFunction = () => {
-		busy = true;
-		return async ({ update }) => {
-			try { await update(); } finally { busy = false; }
-		};
-	};
-
-	const initialStats: Pick<Character, 'base' | 'talent' | 'abl' | 'exp' | 'relations' | 'palam'> = {
-		base: { energy: 20, maxEnergy: 20 },
-		talent: { ...DEFAULT_TALENT },
-		abl: { ...DEFAULT_ABL },
-		exp: { ...DEFAULT_EXP },
-		relations: { player: { ...DEFAULT_RELATION } },
-		palam: { ...DEFAULT_PALAM }
-	};
+	let world = $derived(data.world);
+	let definition = $derived(JSON.stringify(world.definition, null, 2));
+	let kind = $state('character');
 </script>
 
-<svelte:head>
-	<title>로어 관리 · newera</title>
-	<meta name="description" content="newera 로어 설정과 가져오기, 내보내기" />
-</svelte:head>
-
-<div class="page">
-	<header class="topbar">
-		<div class="brand-group"><a class="brand" href="/">newera</a><span class="adult-label">로어 관리</span></div>
-		<div class="top-actions"><a class="top-link" href="/">플레이 화면으로</a></div>
-	</header>
-	<main class="manage-shell">
-		<div class="manage-intro"><p class="eyebrow">LORE LIBRARY</p><h1>로어 관리</h1><p>제목과 세계관, 등장인물 설정을 관리합니다. 플레이 중인 장면과 저장 슬롯은 플레이 화면에 있습니다.</p></div>
-		{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
-		<div class="manage-grid">
-			<section class="manage-catalog" aria-label="로어 목록">
-				<h2>로어 목록</h2>
-				{#each data.lores as lore}
-					<div class="manage-lore" class:current={lore.active}>
-						<div><strong>{lore.title}</strong>{#if lore.active}<span>현재 플레이 중</span>{/if}</div>
-						<div class="manage-lore-actions">
-							{#if !lore.active}<form method="POST" action="?/switchLore" use:enhance={submit}><button name="id" value={lore.id} disabled={busy}>이 로어 열기</button></form>{/if}
-							<a href={`/lores/export/${lore.id}`} download>내보내기</a>
-						</div>
-					</div>
-				{/each}
-				<details class="manage-new"><summary>새 로어 만들기</summary>
-					<form method="POST" action="?/createLore" use:enhance={submit} class="settings-form">
-						<label for="new-lore-title">제목</label><input id="new-lore-title" name="title" maxlength="80" required />
-						<label for="new-lore-world">세계관 설정</label><textarea id="new-lore-world" name="worldSetting" rows="5" required></textarea>
-						<label for="new-lore-rules">era 규칙</label><textarea id="new-lore-rules" name="eraRules" rows="4" required value={data.config.eraRules}></textarea>
-						<label for="new-narrative-mode">묘사 모드</label><select id="new-narrative-mode" name="narrativeMode">{#each NARRATIVE_MODES as mode}<option value={mode.value} selected={mode.value === 'sensual'}>{mode.label} · {mode.description}</option>{/each}</select>
-						<button disabled={busy}>만들고 열기</button>
-					</form>
-				</details>
-				<details class="manage-new"><summary>로어 가져오기 · JSON</summary>
-					<form method="POST" action="?/importLore" enctype="multipart/form-data" use:enhance={submit} class="settings-form">
-						<label for="lore-file">내보낸 로어 파일</label><input id="lore-file" type="file" name="loreFile" accept=".json,application/json" required />
-						<button disabled={busy}>가져오고 열기</button>
-					</form>
-					<p class="minor">로어 설정, 현재 진행, 저장 슬롯을 함께 가져옵니다. 인물·세계관 모듈 파일은 아래 모듈 영역에서 설치합니다.</p>
-				</details>
-			</section>
-
-			<section class="manage-editor" aria-label="현재 로어 편집">
-				<div class="manage-editor-head"><div><p class="eyebrow">EDITING LORE</p><h2>{data.lore.title}</h2></div><a href="/">플레이하기 →</a></div>
-				<div class="manage-section">
-					<h3>제목</h3>
-					<form method="POST" action="?/renameLore" use:enhance={submit} class="settings-form">
-						<label for="lore-title">로어 제목</label><input id="lore-title" name="title" maxlength="80" required value={data.lore.title} />
-						<button disabled={busy}>제목 저장</button>
-					</form>
-				</div>
-				<div class="manage-section">
-					<h3>세계관과 규칙</h3>
-					<p class="minor">현재 적용: {activeWorld?.name}</p>
-					<form method="POST" action="?/scenario" use:enhance={submit} class="settings-form">
-						<label for="world-setting">기본 세계관</label><textarea id="world-setting" name="worldSetting" rows="6" required value={data.config.worldSetting}></textarea>
-						<label for="era-rules">era 규칙과 진행 방향</label><textarea id="era-rules" name="eraRules" rows="5" required value={data.config.eraRules}></textarea>
-						<label for="narrative-mode">묘사 모드</label><select id="narrative-mode" name="narrativeMode" value={data.config.narrativeMode}>{#each NARRATIVE_MODES as mode}<option value={mode.value}>{mode.label} · {mode.description}</option>{/each}</select>
-						<p class="minor">묘사 모드는 장면의 문체만 바꿉니다. 인물의 성향, 행동 조건, 수락과 거절 판단은 그대로 적용됩니다.</p>
-						<button disabled={busy}>설정 저장</button>
-					</form>
-					{#if data.worldLore.length > 1}
-						<div class="module-list">{#each data.worldLore as world}
-							<form method="POST" action="?/selectWorld" use:enhance={submit}><button name="id" value={world.id ?? ''} disabled={busy || world.active}>{world.name} · {world.active ? '적용 중' : '적용'}</button></form>
-						{/each}</div>
-					{/if}
-				</div>
-				<div class="manage-section">
-					<h3>등장인물 원본</h3>
-					<p class="minor">여기서 바꾸는 era 수치는 새 세션의 초기값입니다. 현재 플레이 중인 세션 수치는 바뀌지 않습니다. 이름·설정·행동 조건은 현재 세션에도 바로 반영됩니다.</p>
-					{#if data.characterTemplates.length}
-						<div class="character-chooser"><label for="character-setting">인물 선택</label><select id="character-setting" value={selectedId} onchange={(event) => (selectedId = event.currentTarget.value)}><option value="">선택</option>{#each data.characterTemplates as character}<option value={character.id}>{character.name}</option>{/each}</select></div>
-					{/if}
-					{#if selected}
-						{#key selected.id}<form method="POST" action="?/character" use:enhance={submit} class="settings-form">
-							<input type="hidden" name="id" value={selected.id} />
-							<div class="form-pair"><label>이름<input name="name" required value={selected.name} /></label><label>나이<input name="age" type="number" required value={selected.age} /></label></div>
-							<label for="character-profile">인물 설정</label><textarea id="character-profile" name="profile" rows="6" required value={selected.profile}></textarea>
-							<details class="nested"><summary>새 세션의 초기 era 수치</summary><CharacterStatsFields stats={selected} /></details>
-							<CharacterMarksFields marks={selected.mark} />
-							<ActionRequirementsFields requirements={selected.actionRequirements} />
-							<div class="variable-stats"><strong>TRAIT</strong><p>가변 성향 목록: {selected.trait.length ? selected.trait.join(' · ') : '없음'}</p></div>
-							<button disabled={busy}>인물 저장</button>
-						</form>{/key}
-					{/if}
-					<details class="nested"><summary>새 인물 추가</summary><form method="POST" action="?/character" use:enhance={submit} class="settings-form">
-						<div class="form-pair"><label>이름<input name="name" required /></label><label>나이<input name="age" type="number" value="25" required /></label></div>
-						<label for="new-profile">인물 설정</label><textarea id="new-profile" name="profile" rows="5" required></textarea>
-						<details class="nested"><summary>초기 era 수치</summary><CharacterStatsFields stats={initialStats} /></details>
-						<CharacterMarksFields marks={[]} />
-						<ActionRequirementsFields requirements={DEFAULT_ACTION_REQUIREMENTS} />
-						<button disabled={busy}>인물 추가</button>
-					</form></details>
-				</div>
-				<div class="manage-section">
-					<h3>세계관·인물 모듈</h3>
-					<form method="POST" action="?/installModule" enctype="multipart/form-data" use:enhance={submit} class="settings-form">
-						<label for="module-file">JSON 모듈 파일</label><input id="module-file" type="file" name="moduleFile" accept=".json,application/json" required />
-						<button disabled={busy}>설치하고 적용</button>
-					</form>
-					<p class="minor"><a href="/modules/example-world.json" download>세계관 예시</a> · <a href="/modules/example-character.json" download>인물 예시</a> · <a href="/modules/README.md" target="_blank" rel="noreferrer">파일 형식</a></p>
-					{#if data.modules.length}<div class="module-list">{#each data.modules as module}
-						<form method="POST" action="?/toggleModule" use:enhance={submit}><input type="hidden" name="id" value={module.id} /><button name="enabled" value={module.enabled ? '0' : '1'} disabled={busy}>{module.name} · {module.enabled ? '끄기' : '적용'}</button></form>
-					{/each}</div>{/if}
-				</div>
-				<div class="manage-section manage-danger">
-					<h3>로어 삭제</h3><p class="minor">이 로어의 현재 진행과 저장 슬롯도 함께 삭제됩니다. 남은 로어가 하나라면 삭제할 수 없습니다.</p>
-					<form method="POST" action="?/deleteLore" use:enhance={submit} class="settings-form">
-						<input type="hidden" name="id" value={data.lore.id} />
-						<label for="delete-confirmation">확인하려면 로어 제목을 입력하세요</label><input id="delete-confirmation" name="confirmation" required autocomplete="off" />
-						<button disabled={busy || data.lores.length <= 1}>로어 삭제</button>
-					</form>
-				</div>
-			</section>
-		</div>
-	</main>
-</div>
+<svelte:head><title>세계관과 무대 편집 · newera</title></svelte:head>
+<header class="topbar"><a class="brand" href="/">newera<span>THEATER</span></a><a class="top-link" href="/">공연으로 돌아가기 ↗</a></header>
+<main class="editor-shell"><div class="editor-intro"><p class="eyebrow">WORLD / SCENE / INSTANCE</p><h1>세계관과 무대 편집</h1><p>세계관을 만들고 씬을 연결하세요. 원형에서 만든 인스턴스는 자기 상태를 가지고 무대의 사건에 반응합니다.</p></div>
+	{#if form?.message}<p class="feedback" role="status">{form.message}</p>{/if}
+	<div class="editor-layout"><aside class="editor-catalog"><p class="eyebrow">WORLDS</p>
+		{#each data.worlds as entry}<form method="POST" action="?/selectWorld" use:enhance><button class="world-link" class:current={entry.id === world.id} name="worldId" value={entry.id} disabled={entry.id === world.id}>{entry.name}</button></form>{/each}
+		<details class="editor-section"><summary>새 세계관</summary><form method="POST" action="?/createWorld" use:enhance class="settings-form"><label>이름<input name="name" maxlength="200" required /></label><label>가장 큰 세계관<textarea name="description" rows="5" maxlength="40000" required></textarea></label><button class="primary">세계관 만들기</button></form></details>
+		<details class="editor-section"><summary>세계관 가져오기</summary><form method="POST" action="?/importWorld" enctype="multipart/form-data" use:enhance class="settings-form"><p class="muted">씬 기반 세계관과 이전 로어 JSON을 가져올 수 있습니다.</p><label>JSON 파일<input name="file" type="file" accept=".json,application/json" required /></label><button>가져오고 열기</button></form></details>
+		<a class="export-link" href={`/lores/export/${encodeURIComponent(world.id)}`}>세계관·현재 진행·슬롯 내보내기 ↓</a>
+	</aside><section class="editor-main"><h2>{world.definition.name}</h2><p class="muted">{world.definition.description}</p>
+		<details class="editor-section"><summary>세계관 설정</summary><form method="POST" action="?/settings" use:enhance class="settings-form"><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><label>이름<input name="name" value={world.definition.name} maxlength="200" required /></label><label>가장 큰 세계관<textarea name="description" rows="7" value={world.definition.description} maxlength="40000" required></textarea></label><label>이 세계의 규칙<textarea name="rules" rows="5" value={world.definition.rules} maxlength="20000"></textarea></label><button>세계관 저장</button></form></details>
+		<section class="editor-section"><h3>씬</h3><div class="scene-grid">{#each world.definition.scenes as scene}<article class="scene-card" class:active={scene.id === world.state.activeSceneId}><small>{scene.id === world.state.activeSceneId ? '현재 씬' : 'SCENE'}</small><h4>{scene.name}</h4><p>{scene.description}</p><small>출구: {scene.exits.map((id) => world.definition.scenes.find((entry) => entry.id === id)?.name).join(' · ') || '없음'}</small><p class="cast-list">{world.state.instances.filter((instance) => instance.active && instance.sceneId === scene.id).map((instance) => instance.name).join(' · ') || '배치된 인스턴스 없음'}</p></article>{/each}</div>
+			<details><summary>씬 추가</summary><form method="POST" action="?/scene" use:enhance class="settings-form"><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><label>씬 이름<input name="name" maxlength="200" required /></label><label>씬 설명<textarea name="description" rows="3" required></textarea></label><fieldset><legend>양방향으로 연결할 씬</legend>{#each world.definition.scenes as scene}<label class="checkbox-label"><input name="exits" type="checkbox" value={scene.id} />{scene.name}</label>{/each}</fieldset><button>씬 만들기</button></form></details>
+		</section>
+		<section class="editor-section"><h3>캐릭터와 오브젝트 원형</h3><p class="muted">원형의 설명과 행동은 공유하고, 실제 위치·상태·기억은 각 인스턴스가 소유합니다.</p><div class="template-list">{#each world.definition.templates as template}<div><span class="kind-label">{template.kind === 'character' ? '캐릭터' : '오브젝트'}</span><strong>{template.name}</strong><p>{template.description}</p></div>{/each}</div>
+			<details><summary>원형 추가</summary><form method="POST" action="?/template" use:enhance class="settings-form"><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><label>종류<select name="kind" bind:value={kind}><option value="character">캐릭터</option><option value="object">오브젝트</option></select></label><label>이름<input name="name" maxlength="200" required /></label><label>설명<textarea name="description" rows="3" required></textarea></label>{#if kind === 'character'}<label>성격과 말투<textarea name="personality" rows="3"></textarea></label><label>목표 · 한 줄에 하나씩<textarea name="goals" rows="3"></textarea></label>{/if}<label>초기 상태 · JSON<textarea class="code-input" name="initialState" rows="3">{'{}'}</textarea></label><details><summary>상호작용과 사건 반응</summary><p class="muted">세계관 JSON 안내의 interactions와 reactions 형식을 사용합니다.</p><label>상호작용 목록<textarea class="code-input" name="interactions" rows="5">{'[]'}</textarea></label><label>오브젝트의 사건 반응 목록<textarea class="code-input" name="reactions" rows="5">{'[]'}</textarea></label></details><button>원형 만들기</button></form></details>
+		</section>
+		<section class="editor-section"><h3>씬의 인스턴스와 동행</h3><div class="instance-list">{#each world.state.instances as instance}<details><summary>{instance.name} · {world.definition.scenes.find((scene) => scene.id === instance.sceneId)?.name}{instance.companion ? ' · 동행' : ''}</summary><form method="POST" action="?/instance" use:enhance class="settings-form"><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="instanceId" value={instance.id} /><p class="muted">원형: {templateFor(world, instance).name} · ID: {instance.id}</p><label>인스턴스 이름<input name="name" value={instance.name} required /></label><label>현재 위치<select name="sceneId" value={instance.sceneId}>{#each world.definition.scenes as scene}<option value={scene.id}>{scene.name}</option>{/each}</select></label>{#if templateFor(world, instance).kind === 'character'}<label class="checkbox-label"><input type="checkbox" name="companion" checked={instance.companion} />내 동행 · 현재 씬에 있어야 합니다</label>{/if}<label>현재 상태 · JSON<textarea class="code-input" name="state" rows="4" value={JSON.stringify(instance.state, null, 2)}></textarea></label><button>인스턴스 저장</button></form></details>{/each}</div>
+			<details><summary>인스턴스 배치</summary><form method="POST" action="?/spawn" use:enhance class="settings-form"><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><label>원형<select name="templateId" required>{#each world.definition.templates as template}<option value={template.id}>{template.name} · {template.kind === 'character' ? '캐릭터' : '오브젝트'}</option>{/each}</select></label><label>인스턴스 이름<input name="name" placeholder="비워두면 원형 이름 사용" /></label><label>배치할 씬<select name="sceneId" value={world.state.activeSceneId}>{#each world.definition.scenes as scene}<option value={scene.id}>{scene.name}</option>{/each}</select></label><label class="checkbox-label"><input name="companion" type="checkbox" />내 동행으로 배치</label><button disabled={!world.definition.templates.length}>배치하기</button></form></details>
+		</section>
+		<details class="editor-section"><summary>세계관 전체 정의 · JSON</summary><p class="muted">세계관 규칙, 씬의 출구, 원형의 상호작용·사건 반응, 초기 배치를 편집합니다. 현재 인스턴스와 진행 기록은 유지하며, 초기 배치는 공연 화면에서 초기화할 때 적용됩니다.</p><form method="POST" action="?/definition" use:enhance class="settings-form"><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><label>세계관 정의<textarea name="definition" class="code-input definition-input" rows="24" value={definition} required></textarea></label><button>정의 저장</button></form></details>
+	</section></div>
+</main>

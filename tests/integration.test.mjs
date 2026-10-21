@@ -4,789 +4,231 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { buildBundle } from '../skills/newera-lore-authoring/scripts/lore-format.mjs';
 
-const dataDirectory = mkdtempSync(join(tmpdir(), 'newera-integration-'));
-const modelCalls = [];
-let refuseNextAction = false;
-let failNextWorld = false;
-let crowdedWorldOnce = true;
-let crowdedCharacterOnce = true;
-let pausedWorld = null;
-const modelServer = createServer(async (request, response) => {
-	const chunks = [];
-	for await (const chunk of request) chunks.push(chunk);
-	const body = JSON.parse(Buffer.concat(chunks).toString());
-	response.setHeader('content-type', 'application/json');
-	if (request.url === '/v1/embeddings') {
-		response.end(JSON.stringify({ data: [{ embedding: [1, body.input.length % 7, 0.5] }] }));
-		return;
+const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+const scratchDirectories = [];
+function scratch() { const path = mkdtempSync(join(tmpdir(), 'newera-theater-integration-')); scratchDirectories.push(path); return path; }
+async function listen(server) { await new Promise((done) => server.listen(0, '127.0.0.1', done)); return server.address().port; }
+async function freePort() { const server = createServer(); const port = await listen(server); await new Promise((done) => server.close(done)); return port; }
+async function app(directory, provider) {
+	const port = await freePort();
+	const base = `http://127.0.0.1:${port}`;
+	let output = '';
+	const child = spawn(process.execPath, ['build/index.js'], { env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ORIGIN: base, NEWERA_DATA_DIR: directory, NEWERA_OEV_BASE_URL: provider, NEWERA_DECISION_MODEL: 'actor-model', NEWERA_TEXT_MODEL: 'actor-model' }, stdio: ['ignore', 'pipe', 'pipe'] });
+	for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk) => { output = (output + chunk).slice(-8000); });
+	for (let index = 0; index < 100; index++) {
+		if (child.exitCode !== null) throw new Error(`app exited: ${output}`);
+		try { const response = await fetch(base); if (response.ok) break; } catch { /* starting */ }
+		if (index === 99) { child.kill(); throw new Error(`app failed to start: ${output}`); }
+		await pause(50);
 	}
-	if (request.url !== '/v1/chat/completions') {
-		response.statusCode = 404;
-		response.end('{}');
-		return;
+	return { base, child, async stop() { if (child.exitCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; } } };
+}
+async function post(base, action, fields, path = '/', failure = false) {
+	const response = await fetch(`${base}${path}?/${action}`, { method: 'POST', headers: { origin: base }, body: new URLSearchParams(fields) });
+	const result = await response.text();
+	assert.equal(response.status, 200, result);
+	assert.equal(JSON.parse(result).type === 'failure', failure, result);
+}
+async function exported(base, worldId) { return (await fetch(`${base}/lores/export/${encodeURIComponent(worldId)}`)).json(); }
+async function current(base) {
+	const html = await (await fetch(base)).text();
+	const worldId = /name="worldId" value="([^"]+)"/.exec(html)?.[1];
+	assert.ok(worldId, 'world id not found in page');
+	return (await exported(base, worldId)).world;
+}
+async function latestJob(base, db, worldId) {
+	const row = db.prepare('SELECT id FROM theater_jobs WHERE world_id = ? ORDER BY rowid DESC LIMIT 1').get(worldId);
+	return row ? (await (await fetch(`${base}/api/generation?id=${row.id}`)).json()).generation : null;
+}
+async function waitJob(base, db, worldId, failure = false) {
+	for (let index = 0; index < 300; index++) {
+		const job = await latestJob(base, db, worldId);
+		if (job && ['completed', 'failed'].includes(job.status)) { assert.equal(job.status, failure ? 'failed' : 'completed', job.error || 'job status'); return job; }
+		await pause(20);
 	}
-	const system = body.messages[0].content;
-	const input = JSON.parse(body.messages[1].content);
-	const kind = system.includes('세계 진행 담당 세션') ? 'world'
-		: system.includes('플레이어가 먼저 할 행동을 제안한다') ? 'suggest'
-		: system.includes('COMMAND에 연결하는 해석기') ? 'interpret'
-		: 'character';
-	modelCalls.push({ kind, system, input, responseFormat: body.response_format });
-	const world = kind === 'world';
-	if (world && pausedWorld) {
-		const pause = pausedWorld;
-		pausedWorld = null;
-		pause.started();
-		await pause.wait;
-	}
-	if (world && failNextWorld) {
-		failNextWorld = false;
-		response.statusCode = 503;
-		response.end('{}');
-		return;
-	}
-	const accepted = input.mode === 'player-action' && refuseNextAction ? false : true;
-	if (input.mode === 'player-action') refuseNextAction = false;
-	let output;
-	if (kind === 'suggest') {
-		output = { suggestions: ['서연에게 책을 추천한다', '지은과 함께 서연에게 말을 건다', '서연과 대화한다', '잠시 쉰다'] };
-	} else if (kind === 'interpret') {
-		output = {
-			actionId: input.playerText.includes('입맞춤') ? 'kiss' : input.playerText.includes('대화') ? 'talk' : null,
-			targetId: input.playerText.includes('서연') ? 'seoyeon' : null
-		};
-	} else if (world) {
-		if (crowdedWorldOnce) {
-			crowdedWorldOnce = false;
-			output = { scene: '서연과 지은이 함께 서점 앞에 도착했다.', situation: '서연과 지은이 플레이어를 기다린다.', location: '망원동 서점 앞', focusCharacterId: 'seoyeon', minutes: 10, worldMemory: '망원동에 비가 내린다.', sceneNote: '서연과 지은이 서점 앞에 서 있다.' };
-		} else {
-			const focusCharacterId = input.targetCharacterId ?? 'seoyeon';
-			const focusName = input.cast.find((character) => character.id === focusCharacterId)?.name ?? '서연';
-			output = { scene: '저녁 거리에 비가 내린다.', situation: `${focusName}의 일과가 끝날 시간이다.`, location: '망원동 서점 앞', focusCharacterId, minutes: 10, worldMemory: '망원동에 비가 내린다.', sceneNote: input.targetCharacterId ? `${focusName}과 플레이어가 서점 앞에 함께 서 있다.` : input.currentSceneNote || `${focusName}과 플레이어가 서점 앞에 함께 서 있다.` };
-		}
-	} else if (crowdedCharacterOnce) {
-		crowdedCharacterOnce = false;
-		output = { narrative: '서연과 지은이 함께 플레이어에게 다가왔다.', accepted,
-			palamDelta: { rapport: 1, comfort: 1, arousal: 0, pleasure: 0, embarrassment: 0, tension: 0, frustration: 0, satisfaction: 1 },
-			memory: null, proposal: null, sceneNote: '서연과 지은이 플레이어 앞에 서 있다.' };
-	} else {
-		const characterName = input.character.name;
-		output = {
-			narrative: input.mode === 'idle' ? `${characterName}이 다가와 대화를 제안했다.` : accepted ? `${characterName}이 고개를 끄덕이며 이야기를 나눴다.` : `${characterName}이 고개를 저으며 거절했다.`,
-			accepted,
-			palamDelta: accepted
-				? { rapport: 2, comfort: 1, arousal: 0, pleasure: 0, embarrassment: 0, tension: -1, frustration: 0, satisfaction: 1 }
-				: { rapport: -1, comfort: -1, arousal: 0, pleasure: 0, embarrassment: 1, tension: 2, frustration: 1, satisfaction: 0 },
-			memory: input.mode === 'idle' ? `${characterName}이 서점 앞에서 대화를 제안했다.` : null,
-			proposal: input.mode === 'idle' ? { actionId: 'talk', text: '잠깐 이야기할래요?' } : null,
-			sceneNote: `${characterName}과 플레이어가 서점 앞에서 마주 보고 있다.`
-		};
-	}
-	response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }));
-});
-
-async function freePort() {
-	const server = createServer();
-	await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-	const port = server.address().port;
-	await new Promise((resolve) => server.close(resolve));
-	return port;
+	assert.fail('job did not finish');
 }
 
-test('world and character turns, proposals, settings, save/load', async () => {
-	await new Promise((resolve) => modelServer.listen(0, '127.0.0.1', resolve));
-	const modelPort = modelServer.address().port;
-	const appPort = await freePort();
-	const app = spawn(process.execPath, ['build/index.js'], {
-		cwd: process.cwd(),
-		env: { ...process.env, PORT: String(appPort), HOST: '127.0.0.1', ORIGIN: `http://127.0.0.1:${appPort}`,
-			NEWERA_DATA_DIR: dataDirectory, NEWERA_LLM_BASE_URL: `http://127.0.0.1:${modelPort}/v1` },
-		stdio: 'pipe'
+test('scene play, typed decisions, multiple residents, object state, companions and world isolation', async () => {
+	const calls = [];
+	let failNext = false;
+	let pauseNext = null;
+	const model = createServer(async (request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
+		const chunks = [];
+		for await (const chunk of request) chunks.push(chunk);
+		const body = JSON.parse(Buffer.concat(chunks).toString());
+		calls.push({ path: request.url, body });
+		if (pauseNext) { const hold = pauseNext; pauseNext = null; hold.started(); await hold.wait; }
+		if (failNext) { failNext = false; response.statusCode = 503; response.end('{"error":"offline"}'); return; }
+		if (request.url === '/v1/systemone') {
+			const criteria = body.questions.action.criteria;
+			const choice = Object.entries(criteria).find(([, label]) => label === '플레이어에게 말한다')?.[0] || Object.keys(criteria)[0];
+			response.end(JSON.stringify({ answers: { action: { type: 'choice', choice }, react: { type: 'noul', noul: 0.9 }, intensity: { type: 'score', score: 1.3 } } }));
+		} else if (request.url === '/v1/chat/completions') {
+			const state = JSON.parse(body.messages[1].content);
+			response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: `${state.self.name}의 대답입니다.` } }] }));
+		} else { response.statusCode = 404; response.end('{}'); }
 	});
-	const base = `http://127.0.0.1:${appPort}`;
-	const manageActions = new Set(['createLore', 'renameLore', 'scenario', 'character', 'installModule', 'toggleModule', 'selectWorld', 'importLore', 'deleteLore']);
-	const simulatorActions = new Set(['conversation', 'edit']);
-	const generationActions = new Set(['advance', 'act', 'freeAct', 'proposal']);
-	const generationStatus = async () => {
-		const response = await fetch(`${base}/api/generation`);
-		assert.equal(response.status, 200);
-		return (await response.json()).generation;
-	};
-	const waitForGeneration = async (expectFailure = false) => {
-		for (let attempt = 0; attempt < 400; attempt += 1) {
-			const generation = await generationStatus();
-			if (generation && (generation.status === 'completed' || generation.status === 'failed')) {
-				assert.equal(generation.status === 'failed', expectFailure, generation.error ?? 'generation status');
-				return generation;
-			}
-			await new Promise((resolve) => setTimeout(resolve, 25));
-		}
-		assert.fail('generation did not finish');
-	};
-	const post = async (action, fields = {}, expectFailure = false, waitForTurn = true) => {
-		const path = manageActions.has(action) ? '/lores' : simulatorActions.has(action) ? '/simulator' : '/';
-		const response = await fetch(`${base}${path}?/${action}`, { method: 'POST', headers: { Origin: base }, body: new URLSearchParams(fields) });
-		const body = await response.text();
-		assert.equal(response.status, 200, `${action}: ${body}`);
-		const immediateFailure = body.includes('"type":"failure"');
-		if (generationActions.has(action) && !immediateFailure) {
-			if (waitForTurn) await waitForGeneration(expectFailure);
-			return;
-		}
-		assert.equal(immediateFailure, expectFailure, `${action}: ${body}`);
-	};
-	const postModule = async (name, contents, expectFailure = false) => {
-		const form = new FormData();
-		form.append('moduleFile', new Blob([contents], { type: 'application/json' }), name);
-		const response = await fetch(`${base}/lores?/installModule`, { method: 'POST', headers: { Origin: base }, body: form });
-		const body = await response.text();
-		assert.equal(response.status, 200, `installModule: ${body}`);
-		assert.equal(body.includes('"type":"failure"'), expectFailure, `installModule: ${body}`);
-	};
+	const modelPort = await listen(model);
+	const directory = scratch();
+	const running = await app(directory, `http://127.0.0.1:${modelPort}/v1`);
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const base = running.base;
+	const activeId = () => db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get().value;
+	const snapshot = (id = activeId()) => { const row = db.prepare('SELECT * FROM theater_worlds WHERE id = ?').get(id); return { id, revision: row.revision, definition: JSON.parse(row.definition_json), state: JSON.parse(row.state_json) }; };
+	const fields = (id = activeId()) => ({ worldId: id, revision: String(snapshot(id).revision) });
 	try {
-		let ready = false;
-		for (let attempt = 0; attempt < 60; attempt += 1) {
-			if (app.exitCode !== null) throw new Error(`서버가 종료됐습니다: ${app.exitCode}`);
-			try { ready = (await fetch(base)).ok; } catch { /* starting */ }
-			if (ready) break;
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-		assert.ok(ready, 'app did not start');
-		const firstPage = await (await fetch(base)).text();
-		assert.ok(firstPage.includes('aria-label="로어 목록"'));
-		assert.ok(firstPage.includes('>망원동의 세 사람</button>'));
-		assert.ok(!firstPage.includes('data-lore-id='));
-		const sidebar = firstPage.split('<aside id="lore-sidebar"')[1].split('</aside>')[0];
-		assert.ok(!sidebar.includes('로어 관리'));
-		assert.ok(sidebar.includes('aria-label="저장 슬롯"'));
-		assert.ok(sidebar.includes('action="?/resetSession"'));
-		assert.ok(sidebar.includes('>현재 세션 초기화</button>'));
-		assert.ok(!firstPage.split('<main class="reader">')[1].split('</main>')[0].includes('aria-label="저장 슬롯"'));
-		assert.ok(firstPage.includes('현재 세션'));
-		assert.ok(firstPage.includes('href="/session/export"'));
-		assert.ok(firstPage.includes('저장 슬롯'));
-		assert.ok(firstPage.includes('aria-label="대화와 장면"'));
-		assert.ok(firstPage.includes('aria-label="행동 요청"'));
-		assert.ok(firstPage.includes('class="composer-form"'));
-		assert.equal(modelCalls.filter((call) => call.kind === 'suggest').length, 0);
-		assert.ok(firstPage.includes('사이드바 숨기기'));
-		assert.ok(!firstPage.includes('LLM에게 행동 제안 받기'));
-		assert.ok(!firstPage.includes('플레이어 체력'));
-		assert.ok(!firstPage.includes('new-lore-world'));
-		assert.ok(!firstPage.includes('href="/simulator"'));
-		const managementPage = await (await fetch(`${base}/lores`)).text();
-		assert.ok(managementPage.includes('새 로어 만들기'));
-		assert.ok(managementPage.includes('로어 가져오기'));
-		assert.ok(managementPage.includes('로어 삭제'));
-		assert.ok(managementPage.includes('내보내기'));
-		assert.ok(managementPage.includes('name="talent.libido"'));
-		assert.ok(managementPage.includes('name="relation.resentment"'));
-		assert.ok(managementPage.includes('name="mark.firstKiss"'));
-		assert.ok(managementPage.includes('name="requirement.0.actionId"'));
-		assert.ok(managementPage.includes('＋ 조건 추가'));
-		assert.ok(managementPage.includes('name="narrativeMode"'));
-		assert.ok(managementPage.includes('노골적'));
-		assert.ok(!managementPage.includes('href="/simulator"'));
-		const emptySessionResponse = await fetch(`${base}/session/export`);
-		assert.equal(emptySessionResponse.status, 200);
-		assert.match(emptySessionResponse.headers.get('content-type'), /^text\/markdown; charset=utf-8/);
-		assert.match(emptySessionResponse.headers.get('content-disposition'), /newera-session-.*\.md/);
-		assert.match(await emptySessionResponse.text(), /아직 첫 장면이 시작되지 않았다/);
-		await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다', narrativeMode: 'explicit' });
-		await post('character', { name: '하린', age: '28', profile: '하린은 동네의 작가다.' });
-		await post('advance');
-		const db = new DatabaseSync(join(dataDirectory, 'newera.sqlite'));
-		try {
-			const initialWorldCalls = modelCalls.filter((call) => call.kind === 'world');
-			const initialCharacterCalls = modelCalls.filter((call) => call.kind === 'character');
-			assert.equal(initialWorldCalls.length, 2);
-			assert.equal(initialCharacterCalls.length, 2);
-			assert.deepEqual(initialWorldCalls[0].input.currentTime, { day: 1, clock: '18:20', minuteAfterMidnight: 1100, period: '저녁' });
-			assert.match(initialWorldCalls[1].input.singleCharacterCorrection, /지은/);
-			assert.match(initialCharacterCalls[1].input.singleCharacterCorrection, /지은/);
-			assert.equal(initialCharacterCalls[1].input.narrativeMode, 'explicit');
-			assert.match(initialCharacterCalls[1].system, /외설적이고 야한 어휘로 최대한 직접 묘사/);
-			assert.match(initialCharacterCalls[1].system, /행위의 흐름과 서로의 반응을 충분한 분량/);
-			assert.ok(!db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative.includes('지은'));
-			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'explicit');
-			assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'player_state'").get().n, 0);
-			const originalLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
-			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
-			const harinId = db.prepare("SELECT id FROM characters WHERE name = '하린'").get().id;
-			db.prepare('UPDATE characters SET trait_json = ?, mark_json = ? WHERE id = ?').run('["작가"]', '["첫 만남"]', harinId);
-			const rawHarinTemplate = JSON.parse(db.prepare('SELECT character_json FROM character_templates WHERE id = ?').get(harinId).character_json);
-			rawHarinTemplate.trait = ['작가'];
-			rawHarinTemplate.mark = ['첫 만남'];
-			db.prepare('UPDATE character_templates SET character_json = ? WHERE id = ?').run(JSON.stringify(rawHarinTemplate), harinId);
-			const fixedFields = {
-				'base.energy': '17', 'base.maxEnergy': '24',
-				'talent.pride': '61', 'talent.openness': '73', 'talent.libido': '90', 'talent.modesty': '90',
-				'talent.assertiveness': '90', 'talent.receptiveness': '20', 'talent.curiosity': '82',
-				'abl.conversation': '4', 'abl.empathy': '3', 'abl.seduction': '2', 'abl.intimacy': '8',
-				'exp.social': '17', 'exp.romantic': '3', 'exp.seduction': '7', 'exp.intimacy': '1',
-				'relation.affection': '80', 'relation.trust': '11', 'relation.desire': '90',
-				'relation.attachment': '12', 'relation.jealousy': '14', 'relation.resentment': '55',
-				'palam.rapport': '6', 'palam.comfort': '5', 'palam.arousal': '3', 'palam.pleasure': '2',
-				'palam.embarrassment': '4', 'palam.tension': '9', 'palam.frustration': '1', 'palam.satisfaction': '8'
-			};
-			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields });
-			const harinTemplate = JSON.parse(db.prepare('SELECT character_json FROM character_templates WHERE id = ?').get(harinId).character_json);
-			assert.deepEqual(harinTemplate.base, { energy: 17, maxEnergy: 24 });
-			assert.deepEqual(harinTemplate.talent, { pride: 61, openness: 73, libido: 90, modesty: 90, assertiveness: 90, receptiveness: 20, curiosity: 82 });
-			const harinStats = db.prepare('SELECT base_json, trait_json, talent_json, abl_json, exp_json, mark_json, relation_json, palam_json FROM characters WHERE id = ?').get(harinId);
-			assert.deepEqual(JSON.parse(harinStats.base_json), { energy: 20, maxEnergy: 20 });
-			assert.deepEqual(JSON.parse(harinStats.talent_json), { pride: 50, openness: 50, libido: 50, modesty: 50, assertiveness: 50, receptiveness: 50, curiosity: 50 });
-			assert.deepEqual(JSON.parse(harinStats.trait_json), ['작가']);
-			assert.deepEqual(JSON.parse(harinStats.mark_json), ['첫 만남']);
-			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields,
-				'mark.present': '1', 'mark.firstDate': 'on', 'mark.custom': '첫 만남, 독자 만남',
-				'requirements.present': '1',
-				'requirement.0.actionId': 'kiss', 'requirement.0.stat': 'relation.desire', 'requirement.0.minimum': '12',
-				'requirement.1.actionId': 'intimacy', 'requirement.1.stat': 'talent.libido', 'requirement.1.minimum': '90' });
-			const revisedTemplate = JSON.parse(db.prepare('SELECT character_json FROM character_templates WHERE id = ?').get(harinId).character_json);
-			assert.deepEqual(revisedTemplate.mark, ['firstDate', '첫 만남', '독자 만남']);
-			assert.deepEqual(revisedTemplate.actionRequirements, [
-				{ actionId: 'kiss', stat: 'relation.desire', minimum: 12 },
-				{ actionId: 'intimacy', stat: 'talent.libido', minimum: 90 }
-			]);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT mark_json FROM characters WHERE id = ?').get(harinId).mark_json), ['첫 만남']);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT action_requirements_json FROM characters WHERE id = ?').get(harinId).action_requirements_json), revisedTemplate.actionRequirements);
-			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'base.energy': '25' }, true);
-			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'abl.conversation': '' }, true);
-			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'talent.pride': '101' }, true);
-			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'relation.resentment': '101' }, true);
-			await post('character', { id: harinId, name: '하린', age: '28', profile: '하린은 동네의 작가다.', ...fixedFields, 'palam.tension': '101' }, true);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT base_json FROM characters WHERE id = ?').get(harinId).base_json), { energy: 20, maxEnergy: 20 });
-			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'advance');
-			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '망원동에 비가 내린다.');
-			assert.equal(db.prepare('SELECT scene_note FROM scenario_config').get().scene_note, '서연과 플레이어가 서점 앞에서 마주 보고 있다.');
-			assert.equal(JSON.parse(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json).actionId, 'talk');
-			assert.match(await (await fetch(`${base}/session/export`)).text(), /잠깐 이야기할래요\?/);
-			assert.equal(db.prepare('SELECT summary FROM memories ORDER BY id DESC LIMIT 1').get().summary, '서연이 서점 앞에서 대화를 제안했다.');
-			const firstEvent = db.prepare('SELECT id, turn, summary FROM events ORDER BY id LIMIT 1').get();
-			db.prepare('INSERT INTO memories (event_id, character_id, summary, created_turn) VALUES (?, ?, ?, ?)').run(
-				firstEvent.id, 'seoyeon', `${firstEvent.summary} 과장된 기억 문장`, firstEvent.turn
-			);
-			const page = await (await fetch(base)).text();
-			assert.ok(page.includes('서연이 서점 앞에서 대화를 제안했다.'));
-			assert.ok(!page.includes('과장된 기억 문장'));
-			await post('proposal', { answer: 'accept' });
-			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'talk');
-			assert.equal(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json, null);
-			const proposalWorldCall = modelCalls.filter((call) => call.kind === 'world').at(-1);
-			assert.equal(proposalWorldCall.input.currentSceneNote, '서연과 플레이어가 서점 앞에서 마주 보고 있다.');
-			assert.equal(proposalWorldCall.input.recentResolvedTurns.at(-1).narrative,
-				db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative);
-			const proposalCharacterCall = modelCalls.filter((call) => call.kind === 'character').at(-1);
-			assert.equal(proposalCharacterCall.input.previousSceneNote, '서연과 플레이어가 서점 앞에서 마주 보고 있다.');
-			assert.equal(proposalCharacterCall.input.recentResolvedInteractions.at(-1).narrative,
-				db.prepare('SELECT narrative FROM events ORDER BY id LIMIT 1').get().narrative);
-			await post('edit', { id: harinId, ...fixedFields });
-			const liveHarinStats = db.prepare('SELECT base_json, trait_json, talent_json, abl_json, exp_json, mark_json, relation_json, palam_json FROM characters WHERE id = ?').get(harinId);
-			assert.deepEqual(JSON.parse(liveHarinStats.base_json), { energy: 17, maxEnergy: 24 });
-			assert.deepEqual(JSON.parse(liveHarinStats.talent_json), { pride: 61, openness: 73, libido: 90, modesty: 90, assertiveness: 90, receptiveness: 20, curiosity: 82 });
-			assert.deepEqual(JSON.parse(liveHarinStats.abl_json), { conversation: 4, empathy: 3, seduction: 2, intimacy: 8 });
-			assert.deepEqual(JSON.parse(liveHarinStats.exp_json), { social: 17, romantic: 3, seduction: 7, intimacy: 1 });
-			assert.deepEqual(JSON.parse(liveHarinStats.relation_json).player, { affection: 80, trust: 11, desire: 90, attachment: 12, jealousy: 14, resentment: 55 });
-			assert.deepEqual(JSON.parse(liveHarinStats.palam_json), { rapport: 6, comfort: 5, arousal: 3, pleasure: 2, embarrassment: 4, tension: 9, frustration: 1, satisfaction: 8 });
-			const suggestedPage = await (await fetch(`${base}/?target=seoyeon`)).text();
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 2);
-			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
-			assert.ok(!suggestedPage.includes('서연에게 책을 추천한다'));
-			const suggestionResponse = await fetch(`${base}/api/suggestions`, {
-				method: 'POST', headers: { Origin: base, 'content-type': 'application/json' },
-				body: JSON.stringify({ targetId: 'seoyeon' })
-			});
-			assert.equal(suggestionResponse.status, 200);
-			assert.deepEqual((await suggestionResponse.json()).options,
-				['서연에게 책을 추천한다', '서연과 대화한다', '잠시 쉰다']);
-			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
-			const satisfactionBeforeCustom = JSON.parse(db.prepare("SELECT palam_json FROM characters WHERE id = 'seoyeon'").get().palam_json).satisfaction;
-			await post('freeAct', { text: '서연에게 책을 추천한다', targetId: 'seoyeon' });
-			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'custom');
-			assert.deepEqual(JSON.parse(db.prepare('SELECT source_json FROM events ORDER BY id DESC LIMIT 1').get().source_json),
-				{ rapport: 2, comfort: 1, tension: -1, satisfaction: 1 });
-			assert.equal(JSON.parse(db.prepare("SELECT palam_json FROM characters WHERE id = 'seoyeon'").get().palam_json).satisfaction, satisfactionBeforeCustom + 1);
-			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
-			// The model can recognize a targeted command while omitting targetId.
-			// Preserve the valid target explicitly selected in the UI in that case.
-			await post('freeAct', { text: '선택한 상대와 대화한다', targetId: 'seoyeon' });
-			assert.equal(db.prepare('SELECT action_id FROM events ORDER BY id DESC LIMIT 1').get().action_id, 'talk');
-			assert.equal(db.prepare('SELECT character_id FROM events ORDER BY id DESC LIMIT 1').get().character_id, 'seoyeon');
-			assert.notEqual(db.prepare('SELECT source_json FROM events ORDER BY id DESC LIMIT 1').get().source_json, '{}');
-			await post('freeAct', { text: '서연에게 입맞춤을 제안한다', targetId: 'seoyeon' }, true);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 4);
-			await post('act', { actionId: 'listen', targetId: 'seoyeon' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 5);
-			const relationBeforeRefusal = db.prepare("SELECT relation_json FROM characters WHERE id = 'seoyeon'").get().relation_json;
-			refuseNextAction = true;
-			await post('act', { actionId: 'flirt', targetId: 'seoyeon' });
-			assert.deepEqual(JSON.parse(db.prepare('SELECT source_json FROM events ORDER BY id DESC LIMIT 1').get().source_json),
-				{ rapport: -1, comfort: -1, embarrassment: 1, tension: 2, frustration: 1 });
-			assert.ok(JSON.parse(db.prepare("SELECT palam_json FROM characters WHERE id = 'seoyeon'").get().palam_json).tension > 0);
-			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'seoyeon'").get().relation_json, relationBeforeRefusal);
-			let releaseWorld;
-			let markWorldStarted;
-			const worldStarted = new Promise((resolve) => { markWorldStarted = resolve; });
-			const worldRelease = new Promise((resolve) => { releaseWorld = resolve; });
-			pausedWorld = { started: markWorldStarted, wait: worldRelease };
-			failNextWorld = true;
-			await post('advance', {}, false, false);
-			await worldStarted;
-			const runningGeneration = await generationStatus();
-			assert.equal(runningGeneration.status, 'running');
-			const generatingPage = await (await fetch(base)).text();
-			assert.ok(generatingPage.includes('세계와 인물이 다음 장면을 만들고 있어요'));
-			assert.match(generatingPage, /id="free-action"[^>]*disabled/);
-			let saveFinishedBeforeWorld = false;
-			try {
-				saveFinishedBeforeWorld = await Promise.race([
-					post('save', { slot: '2' }).then(() => true),
-					new Promise((resolve) => setTimeout(() => resolve(false), 1500))
-				]);
-				assert.equal(saveFinishedBeforeWorld, true, 'save waited for an unrelated LLM turn');
-			} finally {
-				releaseWorld();
-			}
-			await waitForGeneration(true);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
-			let releaseStaleWorld;
-			let markStaleWorldStarted;
-			const staleWorldStarted = new Promise((resolve) => { markStaleWorldStarted = resolve; });
-			const staleWorldRelease = new Promise((resolve) => { releaseStaleWorld = resolve; });
-			pausedWorld = { started: markStaleWorldStarted, wait: staleWorldRelease };
-			await post('advance', {}, false, false);
-			await staleWorldStarted;
-			try {
-				await post('scenario', { worldSetting: '비가 잦은 망원동', eraRules: '대화는 신뢰를 쌓는다', narrativeMode: 'explicit' });
-			} finally {
-				releaseStaleWorld();
-			}
-			await waitForGeneration(true);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
-			await post('save', { slot: '1' });
-			await post('advance');
-			await post('load', { slot: '1' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 61, openness: 73, libido: 90, modesty: 90, assertiveness: 90, receptiveness: 20, curiosity: 82 });
-			assert.ok(modelCalls.filter((call) => call.kind === 'world').length >= 3);
-			assert.ok(modelCalls.filter((call) => call.kind === 'character').length >= 3);
-			assert.ok(modelCalls.some((call) => call.kind === 'suggest'));
-			assert.ok(modelCalls.some((call) => call.kind === 'interpret'));
-			for (const call of modelCalls) {
-				assert.equal(call.responseFormat?.type, 'json_schema');
-				assert.equal(call.responseFormat.json_schema?.strict, true);
-				assert.equal(call.responseFormat.json_schema?.schema?.additionalProperties, false);
-			}
-			assert.deepEqual(new Set(modelCalls.map((call) => call.responseFormat.json_schema.name)),
-				new Set(['player_action_suggestions', 'player_action_interpretation', 'world_beat', 'character_turn']));
-			const playerActionCharacterCall = modelCalls.find((call) => call.kind === 'character' && call.input.mode === 'player-action');
-			assert.equal(playerActionCharacterCall.responseFormat.json_schema.schema.properties.proposal.type, 'null');
-			const idleCharacterCall = modelCalls.find((call) => call.kind === 'character' && call.input.mode === 'idle');
-			assert.ok(Array.isArray(idleCharacterCall.responseFormat.json_schema.schema.properties.proposal.anyOf));
-			assert.equal(modelCalls.find((call) => call.kind === 'world').input.worldSetting, '비가 잦은 망원동');
-			assert.equal(modelCalls.find((call) => call.kind === 'character').input.character.name, '서연');
-			const characterModule = readFileSync(join(process.cwd(), 'static/modules/example-character.json'), 'utf8');
-			const worldModule = readFileSync(join(process.cwd(), 'static/modules/example-world.json'), 'utf8');
-			await postModule('invalid-age.json', JSON.stringify({ schemaVersion: 1, id: 'invalid.age', name: 'invalid', version: '1', characters: [{ id: 'a', name: 'a', age: 19.5, profile: 'profile' }] }), true);
-			const invalidTalentModule = JSON.parse(characterModule);
-			invalidTalentModule.characters[0].talent.pride = 101;
-			await postModule('invalid-talent.json', JSON.stringify(invalidTalentModule), true);
-			const invalidRelationModule = JSON.parse(characterModule);
-			invalidRelationModule.characters[0].relations.player.resentment = 101;
-			await postModule('invalid-relation.json', JSON.stringify(invalidRelationModule), true);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
-			await postModule('character.json', characterModule);
-			await postModule('world.json', worldModule);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
-			assert.equal(db.prepare("SELECT module_id FROM characters WHERE id = 'mod:example.harin:harin'").get().module_id, 'example.harin');
-			assert.equal(JSON.parse(db.prepare("SELECT talent_json FROM characters WHERE id = 'mod:example.harin:harin'").get().talent_json).pride, 72);
-			const modulePage = await (await fetch(`${base}/lores`)).text();
-			assert.ok(modulePage.includes('value="mod:example.harin:harin"'));
-			assert.ok(modulePage.includes('세계관·인물 모듈'));
-			assert.ok(!modulePage.includes('data-lore-id='));
-			await post('advance');
-			assert.ok(modelCalls.findLast((call) => call.kind === 'world').input.worldSetting.includes('며칠째 늦여름 비'));
-			await post('act', { actionId: 'talk', targetId: 'mod:example.harin:harin' });
-			const moduleRelation = db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json;
-			await post('toggleModule', { id: 'example.harin', enabled: '0' });
-			assert.ok(!(await (await fetch(base)).text()).includes('value="mod:example.harin:harin"'));
-			await post('act', { actionId: 'talk', targetId: 'mod:example.harin:harin' }, true);
-			await post('toggleModule', { id: 'example.harin', enabled: '1' });
-			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json, moduleRelation);
-			const revisedCharacter = JSON.parse(characterModule);
-			revisedCharacter.version = '1.1.0';
-			revisedCharacter.characters[0].profile = '하린은 새 작업실로 이사했다.';
-			await postModule('character-update.json', JSON.stringify(revisedCharacter));
-			assert.equal(db.prepare("SELECT profile FROM characters WHERE id = 'mod:example.harin:harin'").get().profile, '하린은 새 작업실로 이사했다.');
-			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json, moduleRelation);
-			await postModule('another-world.json', JSON.stringify({ schemaVersion: 1, id: 'example.other-world', name: '다른 세계', version: '1.0.0', world: { setting: '다른 도시' } }));
-			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.rainy-mangwon'").get().enabled, 0);
-			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.harin'").get().enabled, 1);
-			await post('selectWorld', { id: '' });
-			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.other-world'").get().enabled, 0);
-			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.harin'").get().enabled, 1);
-			await post('selectWorld', { id: 'example.rainy-mangwon' });
-			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.rainy-mangwon'").get().enabled, 1);
-			assert.equal(db.prepare("SELECT enabled FROM modules WHERE id = 'example.other-world'").get().enabled, 0);
-			await post('save', { slot: '2' });
-			await post('toggleModule', { id: 'example.harin', enabled: '0' });
-			await post('toggleModule', { id: 'example.rainy-mangwon', enabled: '0' });
-			await post('load', { slot: '2' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
-			assert.equal(db.prepare("SELECT relation_json FROM characters WHERE id = 'mod:example.harin:harin'").get().relation_json, moduleRelation);
-			await post('load', { slot: '1' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 0);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(originalLoreId).n, 2);
+		let page = await (await fetch(base)).text();
+		assert.match(page, /극장 로비/);
+		assert.ok(!page.includes('PALAM'));
+		assert.equal(calls.length, 0);
+		const originalId = activeId();
+		await post(base, 'turn', { ...fields(), kind: 'speak', text: '함께 준비할까요?', targetId: 'seoyeon' });
+		await waitJob(base, db, originalId);
+		assert.deepEqual(calls.filter((call) => call.path.endsWith('systemone')).map((call) => call.body.state.self.id), ['seoyeon', 'harin']);
+		assert.ok(calls.filter((call) => call.path.endsWith('systemone'))[1].body.state.recentEvents.some((event) => event.text === '서연의 대답입니다.'));
+		assert.equal(snapshot().state.events.filter((entry) => entry.kind === 'speak').length, 3);
+		await post(base, 'turn', { ...fields(), kind: 'interact', targetId: 'desk-bell', interactionId: 'ring' });
+		await waitJob(base, db, originalId);
+		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'desk-bell').state.rung, true);
+		assert.ok(snapshot().state.events.some((entry) => /종소리/.test(entry.text)));
+		await post(base, 'save', { worldId: originalId, slot: '1' });
+		await post(base, 'turn', { ...fields(), kind: 'move', destinationId: 'stage' });
+		await waitJob(base, db, originalId);
+		assert.equal(snapshot().state.activeSceneId, 'stage');
+		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'harin').sceneId, 'stage');
+		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'seoyeon').sceneId, 'lobby');
+		const lastDecisions = calls.filter((call) => call.path.endsWith('systemone')).slice(-2);
+		assert.deepEqual(lastDecisions.map((call) => call.body.state.self.id), ['jieun', 'harin']);
+		assert.ok(!JSON.stringify(lastDecisions[0].body.state).includes('함께 준비할까요?'));
+		await post(base, 'load', { ...fields(), slot: '1' });
+		assert.equal(snapshot().state.activeSceneId, 'lobby');
+		assert.equal(snapshot().state.tick, 2);
+		failNext = true;
+		await post(base, 'turn', { ...fields(), kind: 'wait' });
+		await waitJob(base, db, originalId, true);
+		assert.equal(snapshot().state.tick, 2);
 
-			await post('createLore', { title: '비밀의 저택', worldSetting: '외딴 저택의 밤', eraRules: '방을 탐색하고 인물의 의지를 존중한다', narrativeMode: 'restrained' });
-			const secondLoreId = db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get().active_lore_id;
-			assert.notEqual(secondLoreId, originalLoreId);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 2);
-			assert.equal(db.prepare('SELECT turn FROM world_state').get().turn, 0);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 0);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 0);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
-			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '외딴 저택의 밤');
-			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'restrained');
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(secondLoreId).n, 0);
-			const secondPage = await (await fetch(base)).text();
-			assert.ok(secondPage.includes('>망원동의 세 사람</button>'));
-			assert.ok(secondPage.includes('>비밀의 저택</button>'));
-			assert.ok(secondPage.includes('0/3 사용 중'));
-			await post('load', { slot: '2' }, true);
-			await post('character', { name: '도희', age: '30', profile: '저택의 관리인이다.' });
-			const doheeId = db.prepare("SELECT id FROM characters WHERE name = '도희'").get().id;
-			await post('edit', { id: doheeId, ...fixedFields });
-			const simulatorBefore = await (await fetch(`${base}/simulator`)).text();
-			assert.ok(!simulatorBefore.includes('name="player.energy"'));
-			assert.ok(!simulatorBefore.includes('플레이어 체력'));
-			assert.equal(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(doheeId).talent_json).openness, 73);
-			const modelCallsBeforeSimulation = modelCalls.length;
-			await post('conversation', { targetId: doheeId });
-			assert.equal(modelCalls.length, modelCallsBeforeSimulation);
-			assert.equal(db.prepare('SELECT turn FROM world_state').get().turn, 1);
-			assert.equal(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(doheeId).exp_json).social, 18);
-			assert.ok(JSON.parse(db.prepare('SELECT mark_json FROM characters WHERE id = ?').get(doheeId).mark_json).includes('firstConversation'));
-			const simulatedEvent = db.prepare('SELECT action_id, renderer, semantic_json, state_changes_json, narrative FROM events ORDER BY id DESC LIMIT 1').get();
-			assert.equal(simulatedEvent.action_id, 'conversation');
-			assert.equal(simulatedEvent.renderer, 'template');
-			assert.equal(JSON.parse(simulatedEvent.semantic_json).targetId, doheeId);
-			assert.ok(!('energy' in JSON.parse(simulatedEvent.semantic_json).effects));
-			assert.ok(JSON.parse(simulatedEvent.state_changes_json).every((change) => change.path !== 'player.BASE.energy'));
-			assert.ok((await (await fetch(`${base}/simulator`)).text()).includes(simulatedEvent.narrative));
-			assert.ok((await (await fetch(base)).text()).includes(simulatedEvent.narrative));
-			await post('save', { slot: '1' });
-			const savedSession = JSON.parse(db.prepare('SELECT snapshot_json FROM lore_save_slots WHERE lore_id = ? AND slot = 1').get(secondLoreId).snapshot_json);
-			assert.ok(!('player' in savedSession));
-			assert.ok(!('characterTemplates' in savedSession));
-			await post('character', { id: doheeId, name: '도희', age: '30', profile: '저택의 관리인이다.', ...fixedFields,
-				'requirements.present': '1',
-				'requirement.0.actionId': 'kiss', 'requirement.0.stat': 'relation.trust', 'requirement.0.minimum': '70' });
-			await post('conversation', { targetId: doheeId });
-			assert.equal(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(doheeId).exp_json).social, 19);
-			await post('load', { slot: '1' });
-			assert.equal(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(doheeId).exp_json).social, 18);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT action_requirements_json FROM characters WHERE id = ?').get(doheeId).action_requirements_json),
-				[{ actionId: 'kiss', stat: 'relation.trust', minimum: 70 }]);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 1);
-			assert.equal(db.prepare('SELECT semantic_json FROM events').get().semantic_json, simulatedEvent.semantic_json);
-			const sceneRapport = JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport;
-			assert.ok(sceneRapport > 0);
-			await post('advance');
-			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport, 0);
-			await post('load', { slot: '1' });
-			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(doheeId).palam_json).rapport, sceneRapport);
-			await post('resetSession');
-			assert.deepEqual({ ...db.prepare('SELECT turn, day, minute, location FROM world_state').get() },
-				{ turn: 0, day: 1, minute: 1080, location: '시작 장소' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 0);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM memories').get().n, 0);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(secondLoreId).n, 1);
-			assert.equal(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(doheeId).exp_json).social, 17);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT action_requirements_json FROM characters WHERE id = ?').get(doheeId).action_requirements_json),
-				[{ actionId: 'kiss', stat: 'relation.trust', minimum: 70 }]);
-			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '외딴 저택의 밤');
-			assert.equal(db.prepare('SELECT world_memory FROM scenario_config').get().world_memory, '');
-			assert.equal(db.prepare('SELECT scene_note FROM scenario_config').get().scene_note, '');
-			assert.equal(db.prepare('SELECT pending_proposal_json FROM scenario_config').get().pending_proposal_json, null);
-			assert.equal(db.prepare('SELECT player_suggestions_json FROM scenario_config').get().player_suggestions_json, null);
-			const resetPage = await (await fetch(base)).text();
-			assert.ok(resetPage.includes('TURN 0'));
-			assert.ok(!resetPage.includes(simulatedEvent.narrative));
-			const insertTranscriptTurn = db.prepare(`INSERT INTO events
-				(turn, day, minute, location, action_id, character_id, summary, source_json, changes_json, narrative, renderer)
-				VALUES (?, 1, 1080, '시작 장소', 'advance', NULL, ?, '{}', '{}', ?, 'template')`);
-			for (let turn = 1; turn <= 35; turn += 1) {
-				insertTranscriptTurn.run(turn, `기록 ${turn}`, `장면 ${turn}`);
-			}
-			const longSessionMarkdown = await (await fetch(`${base}/session/export`)).text();
-			assert.equal((longSessionMarkdown.match(/^## \d+턴/gm) ?? []).length, 35);
-			assert.ok(longSessionMarkdown.indexOf('> 장면 1\n') < longSessionMarkdown.indexOf('> 장면 35\n'));
-			db.exec('DELETE FROM events');
-			await post('switchLore', { id: originalLoreId });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, 6);
-			const sessionMarkdown = await (await fetch(`${base}/session/export`)).text();
-			assert.match(sessionMarkdown, /> 서연에게 책을 추천한다/);
-			const sessionEvents = db.prepare('SELECT narrative FROM events ORDER BY id').all();
-			assert.equal((sessionMarkdown.match(/^## \d+턴/gm) ?? []).length, sessionEvents.length);
-			let previousPosition = -1;
-			for (const event of sessionEvents) {
-				const position = sessionMarkdown.indexOf(event.narrative.split('\n')[0], previousPosition + 1);
-				assert.ok(position > previousPosition, '세션의 장면이 시간순으로 모두 포함되어야 합니다.');
-				previousPosition = position;
-			}
-			assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
-			assert.equal(db.prepare('SELECT world_setting FROM scenario_config').get().world_setting, '비가 잦은 망원동');
-			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'explicit');
-			assert.ok((await (await fetch(base)).text()).includes('2/3 사용 중'));
-			await post('load', { slot: '2' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules WHERE enabled = 1').get().n, 2);
-			await post('switchLore', { id: secondLoreId });
-			assert.equal(db.prepare('SELECT name FROM characters').get().name, '도희');
-			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'restrained');
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 0);
-			assert.ok((await (await fetch(base)).text()).includes('1/3 사용 중'));
-			await post('renameLore', { title: '저택의 밤' });
-			assert.equal(db.prepare('SELECT title FROM lores WHERE id = ?').get(secondLoreId).title, '저택의 밤');
-			await post('switchLore', { id: 'missing-lore' }, true);
-			assert.equal(db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id, secondLoreId);
-			const exportResponse = await fetch(`${base}/lores/export/${secondLoreId}`);
-			assert.equal(exportResponse.status, 200);
-			assert.ok(exportResponse.headers.get('content-disposition').includes('.json'));
-			const exported = await exportResponse.text();
-			const bundle = JSON.parse(exported);
-			assert.equal(bundle.title, '저택의 밤');
-			assert.deepEqual(bundle.sessionStart, { day: 1, minute: 1080, location: '시작 장소', worldMemory: '' });
-			assert.equal(bundle.saves.length, 1);
-			assert.equal(bundle.state.characterTemplates.length, 1);
-			assert.ok(bundle.saves.every((save) => !('characterTemplates' in save.state)));
-			const loreFile = new FormData();
-			loreFile.append('loreFile', new Blob([exported], { type: 'application/json' }), 'lore.json');
-			const importResponse = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: loreFile });
-			assert.equal(importResponse.status, 200);
-			assert.ok(!(await importResponse.text()).includes('"type":"failure"'));
-			const importedLoreId = db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
-			assert.notEqual(importedLoreId, secondLoreId);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 3);
-			assert.equal(db.prepare('SELECT name FROM characters').get().name, '도희');
-			assert.deepEqual(JSON.parse(db.prepare('SELECT character_json FROM character_templates').get().character_json).actionRequirements,
-				[{ actionId: 'kiss', stat: 'relation.trust', minimum: 70 }]);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedLoreId).n, 1);
-			await post('deleteLore', { id: importedLoreId, confirmation: '다른 제목' }, true);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 3);
-			await post('deleteLore', { id: importedLoreId, confirmation: '저택의 밤' });
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, 2);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedLoreId).n, 0);
-			assert.equal(db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id, originalLoreId);
-			const originalBundle = await (await fetch(`${base}/lores/export/${originalLoreId}`)).text();
-			assert.equal(JSON.parse(originalBundle).state.modules.length, 3);
-			const legacyTalentBundle = JSON.parse(originalBundle);
-			const makeLegacy = (character) => {
-				delete character.talent_json;
-				if (character.id === harinId) {
-					character.abl_json = JSON.stringify({ conversation: 4, empathy: 3, seduction: 2 });
-					character.exp_json = JSON.stringify({ conversation: 9, empathy: 8, seduction: 7 });
-					character.relation_json = JSON.stringify({ affection: 80, trust: 11, desire: 90 });
-					character.palam_json = JSON.stringify({ rapport: 6, trust: 5, arousal: 3, pleasure: 2 });
-				}
-			};
-			for (const character of legacyTalentBundle.state.characters) makeLegacy(character);
-			for (const save of legacyTalentBundle.saves) {
-				for (const character of save.state.characters) makeLegacy(character);
-			}
-			const makeLegacyManifest = (module) => {
-				if (module.id !== 'example.harin') return;
-				const manifest = JSON.parse(module.manifest_json);
-				const character = manifest.characters[0];
-				character.talent = { pride: 72, openness: 58, empathy: 55, assertiveness: 64 };
-				character.abl = { conversation: 2, empathy: 1, seduction: 1 };
-				character.exp = { conversation: 4, empathy: 3, seduction: 2 };
-				character.relation = { affection: 8, trust: 7, desire: 3 };
-				delete character.relations;
-				character.palam = { rapport: 1, trust: 2, arousal: 0, pleasure: 0 };
-				module.manifest_json = JSON.stringify(manifest);
-			};
-			legacyTalentBundle.state.modules.forEach(makeLegacyManifest);
-			for (const save of legacyTalentBundle.saves) save.state.modules?.forEach(makeLegacyManifest);
-			const originalFile = new FormData();
-			originalFile.append('loreFile', new Blob([JSON.stringify(legacyTalentBundle)], { type: 'application/json' }), 'original.json');
-			const originalImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: originalFile });
-			assert.equal(originalImport.status, 200);
-			assert.ok(!(await originalImport.text()).includes('"type":"failure"'));
-			assert.equal(db.prepare('SELECT count(*) AS n FROM events').get().n, JSON.parse(originalBundle).state.events.length);
-			assert.equal(db.prepare('SELECT count(*) AS n FROM modules').get().n, 3);
-			assert.deepEqual(JSON.parse(db.prepare('SELECT talent_json FROM characters WHERE id = ?').get(harinId).talent_json), { pride: 50, openness: 50, libido: 50, modesty: 50, assertiveness: 50, receptiveness: 50, curiosity: 50 });
-			assert.deepEqual(JSON.parse(db.prepare('SELECT exp_json FROM characters WHERE id = ?').get(harinId).exp_json), { social: 17, romantic: 0, seduction: 7, intimacy: 0 });
-			assert.equal(JSON.parse(db.prepare('SELECT relation_json FROM characters WHERE id = ?').get(harinId).relation_json).player.resentment, 0);
-			assert.equal(JSON.parse(db.prepare('SELECT palam_json FROM characters WHERE id = ?').get(harinId).palam_json).comfort, 5);
-			assert.equal(JSON.parse(db.prepare('SELECT abl_json FROM characters WHERE id = ?').get(harinId).abl_json).intimacy, 1);
-			const migratedManifest = JSON.parse(db.prepare("SELECT manifest_json FROM modules WHERE id = 'example.harin'").get().manifest_json);
-			assert.equal(migratedManifest.characters[0].exp.social, 7);
-			assert.equal(migratedManifest.characters[0].relations.player.trust, 7);
-			const importedOriginalId = db.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lore_save_slots WHERE lore_id = ?').get(importedOriginalId).n, 2);
-			const migratedSave = JSON.parse(db.prepare('SELECT snapshot_json FROM lore_save_slots WHERE lore_id = ? AND slot = 1').get(importedOriginalId).snapshot_json);
-			assert.equal(JSON.parse(migratedSave.characters.find((character) => character.id === harinId).exp_json).social, 17);
-			const unrestrictedAgeBundle = JSON.parse(originalBundle);
-			const unrestrictedCharacter = unrestrictedAgeBundle.state.characters[0];
-			unrestrictedCharacter.age = 19;
-			const unrestrictedTemplate = unrestrictedAgeBundle.state.characterTemplates.find((template) => template.id === unrestrictedCharacter.id);
-			const unrestrictedTemplateCharacter = JSON.parse(unrestrictedTemplate.character_json);
-			unrestrictedTemplateCharacter.age = 19;
-			unrestrictedTemplate.character_json = JSON.stringify(unrestrictedTemplateCharacter);
-			const loreCountBeforeUnrestrictedImport = db.prepare('SELECT count(*) AS n FROM lores').get().n;
-			const unrestrictedFile = new FormData();
-			unrestrictedFile.append('loreFile', new Blob([JSON.stringify(unrestrictedAgeBundle)], { type: 'application/json' }), 'unrestricted-age.json');
-			const unrestrictedImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: unrestrictedFile });
-			assert.ok(!(await unrestrictedImport.text()).includes('"type":"failure"'));
-			assert.equal(db.prepare('SELECT count(*) AS n FROM lores').get().n, loreCountBeforeUnrestrictedImport + 1);
-			assert.equal(db.prepare('SELECT age FROM characters WHERE id = ?').get(unrestrictedCharacter.id).age, 19);
-			const legacyModule = JSON.parse(characterModule);
-			legacyModule.id = 'example.legacy-character';
-			legacyModule.characters[0].id = 'legacy';
-			legacyModule.characters[0].abl = { conversation: 3, empathy: 2, seduction: 1 };
-			legacyModule.characters[0].exp = { conversation: 4, empathy: 3, seduction: 2 };
-			legacyModule.characters[0].relation = { affection: 80, trust: 20, desire: 90 };
-			delete legacyModule.characters[0].relations;
-			legacyModule.characters[0].palam = { rapport: 4, trust: 6, arousal: 2, pleasure: 1 };
-			await postModule('legacy-character.json', JSON.stringify(legacyModule));
-			const legacyRow = db.prepare("SELECT abl_json, exp_json, relation_json, palam_json FROM characters WHERE id = 'mod:example.legacy-character:legacy'").get();
-			assert.equal(JSON.parse(legacyRow.abl_json).intimacy, 1);
-			assert.equal(JSON.parse(legacyRow.exp_json).social, 7);
-			assert.equal(JSON.parse(legacyRow.relation_json).player.affection, 80);
-			assert.equal(JSON.parse(legacyRow.palam_json).comfort, 6);
+		let signalStarted;
+		let release;
+		const started = new Promise((done) => { signalStarted = done; });
+		pauseNext = { started: signalStarted, wait: new Promise((done) => { release = done; }) };
+		await post(base, 'turn', { ...fields(), kind: 'wait' });
+		await started;
+		await post(base, 'createWorld', { name: '다른 세계', description: '별개의 무대.' }, '/lores');
+		const secondId = activeId();
+		assert.notEqual(secondId, originalId);
+		release();
+		await waitJob(base, db, originalId);
+		assert.equal(snapshot(originalId).state.tick, 3);
+		assert.equal(snapshot(secondId).state.tick, 0);
+		const callsBeforeEmpty = calls.length;
+		await post(base, 'turn', { ...fields(), kind: 'wait' });
+		await waitJob(base, db, secondId);
+		assert.equal(calls.length, callsBeforeEmpty, 'empty scenes must not invoke a model');
+		assert.equal(snapshot().state.tick, 1);
+		await post(base, 'scene', { ...fields(), name: '정원', description: '작은 정원.', exits: 'opening' }, '/lores');
+		const garden = snapshot().definition.scenes.find((scene) => scene.name === '정원');
+		assert.ok(snapshot().definition.scenes[0].exits.includes(garden.id));
+		assert.deepEqual(garden.exits, ['opening']);
+		await post(base, 'template', { ...fields(), kind: 'object', name: '문', description: '정원으로 통하는 문.', initialState: '{"open":false}', interactions: JSON.stringify([{ id: 'open', label: '문을 연다', description: '문고리를 돌린다.', conditions: [{ key: 'open', equals: false }], effects: { open: true } }]), reactions: '[]' }, '/lores');
+		const doorTemplate = snapshot().definition.templates[0].id;
+		for (const name of ['왼쪽 문', '오른쪽 문']) await post(base, 'spawn', { ...fields(), templateId: doorTemplate, sceneId: 'opening', name }, '/lores');
+		const doors = snapshot().state.instances;
+		await post(base, 'turn', { ...fields(), kind: 'interact', targetId: doors[0].id, interactionId: 'open' });
+		await waitJob(base, db, secondId);
+		assert.equal(snapshot().state.instances[0].state.open, true);
+		assert.equal(snapshot().state.instances[1].state.open, false);
+		assert.equal(calls.length, callsBeforeEmpty);
+		const beforeInvalid = db.prepare('SELECT count(*) AS n FROM theater_worlds').get().n;
+		const invalid = await exported(base, secondId);
+		invalid.world.state.activeSceneId = 'missing';
+		const invalidFile = new FormData(); invalidFile.append('file', new Blob([JSON.stringify(invalid)]), 'invalid.json');
+		const invalidResponse = await fetch(`${base}/lores?/importWorld`, { method: 'POST', headers: { origin: base }, body: invalidFile });
+		assert.equal((await invalidResponse.json()).type, 'failure');
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_worlds').get().n, beforeInvalid);
+		const recoverId = 'recover-stale-job';
+		db.prepare("INSERT INTO theater_jobs (id, world_id, revision, request_json, status, worker_id, heartbeat_at, created_at) VALUES (?, ?, ?, ?, 'running', 'old-worker', '2000-01-01T00:00:00.000Z', '2000-01-01T00:00:00.000Z')")
+			.run(recoverId, secondId, snapshot().revision, '{"kind":"wait"}');
+		await fetch(`${base}/api/generation?id=${recoverId}`);
+		assert.equal((await waitJob(base, db, secondId)).id, recoverId);
+		assert.notEqual(db.prepare('SELECT worker_id FROM theater_jobs WHERE id = ?').get(recoverId).worker_id, 'old-worker');
 
-			const authoringSource = JSON.parse(readFileSync(join(process.cwd(), 'skills/newera-lore-authoring/assets/example-source.json'), 'utf8'));
-			const authoredFile = new FormData();
-			authoredFile.append('loreFile', new Blob([JSON.stringify(buildBundle(authoringSource))], { type: 'application/json' }), 'authored-example.json');
-			const authoredImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: authoredFile });
-			assert.equal(authoredImport.status, 200);
-			assert.ok(!(await authoredImport.text()).includes('"type":"failure"'));
-			assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, '비 오는 동네의 저녁');
-			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'sensual');
-			assert.equal(db.prepare('SELECT name FROM characters').get().name, '서연');
-
-			const songSoiPreset = readFileSync(join(process.cwd(), 'static/lore-presets/song-soi.json'), 'utf8');
-			const songSoiFile = new FormData();
-			songSoiFile.append('loreFile', new Blob([songSoiPreset], { type: 'application/json' }), 'song-soi.json');
-			const songSoiImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: songSoiFile });
-			assert.equal(songSoiImport.status, 200);
-			assert.ok(!(await songSoiImport.text()).includes('"type":"failure"'));
-			assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, '송소이와 함께 사는 날들');
-			assert.equal(db.prepare('SELECT name FROM characters').get().name, '송소이');
-			assert.equal(db.prepare('SELECT narrative_mode FROM scenario_config').get().narrative_mode, 'explicit');
-			assert.equal(JSON.parse(db.prepare('SELECT relation_json FROM characters').get().relation_json).player.attachment, 86);
-
-			const genrePresets = [
-				['midnight-haeundae-guesthouse.json', '심야의 해운대 게스트하우스', '윤하늘'],
-				['ninety-days-before-christmas.json', '크리스마스 전의 90일', '서도현'],
-				['blue-moon-anomaly-unit.json', '청연시 이상현상 전담반', '김무진']
-			];
-			for (const [fileName, title, firstCharacter] of genrePresets) {
-				const preset = readFileSync(join(process.cwd(), 'static/lore-presets', fileName), 'utf8');
-				const presetFile = new FormData();
-				presetFile.append('loreFile', new Blob([preset], { type: 'application/json' }), fileName);
-				const presetImport = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: presetFile });
-				assert.equal(presetImport.status, 200);
-				assert.ok(!(await presetImport.text()).includes('"type":"failure"'));
-				assert.equal(db.prepare('SELECT title FROM lores WHERE id = (SELECT active_lore_id FROM lore_meta)').get().title, title);
-				assert.equal(db.prepare('SELECT name FROM characters ORDER BY sort_order LIMIT 1').get().name, firstCharacter);
-				assert.equal(db.prepare('SELECT count(*) AS n FROM characters').get().n, 3);
-				assert.ok(JSON.parse(db.prepare('SELECT action_requirements_json FROM characters ORDER BY sort_order LIMIT 1').get().action_requirements_json).length >= 7);
-			}
-		} finally {
-			db.close();
-		}
+		await post(base, 'selectWorld', { worldId: originalId });
+		let staleStarted;
+		let staleRelease;
+		const staleStart = new Promise((done) => { staleStarted = done; });
+		pauseNext = { started: staleStarted, wait: new Promise((done) => { staleRelease = done; }) };
+		await post(base, 'turn', { ...fields(), kind: 'wait' });
+		await staleStart;
+		await post(base, 'reset', fields());
+		staleRelease();
+		await waitJob(base, db, originalId, true);
+		assert.equal(snapshot().state.tick, 0);
+		assert.equal(snapshot().state.events.length, 0);
+		await post(base, 'turn', { ...fields(), kind: 'move', destinationId: 'missing' }, '/', true);
+		const exportedWorld = await exported(base, originalId);
+		assert.equal(exportedWorld.version, 2);
+		assert.equal(exportedWorld.saves.length, 1);
+		const file = new FormData();
+		file.append('file', new Blob([JSON.stringify(exportedWorld)], { type: 'application/json' }), 'world.json');
+		assert.equal((await fetch(`${base}/lores?/importWorld`, { method: 'POST', headers: { origin: base }, body: file })).status, 200);
+		assert.equal(snapshot().definition.name, exportedWorld.world.definition.name);
+		assert.notEqual(activeId(), originalId);
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_saves WHERE world_id = ?').get(activeId()).n, 1);
+		page = await (await fetch(`${base}/lores`)).text();
+		assert.match(page, /씬의 인스턴스와 동행/);
+		assert.ok(!page.includes('era 규칙'));
+		assert.equal((await fetch(`${base}/api/suggestions`, { method: 'POST' })).status, 404);
+		assert.equal((await fetch(`${base}/simulator`, { redirect: 'manual' })).status, 308);
+		assert.match(await (await fetch(`${base}/session/export`)).text(), /비가 그친 뒤의 극장/);
 	} finally {
-		if (app.exitCode === null) {
-			app.kill();
-			await once(app, 'exit');
-		}
-		await new Promise((resolve) => modelServer.close(resolve));
-		if (dataDirectory.startsWith(`${tmpdir()}${process.platform === 'win32' ? '\\' : '/'}`)) {
-			rmSync(dataDirectory, { recursive: true, force: true });
-		}
+		await running.stop(); db.close(); model.closeAllConnections(); await new Promise((done) => model.close(done));
 	}
 });
 
-test('existing progress and legacy save slots become the first lore', async () => {
-	const legacyDirectory = mkdtempSync(join(tmpdir(), 'newera-migration-'));
-	const path = join(legacyDirectory, 'newera.sqlite');
-	const oldSnapshot = {
-		world: [{ id: 1, turn: 4, day: 1, minute: 900, location: '예전 저장 장소' }],
-		player: [{ id: 1, energy: 17, max_energy: 24 }],
-		characters: [], events: [], memories: []
-	};
-	const db = new DatabaseSync(path);
-	db.exec(`CREATE TABLE world_state (id INTEGER PRIMARY KEY, turn INTEGER, day INTEGER, minute INTEGER, location TEXT);
-		CREATE TABLE player_state (id INTEGER PRIMARY KEY, energy INTEGER, max_energy INTEGER);
-		CREATE TABLE save_slots (slot INTEGER PRIMARY KEY, saved_at TEXT, turn INTEGER, snapshot_json TEXT);`);
-	db.prepare('INSERT INTO world_state VALUES (1, 9, 2, 1080, ?)').run('현재 진행 장소');
-	db.prepare('INSERT INTO player_state VALUES (1, 12, 24)').run();
-	db.prepare('INSERT INTO save_slots VALUES (2, ?, 4, ?)').run('2026-09-19T00:00:00.000Z', JSON.stringify(oldSnapshot));
-	db.close();
-	const appPort = await freePort();
-	const base = `http://127.0.0.1:${appPort}`;
-	const app = spawn(process.execPath, ['build/index.js'], {
-		cwd: process.cwd(),
-		env: { ...process.env, PORT: String(appPort), HOST: '127.0.0.1', ORIGIN: base, NEWERA_DATA_DIR: legacyDirectory,
-			NEWERA_LLM_BASE_URL: 'http://127.0.0.1:1/v1' },
-		stdio: 'pipe'
-	});
+test('legacy SQLite migration and old JSON imports preserve stories, slots and source tables', async () => {
+	const directory = scratch();
+	const legacy = JSON.parse(readFileSync('static/lore-presets/blue-moon-anomaly-unit.json', 'utf8'));
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	db.exec(`CREATE TABLE lores (id TEXT PRIMARY KEY, title TEXT, state_json TEXT, created_at TEXT);
+		CREATE TABLE lore_meta (id INTEGER PRIMARY KEY, active_lore_id TEXT);
+		CREATE TABLE world_state (id INTEGER PRIMARY KEY, turn INTEGER, day INTEGER, minute INTEGER, location TEXT);
+		CREATE TABLE scenario_config (id INTEGER PRIMARY KEY, world_setting TEXT);
+		CREATE TABLE characters (id TEXT PRIMARY KEY, name TEXT, profile TEXT);
+		CREATE TABLE events (id INTEGER PRIMARY KEY, turn INTEGER, narrative TEXT);
+		CREATE TABLE memories (id INTEGER PRIMARY KEY, event_id INTEGER, character_id TEXT, summary TEXT, created_turn INTEGER);
+		CREATE TABLE lore_save_slots (lore_id TEXT, slot INTEGER, saved_at TEXT, snapshot_json TEXT);`);
+	db.prepare('INSERT INTO lores VALUES (?, ?, ?, ?)').run('old-active', 'Existing story', null, new Date().toISOString());
+	db.prepare('INSERT INTO lores VALUES (?, ?, ?, ?)').run('old-inactive', legacy.title, JSON.stringify(legacy.state), new Date().toISOString());
+	db.exec("INSERT INTO lore_meta VALUES (1, 'old-active'); INSERT INTO world_state VALUES (1, 5, 2, 1200, 'Existing room'); INSERT INTO scenario_config VALUES (1, 'Existing world'); INSERT INTO characters VALUES ('a', 'Existing actor', 'Existing profile'); INSERT INTO events VALUES (1, 5, 'Existing narrative'); INSERT INTO memories VALUES (1, 1, 'a', 'Existing memory', 5);");
+	db.prepare('INSERT INTO lore_save_slots VALUES (?, 1, ?, ?)').run('old-active', new Date().toISOString(), JSON.stringify({ world: [{ turn: 3, day: 1, minute: 1000, location: 'Earlier room' }], config: [{ world_setting: 'Existing world' }], characters: [{ id: 'a', name: 'Existing actor', profile: 'Existing profile' }], events: [], memories: [] }));
+	const before = db.prepare('SELECT * FROM characters').all();
+	const running = await app(directory, 'http://127.0.0.1:1/v1');
 	try {
-		let ready = false;
-		for (let attempt = 0; attempt < 60; attempt += 1) {
-			if (app.exitCode !== null) throw new Error(`서버가 종료됐습니다: ${app.exitCode}`);
-			try { ready = (await fetch(base)).ok; } catch { /* starting */ }
-			if (ready) break;
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-		assert.ok(ready, 'app did not start');
-		const migrated = new DatabaseSync(path);
-		try {
-			assert.equal(migrated.prepare('SELECT title FROM lores').get().title, '망원동의 세 사람');
-			assert.deepEqual(JSON.parse(migrated.prepare('SELECT start_json FROM lores').get().start_json),
-				{ day: 2, minute: 1080, location: '현재 진행 장소', worldMemory: '' });
-			assert.equal(migrated.prepare('SELECT turn FROM world_state').get().turn, 9);
-			assert.equal(migrated.prepare('SELECT energy FROM player_state').get().energy, 12);
-			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lore_save_slots').get().n, 1);
-			assert.equal(migrated.prepare('SELECT count(*) AS n FROM save_slots').get().n, 1);
-			const response = await fetch(`${base}/?/load`, { method: 'POST', headers: { Origin: base }, body: new URLSearchParams({ slot: '2' }) });
-			assert.equal(response.status, 200);
-			assert.ok(!(await response.text()).includes('"type":"failure"'));
-			assert.equal(migrated.prepare('SELECT turn FROM world_state').get().turn, 4);
-			assert.equal(migrated.prepare('SELECT energy FROM player_state').get().energy, 12);
-			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lores').get().n, 1);
-			const firstLoreId = migrated.prepare('SELECT active_lore_id FROM lore_meta').get().active_lore_id;
-			const exported = await (await fetch(`${base}/lores/export/${firstLoreId}`)).text();
-			const exportedLore = JSON.parse(exported);
-			assert.ok(!('player' in exportedLore.state));
-			assert.ok(exportedLore.saves.every((save) => !('player' in save.state)));
-			const form = new FormData();
-			form.append('loreFile', new Blob([exported], { type: 'application/json' }), 'legacy-lore.json');
-			const imported = await fetch(`${base}/lores?/importLore`, { method: 'POST', headers: { Origin: base }, body: form });
-			assert.equal(imported.status, 200);
-			assert.ok(!(await imported.text()).includes('"type":"failure"'));
-			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lores').get().n, 2);
-			assert.equal(migrated.prepare('SELECT count(*) AS n FROM lore_save_slots').get().n, 2);
-		} finally {
-			migrated.close();
-		}
-	} finally {
-		if (app.exitCode === null) {
-			app.kill();
-			await once(app, 'exit');
-		}
-		if (legacyDirectory.startsWith(`${tmpdir()}${process.platform === 'win32' ? '\\' : '/'}`)) {
-			rmSync(legacyDirectory, { recursive: true, force: true });
-		}
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_worlds').get().n, 2);
+		assert.deepEqual(db.prepare('SELECT * FROM characters').all(), before);
+		const world = (await exported(running.base, 'legacy-old-active')).world;
+		assert.equal(world.state.tick, 5);
+		assert.equal(world.state.events[0].text, 'Existing narrative');
+		assert.equal(world.state.instances[0].memories[0].text, 'Existing memory');
+		assert.equal((await exported(running.base, 'legacy-old-active')).saves.length, 1);
+		const file = new FormData(); file.append('file', new Blob([JSON.stringify(legacy)]), 'legacy.json');
+		assert.equal((await fetch(`${running.base}/lores?/importWorld`, { method: 'POST', headers: { origin: running.base }, body: file })).status, 200);
+		const id = db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get().value;
+		assert.equal((await exported(running.base, id)).world.definition.name, legacy.title);
+		assert.equal((await exported(running.base, id)).legacyArchive.format, 'newera-lore');
+	} finally { await running.stop(); db.close(); }
+});
+
+test.after(() => {
+	for (const directory of scratchDirectories) {
+		if (resolve(directory).startsWith(resolve(tmpdir()) + '\\') && directory.includes('newera-theater-integration-')) rmSync(directory, { recursive: true, force: true });
 	}
 });

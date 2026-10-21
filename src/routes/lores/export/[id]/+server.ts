@@ -1,17 +1,9 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { exportLoreJson } from '$lib/server/db';
+import { exportWorld } from '$lib/server/stage-store';
 
 export const GET: RequestHandler = ({ params }) => {
 	try {
-		return new Response(exportLoreJson(params.id), {
-			headers: {
-				'content-type': 'application/json; charset=utf-8',
-				'content-disposition': `attachment; filename="newera-lore-${params.id}.json"`,
-				'cache-control': 'no-store'
-			}
-		});
-	} catch {
-		error(404, '로어를 찾을 수 없습니다.');
-	}
+		return new Response(exportWorld(params.id), { headers: { 'content-type': 'application/json; charset=utf-8', 'content-disposition': `attachment; filename="newera-world-${encodeURIComponent(params.id)}.json"`, 'cache-control': 'no-store' } });
+	} catch { error(404, '세계관을 찾을 수 없습니다.'); }
 };

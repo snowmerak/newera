@@ -12,12 +12,12 @@ if (!inputArg) {
 try {
   const inputPath = resolve(inputArg);
   const value = JSON.parse(await readFile(inputPath, 'utf8'));
-  if (value?.format === 'newera-lore-source') {
+  if (value?.format === 'newera-theater-source') {
     const result = validateSource(value);
-    console.log(`유효한 작성 원본: ${result.title} · 인물 ${result.characters.length}명 · 묘사 ${result.world.narrativeMode}`);
+    console.log(`유효한 작성 원본: ${result.name} · 씬 ${result.scenes.length}개 · 원형 ${result.templates.length}개`);
   } else {
     const result = validateBundle(value);
-    console.log(`유효한 import 로어: ${result.title} · 인물 ${result.characterCount}명 · 묘사 ${result.narrativeMode} · 턴 ${result.turn}`);
+    console.log(`유효한 세계관: ${result.title} · 씬 ${result.sceneCount}개 · 인스턴스 ${result.instanceCount}개 · 진행 ${result.tick}회`);
   }
 } catch (cause) {
   console.error(`검증 실패: ${cause instanceof Error ? cause.message : String(cause)}`);

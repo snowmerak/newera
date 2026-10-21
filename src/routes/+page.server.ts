@@ -1,103 +1,42 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getGameView, getLatestGenerationJob, loadGame, resetCurrentSession, saveGame, switchLore } from '$lib/server/db';
-import { ensureGenerationWorker, mutateGameState, queueAction, queueAdvanceWorld, queueFreeAction, queueProposalResponse } from '$lib/server/game';
+import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld } from '$lib/server/stage-store';
+import { ensureStageWorker, queueStageTurn } from '$lib/server/stage';
 
-export const load: PageServerLoad = ({ url }) => {
-	ensureGenerationWorker();
-	const view = getGameView();
-	const requestedTarget = url.searchParams.get('target');
-	const selectedTargetId = requestedTarget === null
-		? view.characters[0]?.id ?? ''
-		: requestedTarget === 'none'
-			? ''
-			: view.characters.some((character) => character.id === requestedTarget) ? requestedTarget : '';
-	return { ...view, selectedTargetId, generation: getLatestGenerationJob(view.lore.id) };
-};
+export const load: PageServerLoad = () => { ensureStageWorker(); return getStageView(); };
 
+function failed(error: unknown) {
+	return fail(400, { message: error instanceof Error ? error.message : '요청을 처리하지 못했습니다.' });
+}
 export const actions: Actions = {
-	switchLore: async ({ request }) => {
-		const body = await request.formData();
+	turn: async ({ request }) => {
 		try {
-			mutateGameState(() => switchLore(String(body.get('id') ?? '')));
-			return { message: '로어를 전환했습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, { message: error instanceof Error ? error.message : '로어를 전환하지 못했습니다.', level: 'error' as const });
-		}
+			const body = await request.formData();
+			const kind = String(body.get('kind'));
+			const worldId = String(body.get('worldId'));
+			const revision = Number(body.get('revision'));
+			if (kind === 'speak') queueStageTurn(worldId, revision, { kind, text: String(body.get('text') ?? ''), targetId: String(body.get('targetId') ?? '') || null });
+			else if (kind === 'move') queueStageTurn(worldId, revision, { kind, destinationId: String(body.get('destinationId')) });
+			else if (kind === 'interact') queueStageTurn(worldId, revision, { kind, targetId: String(body.get('targetId')), interactionId: String(body.get('interactionId')) });
+			else if (kind === 'wait') queueStageTurn(worldId, revision, { kind });
+			else throw new Error('알 수 없는 행동입니다.');
+			return { message: '' };
+		} catch (error) { return failed(error); }
 	},
-	advance: async () => {
-		try {
-			queueAdvanceWorld();
-			return { message: '다음 장면 생성을 시작했습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, { message: error instanceof Error ? error.message : '장면을 진행하지 못했습니다.', level: 'error' as const });
-		}
-	},
-	act: async ({ request }) => {
-		const body = await request.formData();
-		try {
-			queueAction(String(body.get('actionId') ?? ''), String(body.get('targetId') ?? ''));
-			return { message: '행동 결과 생성을 시작했습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, {
-				message: error instanceof Error ? error.message : '행동을 처리하지 못했습니다.',
-				level: 'error' as const
-			});
-		}
-	},
-	freeAct: async ({ request }) => {
-		const body = await request.formData();
-		try {
-			queueFreeAction(String(body.get('text') ?? ''), String(body.get('targetId') ?? ''));
-			return { message: '행동 결과 생성을 시작했습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, { message: error instanceof Error ? error.message : '행동을 진행하지 못했습니다.', level: 'error' as const });
-		}
-	},
-	proposal: async ({ request }) => {
-		const body = await request.formData();
-		const answer = String(body.get('answer') ?? '');
-		if (answer !== 'accept' && answer !== 'decline') return fail(400, { message: '응답이 올바르지 않습니다.', level: 'error' as const });
-		try {
-			queueProposalResponse(answer);
-			return { message: '제안에 대한 장면 생성을 시작했습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, { message: error instanceof Error ? error.message : '제안에 응답하지 못했습니다.', level: 'error' as const });
-		}
+	selectWorld: async ({ request }) => {
+		try { selectWorld(String((await request.formData()).get('worldId'))); return { message: '세계관을 열었습니다.' }; }
+		catch (error) { return failed(error); }
 	},
 	save: async ({ request }) => {
-		const body = await request.formData();
-		try {
-			saveGame(Number(body.get('slot')));
-			return { message: '현재 진행을 저장했습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, {
-				message: error instanceof Error ? error.message : '저장하지 못했습니다.',
-				level: 'error' as const
-			});
-		}
+		try { const body = await request.formData(); saveWorld(String(body.get('worldId')), Number(body.get('slot'))); return { message: '진행을 저장했습니다.' }; }
+		catch (error) { return failed(error); }
 	},
 	load: async ({ request }) => {
-		const body = await request.formData();
-		try {
-			mutateGameState(() => loadGame(Number(body.get('slot'))));
-			return { message: '저장된 진행을 불러왔습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, {
-				message: error instanceof Error ? error.message : '불러오지 못했습니다.',
-				level: 'error' as const
-			});
-		}
+		try { const body = await request.formData(); loadWorld(String(body.get('worldId')), Number(body.get('revision')), Number(body.get('slot'))); return { message: '진행을 불러왔습니다.' }; }
+		catch (error) { return failed(error); }
 	},
-	resetSession: async () => {
-		try {
-			mutateGameState(() => resetCurrentSession());
-			return { message: '현재 세션을 처음 상태로 초기화했습니다.', level: 'success' as const };
-		} catch (error) {
-			return fail(400, {
-				message: error instanceof Error ? error.message : '현재 세션을 초기화하지 못했습니다.',
-				level: 'error' as const
-			});
-		}
+	reset: async ({ request }) => {
+		try { const body = await request.formData(); resetWorld(String(body.get('worldId')), Number(body.get('revision'))); return { message: '초기 배치로 돌아갔습니다.' }; }
+		catch (error) { return failed(error); }
 	}
 };

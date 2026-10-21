@@ -1,331 +1,114 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { goto, invalidateAll } from '$app/navigation';
-	import { eventRequestText } from '$lib/game/event-text';
-	import { PALAM_METADATA } from '$lib/game/types';
+	import { invalidateAll } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import { tick } from 'svelte';
+	import { actorName, residents, templateFor, interactionsFor } from '$lib/theater/runtime';
 	import type { PageProps } from './$types';
-
 	let { data, form }: PageProps = $props();
-	let loreOpen = $state(false);
-	let sidebarHidden = $state(false);
-	let turnBusy = $state(false);
-	let stateBusy = $state(false);
-	let saveBusy = $state(false);
-	let navigationBusy = $state(false);
-	let suggestionLoading = $state(false);
-	let lazySuggestionSet = $state<{ key: string; options: string[] } | null>(null);
-	let chatThread: HTMLDivElement;
-	let targetId = $derived(data.selectedTargetId);
-	let selected = $derived(data.characters.find((character) => character.id === targetId) ?? null);
-	let proposalCharacter = $derived(data.characters.find((character) => character.id === data.config.pendingProposal?.characterId));
-	let serverGenerating = $derived(data.generation?.status === 'pending' || data.generation?.status === 'running');
-	let interactionBusy = $derived(turnBusy || serverGenerating || stateBusy || navigationBusy);
-	let suggestionKey = $derived(JSON.stringify({
-		loreId: data.lore.id,
-		world: data.world,
-		worldSetting: data.config.worldSetting,
-		eraRules: data.config.eraRules,
-		sceneNote: data.config.sceneNote,
-		targetId: targetId || null,
-		character: selected
-	}));
-	let storedSuggestions = $derived(data.config.playerSuggestions?.turn === data.world.turn && data.config.playerSuggestions.targetId === (targetId || null)
-		? data.config.playerSuggestions.options : []);
-	let suggestions = $derived(storedSuggestions.length ? storedSuggestions
-		: lazySuggestionSet?.key === suggestionKey ? lazySuggestionSet.options : []);
-	let conversationEvents = $derived([...data.events.slice(0, 12)].reverse());
+	let submitting = $state(false);
+	let targetId = $state('');
+	let world = $derived(data.world);
+	let scene = $derived(world.definition.scenes.find((entry) => entry.id === world.state.activeSceneId)!);
+	let present = $derived(residents(world));
+	let characters = $derived(present.filter((instance) => templateFor(world, instance).kind === 'character'));
+	let objects = $derived(present.filter((instance) => templateFor(world, instance).kind === 'object'));
+	let companions = $derived(world.state.instances.filter((instance) => instance.active && instance.companion));
+	let generating = $derived(data.generation?.status === 'pending' || data.generation?.status === 'running');
+	let busy = $derived(submitting || generating);
+	let events = $derived(world.state.events.slice(-100));
+	const submitTurn: SubmitFunction = () => {
+		submitting = true;
+		return async ({ update }) => { try { await update(); } finally { submitting = false; } };
+	};
 	$effect(() => {
-		data.world.turn;
-		data.config.pendingProposal;
-		void tick().then(() => {
-			if (chatThread) chatThread.scrollTop = chatThread.scrollHeight;
-		});
-	});
-	$effect(() => {
-		const key = suggestionKey;
-		const requestedTargetId = targetId;
-		if (serverGenerating || data.config.pendingProposal || storedSuggestions.length || lazySuggestionSet?.key === key) {
-			suggestionLoading = false;
-			return;
-		}
-		const controller = new AbortController();
-		suggestionLoading = true;
-		void fetch('/api/suggestions', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ targetId: requestedTargetId }),
-			signal: controller.signal
-		}).then(async (response) => {
-			const result = await response.json() as { options?: unknown };
-			if (!response.ok || !Array.isArray(result.options)) throw new Error('행동 선택지를 만들지 못했습니다.');
-			const options = result.options.filter((option): option is string => typeof option === 'string');
-			if (suggestionKey === key) lazySuggestionSet = { key, options };
-		}).catch((error: unknown) => {
-			if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn(error);
-		}).finally(() => {
-			if (suggestionKey === key) suggestionLoading = false;
-		});
-		return () => controller.abort();
+		if (targetId && !characters.some((instance) => instance.id === targetId)) targetId = '';
 	});
 	$effect(() => {
 		const generation = data.generation;
-		if (!generation || (generation.status !== 'pending' && generation.status !== 'running')) return;
+		if (!generation || !['pending', 'running'].includes(generation.status)) return;
 		const controller = new AbortController();
-		let timer: ReturnType<typeof setTimeout> | undefined;
 		let stopped = false;
-		const poll = async (): Promise<void> => {
+		let timer: ReturnType<typeof setTimeout>;
+		async function poll() {
 			try {
-				const response = await fetch(`/api/generation?id=${encodeURIComponent(generation.id)}`, {
-					signal: controller.signal,
-					headers: { accept: 'application/json' },
-					cache: 'no-store'
-				});
-				const result = await response.json() as { generation?: { status?: unknown } | null };
-				const status = result.generation?.status;
-				if (status === 'pending' || status === 'running') {
-					if (!stopped) timer = setTimeout(poll, 1000);
+				const response = await fetch(`/api/generation?id=${encodeURIComponent(generation!.id)}`, { signal: controller.signal, cache: 'no-store' });
+				if (!response.ok) throw new Error('생성 상태를 확인하지 못했습니다.');
+				const result = await response.json();
+				if (!result.generation || !['pending', 'running'].includes(result.generation.status)) {
+					if (!stopped) await invalidateAll();
 					return;
 				}
-				if (!stopped) await invalidateAll();
-			} catch (error) {
-				if (!(error instanceof DOMException && error.name === 'AbortError') && !stopped) {
-					timer = setTimeout(poll, 1500);
-				}
-			}
-		};
-		timer = setTimeout(poll, 500);
-		return () => {
-			stopped = true;
-			controller.abort();
-			if (timer) clearTimeout(timer);
-		};
-	});
-	let visibleMemories = $derived.by(() => {
-		const seen = new Set<string>();
-		return data.memories.filter((memory) => {
-			if (memory.characterId !== selected?.id || !memory.isDetail || seen.has(memory.summary)) return false;
-			seen.add(memory.summary);
-			return true;
-		}).slice(0, 6);
-	});
-
-	const submitTurn: SubmitFunction = () => {
-		turnBusy = true;
-		return async ({ update }) => {
-			try { await update(); } finally { turnBusy = false; }
-		};
-	};
-
-	const submitState: SubmitFunction = () => {
-		stateBusy = true;
-		lazySuggestionSet = null;
-		return async ({ update }) => {
-			try { await update(); } finally { stateBusy = false; }
-		};
-	};
-
-	const submitSave: SubmitFunction = () => {
-		saveBusy = true;
-		return async ({ update }) => {
-			try { await update(); } finally { saveBusy = false; }
-		};
-	};
-
-	function afterLoreSwitch(): void {
-		loreOpen = false;
-	}
-
-	async function changeTarget(event: Event & { currentTarget: HTMLSelectElement }): Promise<void> {
-		const id = event.currentTarget.value;
-		navigationBusy = true;
-		try {
-			await goto(`/?target=${encodeURIComponent(id || 'none')}`, { replaceState: true, keepFocus: true, noScroll: true });
-		} finally {
-			navigationBusy = false;
+			} catch { if (stopped) return; }
+			if (!stopped) timer = setTimeout(poll, 1000);
 		}
-	}
-
-	function timeLabel(minute: number): string {
-		return `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
-	}
-
-	function characterName(id: string | null): string {
-		return data.characters.find((character) => character.id === id)?.name ?? '세계';
-	}
-
-	function confirmSessionReset(event: SubmitEvent): void {
-		if (!window.confirm(`${data.lore.title}의 현재 세션을 처음부터 다시 시작할까요?\n진행된 턴, 사건, 기억과 캐릭터 수치 변화가 초기화됩니다. 수동 세이브 슬롯은 유지됩니다.`)) {
-			event.preventDefault();
-		}
-	}
-
+		timer = setTimeout(poll, 300);
+		return () => { stopped = true; controller.abort(); clearTimeout(timer); };
+	});
+	const clock = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
 </script>
 
-<svelte:head>
-	<title>{data.lore.title} · newera</title>
-	<meta name="description" content="세계와 인물이 스스로 움직이는 성인 era 텍스트 게임" />
-</svelte:head>
-
-<div class="page">
-	<header class="topbar">
-		<div class="brand-group"><a class="brand" href="/">newera</a><span class="adult-label">성인용 텍스트 게임</span></div>
-		<div class="top-actions">
-			<button type="button" class="sidebar-toggle" aria-controls="lore-sidebar" aria-expanded={!sidebarHidden} onclick={() => (sidebarHidden = !sidebarHidden)}>{sidebarHidden ? '사이드바 열기' : '사이드바 숨기기'}</button>
-			<a class="top-link" href="/lores">로어 관리</a>
-			<button type="button" class="lore-toggle" aria-controls="lore-sidebar" aria-expanded={loreOpen} onclick={() => { sidebarHidden = false; loreOpen = !loreOpen; }}>로어 {loreOpen ? '닫기' : '목록'}</button>
+<svelte:head><title>{world.definition.name} · newera</title><meta name="description" content="씬과 인물의 선택으로 이어지는 이야기" /></svelte:head>
+<header class="topbar"><a class="brand" href="/">newera<span>THEATER</span></a><a class="top-link" href="/lores">세계관과 무대 편집 ↗</a></header>
+<div class="theater-layout">
+	<aside class="catalog">
+		<p class="eyebrow">WORLDS</p>
+		{#each data.worlds as entry}
+			<form method="POST" action="?/selectWorld" use:enhance>
+				<input type="hidden" name="worldId" value={entry.id} />
+				<button class:current={entry.id === world.id} class="world-link" disabled={entry.id === world.id}>{entry.name}</button>
+			</form>
+		{/each}
+		<div class="sidebar-section"><p class="eyebrow">COMPANIONS</p>
+			{#each companions as instance}<p class="companion-name">{instance.name}<small>함께 이동하는 동행</small></p>{:else}<p class="muted">아직 동행이 없습니다.</p>{/each}
 		</div>
-	</header>
-
-	<div class="game-layout" class:sidebar-hidden={sidebarHidden}>
-		<aside id="lore-sidebar" class="lore-sidebar" class:open={loreOpen} class:hidden={sidebarHidden} aria-label="로어 목록">
-			<div class="lore-sidebar-inner">
-				<h2 class="lore-sidebar-title">로어</h2>
-				<nav class="lore-items" aria-label="로어 선택">
-					{#each data.lores as lore}
-						<form method="POST" action="?/switchLore" use:enhance={submitState}>
-							<button class="lore-item" class:active={lore.active} name="id" value={lore.id} disabled={interactionBusy || lore.active} onclick={afterLoreSwitch}>{lore.title}</button>
-						</form>
-					{/each}
-				</nav>
-				<section class="save-panel sidebar-saves" aria-label="저장 슬롯">
-					<div class="save-panel-title"><h2>저장 슬롯</h2><span>{data.saves.length}/3 사용 중</span></div>
-					<div class="save-slots">{#each [1, 2, 3] as number}
-						{@const saved = data.saves.find((save) => save.slot === number)}
-						<div class="save-slot"><div><strong>슬롯 {number}</strong><span>{saved ? `${saved.turn}턴 저장 · ${new Date(saved.savedAt).toLocaleString('ko-KR')}` : '비어 있음'}</span></div>
-							<div class="save-slot-actions">
-								<form method="POST" action="?/save" use:enhance={submitSave}><button name="slot" value={number} disabled={saveBusy || stateBusy}>저장</button></form>
-								<form method="POST" action="?/load" use:enhance={submitState}><button name="slot" value={number} disabled={interactionBusy || saveBusy || !saved}>불러오기</button></form>
-							</div>
-						</div>
-					{/each}</div>
-					<form class="session-reset-form" method="POST" action="?/resetSession" use:enhance={submitState} onsubmit={confirmSessionReset}>
-						<button disabled={interactionBusy || saveBusy || data.world.turn === 0}>현재 세션 초기화</button>
-						<small>수동 세이브는 남겨 두고 현재 진행만 처음으로 되돌립니다.</small>
-					</form>
-				</section>
+		<div class="sidebar-section"><p class="eyebrow">SAVE SLOTS</p>
+			{#each [1, 2, 3] as slot}
+				{@const save = data.saves.find((entry) => entry.slot === slot)}
+				<div class="save-slot"><span>{slot} · {save ? `${save.tick}회 진행` : '비어 있음'}</span><div class="button-row">
+					<form method="POST" action="?/save" use:enhance><input type="hidden" name="worldId" value={world.id} /><button name="slot" value={slot}>저장</button></form>
+					<form method="POST" action="?/load" use:enhance><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button name="slot" value={slot} disabled={!save || submitting}>불러오기</button></form>
+				</div></div>
+			{/each}
+		</div>
+	</aside>
+	<main class="stage-reader">
+		<div class="scene-heading"><div><p class="eyebrow">SCENE / {world.state.tick}</p><h1>{scene.name}</h1></div><span>{world.state.day}일차 · {clock(world.state.minute)}</span></div>
+		<p class="scene-description">{scene.description}</p>
+		<div class="cast-strip" aria-label="현재 씬의 등장인물">
+			{#each characters as instance}<span class:companion={instance.companion}>{instance.name}{instance.companion ? ' · 동행' : ''}</span>{:else}<span>지금 이곳에는 나 혼자 있다.</span>{/each}
+		</div>
+		<div class="event-thread" aria-live="polite">
+			{#each events as event (event.id)}
+				{@const eventScene = world.definition.scenes.find((entry) => entry.id === event.sceneId)}
+				<article class="stage-event" class:player={event.actorId === 'player'} class:dialogue={event.kind === 'speak'}>
+					<div class="event-byline"><strong>{actorName(world, event.actorId)}</strong><span>{eventScene?.name} · {event.tick}</span>{#if event.targetId}<span>→ {actorName(world, event.targetId)}</span>{/if}</div>
+					<p>{event.text}</p>
+					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}
+					{#if event.decision}<details class="decision-detail"><summary>선택 기록</summary><small>{event.decision.choice} · 반응 신호 {event.decision.reaction.toFixed(2)} · 강도 {event.decision.intensity.toFixed(2)} · {event.decision.model}</small></details>{/if}
+				</article>
+			{:else}<div class="empty-stage"><p>아직 아무도 말을 꺼내지 않았다.</p><span>말을 걸거나, 주변 사물을 살피거나, 잠시 기다려 보세요.</span></div>{/each}
+		</div>
+		{#if generating}<p class="generation-status" role="status">현장의 인물들이 각자의 다음 행동을 고르고 있습니다…</p>{/if}
+		{#if data.generation?.status === 'failed'}<p class="feedback error" role="alert">{data.generation.error}</p>{/if}
+		{#if form?.message}<p class="feedback" role="status">{form.message}</p>{/if}
+		<section class="player-console"><p class="eyebrow">YOUR NEXT LINE</p>
+			<form method="POST" action="?/turn" use:enhance={submitTurn} class="speech-form">
+				<input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="speak" />
+				<label>누구에게<select name="targetId" bind:value={targetId} disabled={busy}><option value="">현장에 있는 모두에게</option>{#each characters as instance}<option value={instance.id}>{instance.name}</option>{/each}</select></label>
+				<label class="speech-input">나의 말<textarea name="text" rows="3" placeholder="지금 하고 싶은 말을 적어 주세요." maxlength="4000" required disabled={busy}></textarea></label>
+				<button class="primary" disabled={busy}>말하기</button>
+			</form>
+			<div class="stage-options">
+				<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button name="kind" value="wait" disabled={busy}>잠시 지켜본다</button></form>
+				{#each scene.exits as exit}{@const destination = world.definition.scenes.find((entry) => entry.id === exit)!}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="move" /><button name="destinationId" value={exit} disabled={busy}>{destination.name}(으)로 →</button></form>{/each}
 			</div>
-		</aside>
-
-		<main class="reader">
-			<div class="lore-heading"><div><p class="eyebrow">PLAYING LORE</p><h1>{data.lore.title}</h1></div><a href="/lores">설정 관리 →</a></div>
-			<section class="session-panel" aria-label="현재 세션">
-				<div><span class="eyebrow">현재 세션 · 자동 저장</span><strong>{data.world.day}일차 {timeLabel(data.world.minute)}</strong><small>{data.world.location} · {data.world.turn}턴</small><a class="session-export" href="/session/export" download>대화 내보내기 · Markdown</a></div>
-			</section>
-
-			<section class="conversation-panel" aria-label="대화와 장면">
-				<div class="scene-meta"><span>TURN {data.world.turn}</span><span>{data.world.day}일차 · {timeLabel(data.world.minute)}</span><span>{data.world.location}</span></div>
-				<div class="chat-thread" role="log" bind:this={chatThread}>
-					{#if conversationEvents.length}
-						{#each conversationEvents as event}
-							<div class="chat-turn">
-								<article class="chat-message player-message">
-									<div class="chat-message-meta"><strong>나</strong><span>{event.day}일차 {timeLabel(event.minute)}</span></div>
-									<p>{eventRequestText(event)}</p>
-								</article>
-								<article class="chat-message story-message">
-									<div class="chat-message-meta"><strong>{characterName(event.characterId)}</strong><span>{event.location}</span></div>
-									{#each event.narrative.split('\n\n') as paragraph}<p>{paragraph}</p>{/each}
-								</article>
-							</div>
-						{/each}
-					{:else}
-						<article class="chat-message story-message initial-message">
-							<div class="chat-message-meta"><strong>세계</strong><span>{data.world.location}</span></div>
-							{#each data.latestNarrative.split('\n\n') as paragraph}<p>{paragraph}</p>{/each}
-						</article>
-					{/if}
-					{#if data.config.pendingProposal}
-						<article class="chat-message story-message proposal-message" aria-label="등장인물의 제안">
-							<div class="chat-message-meta"><strong>{proposalCharacter?.name ?? '등장인물'}</strong><span>제안</span></div>
-							<p>{data.config.pendingProposal.text}</p>
-						</article>
-					{/if}
-				</div>
-			</section>
-
-			<section class="request-panel" aria-label="행동 요청">
-				<div class="request-panel-head">
-					<div><h2>무엇을 할까요?</h2><p>{selected ? `${selected.name}에게 할 행동을 선택하거나 직접 입력하세요.` : '행동을 선택하거나 직접 입력하세요.'}</p></div>
-					<div class="target-row">
-						<label for="target">대상</label>
-						<select id="target" value={targetId} onchange={changeTarget} disabled={interactionBusy}>
-							<option value="">지정 안 함</option>
-							{#each data.characters as character}<option value={character.id}>{character.name}</option>{/each}
-						</select>
-					</div>
-				</div>
-
-				{#if data.config.pendingProposal}
-					<div class="quick-replies proposal-replies" aria-label="제안에 답하기">
-						<form method="POST" action="?/proposal" use:enhance={submitTurn}><button class="accent" name="answer" value="accept" disabled={interactionBusy}>수락한다</button></form>
-						<form method="POST" action="?/proposal" use:enhance={submitTurn}><button name="answer" value="decline" disabled={interactionBusy}>거절한다</button></form>
-					</div>
-				{:else if suggestions.length}
-					<form method="POST" action="?/freeAct" use:enhance={submitTurn} class="quick-replies" aria-label="추천 행동">
-						<input type="hidden" name="targetId" value={targetId} />
-						{#each suggestions as suggestion, index}
-							<button name="text" value={suggestion} disabled={interactionBusy}><span>{index + 1}</span>{suggestion}</button>
-						{/each}
-					</form>
-				{:else if suggestionLoading}
-					<p class="suggestion-loading" role="status">선택지를 만들고 있습니다. 직접 입력은 바로 사용할 수 있습니다.</p>
-				{/if}
-
-				<form method="POST" action="?/freeAct" use:enhance={submitTurn} class="composer-form">
-					<input type="hidden" name="targetId" value={targetId} />
-					<label class="sr-only" for="free-action">직접 행동 입력</label>
-					<textarea id="free-action" name="text" rows="2" required disabled={interactionBusy} placeholder={selected ? `${selected.name}에게 하고 싶은 행동을 적어 주세요` : '주변을 살피거나 이동하는 등 원하는 행동을 적어 주세요'}></textarea>
-					<button disabled={interactionBusy}>보내기</button>
-				</form>
-
-				<div class="request-footer">
-					<form method="POST" action="?/advance" use:enhance={submitTurn}><button class="continue-button" disabled={interactionBusy}>아무 행동 없이 다음 장면으로 <span aria-hidden="true">→</span></button></form>
-					<p>인물을 지정하지 않으면 이동·탐색·휴식 같은 행동을 할 수 있습니다.</p>
-				</div>
-			</section>
-
-			{#if turnBusy || serverGenerating}<p class="feedback" role="status">세계와 인물이 다음 장면을 만들고 있어요…</p>{/if}
-			{#if saveBusy}<p class="feedback" role="status">현재 진행을 저장하고 있어요…</p>{/if}
-			{#if data.generation?.status === 'failed'}<p class="feedback error" role="alert">{data.generation.error ?? '장면 생성에 실패했습니다.'}</p>{/if}
-			{#if form?.message}<p class="feedback" class:error={form.level === 'error'} role="status">{form.message}</p>{/if}
-
-			<div class="details-area">
-				<details open><summary>상태와 기억{#if selected}<span>{selected.name} 현재 반응</span>{/if}</summary>
-					{#if selected}
-						<h3>{selected.name}</h3>
-						<p class="minor">{selected.trait.join(' · ')}</p>
-						<div class="relation-readout" aria-label={`${selected.name}의 장기 관계`}>
-							<span>호감 <strong>{selected.relations.player.affection}</strong></span>
-							<span>신뢰 <strong>{selected.relations.player.trust}</strong></span>
-							<span>욕망 <strong>{selected.relations.player.desire}</strong></span>
-							<span>애착 <strong>{selected.relations.player.attachment}</strong></span>
-							<span>질투 <strong>{selected.relations.player.jealousy}</strong></span>
-							<span>반감 <strong>{selected.relations.player.resentment}</strong></span>
-						</div>
-						<section class="palam-readout" aria-labelledby="palam-heading">
-							<div class="palam-readout-head"><div><h4 id="palam-heading">현재 장면의 반응</h4><p>PALAM은 이 장면에서만 유지되며 새 장면에서 초기화됩니다.</p></div><span>0–100</span></div>
-							<div class="palam-grid">
-								{#each PALAM_METADATA as field}
-									{@const value = selected.palam[field.key]}
-									<div class="palam-item">
-										<div><strong>{field.label}</strong><span>{value}</span></div>
-										<div class="palam-meter" role="progressbar" aria-label={`${field.label} ${value}`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={value}><i style:width={`${value}%`}></i></div>
-										<p>{field.description}</p>
-									</div>
-								{/each}
-							</div>
-						</section>
-						{#if visibleMemories.length}
-							<ul class="memory-list">{#each visibleMemories as memory}<li>{memory.summary}</li>{/each}</ul>
-						{:else}<p class="minor">기록된 구체적 기억은 아직 없습니다. 이전 행동은 아래 기록에서 볼 수 있습니다.</p>{/if}
-					{/if}
-				</details>
-				<details><summary>행동 기록 · 최근 8턴</summary>
-					<ol class="event-list">{#each data.events.slice(0, 8) as event}<li><span>{event.day}일차 {timeLabel(event.minute)}</span> {event.summary}</li>{/each}</ol>
-				</details>
-			</div>
-		</main>
-	</div>
+		</section>
+		{#if objects.length}<section class="objects-panel"><p class="eyebrow">ON THE SCENE</p><div class="object-grid">
+			{#each objects as instance}<article class="object-card"><h3>{instance.name}</h3><p>{templateFor(world, instance).description}</p><small>{Object.entries(instance.state).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small><div class="stage-options">
+				{#each interactionsFor(world, instance) as interaction}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="interact" /><input type="hidden" name="targetId" value={instance.id} /><button name="interactionId" value={interaction.id} disabled={busy}>{interaction.label}</button></form>{/each}
+			</div></article>{/each}
+		</div></section>{/if}
+		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>{#each characters as instance}<h3>{instance.name}</h3><ul>{#each instance.memories.slice(-8) as memory}<li>{memory.text}</li>{:else}<li>아직 기억한 사건이 없습니다.</li>{/each}</ul>{/each}</details>
+		<footer class="reader-footer"><a href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>공연 기록 내려받기</a><details><summary>처음부터 다시</summary><p>현재 진행을 초기 배치로 되돌립니다. 저장 슬롯은 유지됩니다.</p><form method="POST" action="?/reset" use:enhance><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button disabled={busy}>현재 진행 초기화</button></form></details></footer>
+	</main>
 </div>
