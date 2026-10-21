@@ -152,15 +152,15 @@
 				</article>
 			{:else}<div class="empty-stage"><p>아직 아무도 말을 꺼내지 않았다.</p><span>말을 걸거나, 주변 사물을 살피거나, 잠시 기다려 보세요.</span></div>{/each}
 		</div>
-		{#if generating}<p class="generation-status" role="status">현장의 인물들이 각자의 다음 행동을 고르고 있습니다…{#if data.generation?.progress} ({data.generation.progress.nextActorIndex}/{data.generation.progress.actorIds.length}){/if}</p>{/if}
+		{#if generating}<p class="generation-status" role="status">현장의 인물들이 각자의 다음 행동을 고르고 있습니다…{#if data.generation?.progress} (판단 {data.generation.progress.completedDecisions}회 · 대기 {data.generation.progress.pendingActorIds.length}명){/if}</p>{/if}
 		{#if data.generation?.status === 'failed'}<p class="feedback error" role="alert">{data.generation.error} 이미 확정된 말과 행동은 유지됩니다.</p>{/if}
 		{#if form?.message}<p class="feedback" role="status">{form.message}</p>{/if}
 		<section class="player-console"><p class="eyebrow">YOUR NEXT LINE</p>
 			<form method="POST" action="?/turn" use:enhance={submitTurn} class="speech-form">
 				<input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="speak" />
-				<label>누구에게<select name="targetId" bind:value={targetId} disabled={busy}><option value="">현장에 있는 모두에게</option>{#each characters as instance}<option value={instance.id}>{instance.name}</option>{/each}</select></label>
-				<label class="speech-input">나의 말<textarea name="text" rows="3" placeholder="지금 하고 싶은 말을 적어 주세요." maxlength="4000" required disabled={busy}></textarea></label>
-				<button class="primary" disabled={busy}>말하기</button>
+				<label>누구에게<select name="targetId" bind:value={targetId} disabled={submitting}><option value="">현장에 있는 모두에게</option>{#each characters as instance}<option value={instance.id}>{instance.name}</option>{/each}</select></label>
+				<label class="speech-input">나의 말<textarea name="text" rows="3" placeholder="지금 하고 싶은 말을 적어 주세요." maxlength="4000" required disabled={submitting}></textarea></label>
+				<button class="primary" disabled={submitting}>말하기</button>
 			</form>
 			<div class="stage-options">
 				<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button name="kind" value="wait" disabled={busy}>잠시 지켜본다</button></form>

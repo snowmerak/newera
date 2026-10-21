@@ -11,38 +11,78 @@ export interface Director {
 interface TurnExecution {
 	progress?: TurnProgress | null;
 	onProgress?: (world: World, progress: TurnProgress) => void;
+	nextInput?: (consumedInputs: number) => PlayerRequest | null;
+}
+
+/** Old one-pass jobs resume at their remaining actors without replaying committed events. */
+export function restoredProgress(raw: unknown): TurnProgress | null {
+	if (!raw) return null;
+	const saved = raw as TurnProgress & { actorIds?: string[]; nextActorIndex?: number };
+	if (saved.pendingActorIds) return structuredClone(saved);
+	return { pendingActorIds: saved.actorIds!.slice(saved.nextActorIndex), completedDecisions: saved.nextActorIndex!, consumedInputs: 0 };
+}
+
+function castIds(world: World, targetId: string | null = null): string[] {
+	const cast = residents(world).filter((actor) => templateFor(world, actor).kind === 'character');
+	cast.sort((left, right) => Number(right.id === targetId) - Number(left.id === targetId));
+	return cast.map((actor) => actor.id);
 }
 
 /** Publish only complete actions and a resume cursor; never publish incomplete model output. */
 export async function resolveTurn(original: World, request: PlayerRequest, director: Director, checkpoint: () => void = () => {}, execution: TurnExecution = {}): Promise<World> {
 	const draft = structuredClone(original);
-	let progress = execution.progress ? structuredClone(execution.progress) : null;
+	let progress = restoredProgress(execution.progress);
 	if (!progress) {
 		checkpoint();
 		beginTurn(draft, request);
-		const cast = residents(draft).filter((actor) => templateFor(draft, actor).kind === 'character');
-		// Retain this order on restart, including actors whose completed action moved them out of the scene.
 		const targetId = request.kind === 'speak' || request.kind === 'interact' ? request.targetId : null;
-		cast.sort((left, right) => Number(right.id === targetId) - Number(left.id === targetId));
-		progress = { actorIds: cast.map((actor) => actor.id), nextActorIndex: 0 };
+		progress = { pendingActorIds: castIds(draft, targetId), completedDecisions: 0, consumedInputs: 0 };
 		execution.onProgress?.(draft, progress);
 	}
-	for (let index = progress.nextActorIndex; index < progress.actorIds.length; index++) {
+	while (true) {
 		checkpoint();
-		const actor = draft.state.instances.find((candidate) => candidate.id === progress.actorIds[index]);
+		// Consume chat at action boundaries; its event and consumed cursor commit together.
+		const input = execution.nextInput?.(progress.consumedInputs);
+		if (input) {
+			beginTurn(draft, input);
+			progress.consumedInputs++;
+			const targetId = input.kind === 'speak' || input.kind === 'interact' ? input.targetId : null;
+			progress.pendingActorIds = castIds(draft, targetId);
+			execution.onProgress?.(draft, progress);
+			continue;
+		}
+		const actorId = progress.pendingActorIds[0];
+		if (!actorId) break;
+		const eventStart = draft.state.events.length;
+		const actor = draft.state.instances.find((candidate) => candidate.id === actorId);
 		if (actor?.active && actor.sceneId === draft.state.activeSceneId) {
 			const state = observation(draft, actor);
 			const actions = availableActions(draft, actor.id);
-			const decision = await director.decide(state);
+			let decision: ActorDecision;
+			try { decision = await director.decide(state); }
+			catch (error) {
+				checkpoint();
+				if (execution.nextInput?.(progress.consumedInputs)) continue;
+				throw error;
+			}
 			checkpoint();
+			if (execution.nextInput?.(progress.consumedInputs)) continue;
 			if (typeof decision.act !== 'boolean') throw new Error('행동 여부 판단이 올바르지 않습니다.');
 			if (!decision.act) {
 				const wait = actions.find((action) => action.kind === 'wait')!;
 				applyAction(draft, actor.id, wait, wait.label, { model: decision.model, choice: 'wait', acted: false });
 			} else {
 				const candidates = actions.filter((action) => action.kind !== 'wait');
-				const { model, ...output } = await director.perform(state, candidates);
+				let performance: ActorPerformance;
+				try { performance = await director.perform(state, candidates); }
+				catch (error) {
+					checkpoint();
+					if (execution.nextInput?.(progress.consumedInputs)) continue;
+					throw error;
+				}
+				const { model, ...output } = performance;
 				checkpoint();
+				if (execution.nextInput?.(progress.consumedInputs)) continue;
 				const expression = checkedExpression(output, candidates);
 				const action = candidates.find((candidate) => candidate.id === expression.actionId)!;
 				const text = [expression.narrative, expression.utterance].filter(Boolean).join('\n') || action.label;
@@ -50,7 +90,16 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 				if (expression.memoUpdate) actor.memo = expression.memoUpdate;
 			}
 		}
-		progress.nextActorIndex = index + 1;
+		progress.pendingActorIds.shift();
+		progress.completedDecisions++;
+		// Only a new witnessed action wakes another decision. Waiting never wakes itself or its peers.
+		const emitted = draft.state.events.slice(eventStart).filter((event) => event.kind !== 'wait');
+		for (const id of castIds(draft)) {
+			const witness = draft.state.instances.find((candidate) => candidate.id === id)!;
+			if (emitted.some((event) => event.actorId !== id && witness.memories.some((memory) => memory.eventId === event.id)) && !progress.pendingActorIds.includes(id)) {
+				progress.pendingActorIds.push(id);
+			}
+		}
 		checkpoint();
 		execution.onProgress?.(draft, progress);
 	}

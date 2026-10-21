@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { restoredProgress } from '$lib/theater/ensemble';
 import { exampleWorld } from '$lib/theater/fixtures';
 import { actionForRequest, initialState, templateFor } from '$lib/theater/runtime';
 import type { GenerationJob, ModelSelection, PlayerRequest, SaveSlot, StageView, TurnProgress, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
@@ -28,7 +29,7 @@ export function store(): DatabaseSync {
 		CREATE TABLE IF NOT EXISTS theater_jobs (
 			id TEXT PRIMARY KEY, world_id TEXT NOT NULL REFERENCES theater_worlds(id), revision INTEGER NOT NULL,
 			request_json TEXT NOT NULL, status TEXT NOT NULL, worker_id TEXT, heartbeat_at TEXT,
-			created_at TEXT NOT NULL, completed_at TEXT, error TEXT, progress_json TEXT, models_json TEXT
+			created_at TEXT NOT NULL, completed_at TEXT, error TEXT, progress_json TEXT, models_json TEXT, inputs_json TEXT
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS theater_jobs_active ON theater_jobs(world_id) WHERE status IN ('pending', 'running');
 		CREATE INDEX IF NOT EXISTS theater_jobs_recent ON theater_jobs(world_id, created_at DESC);`);
@@ -36,6 +37,7 @@ export function store(): DatabaseSync {
 		db.exec('ALTER TABLE theater_jobs ADD COLUMN progress_json TEXT');
 	}
 	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'models_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN models_json TEXT');
+	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'inputs_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN inputs_json TEXT');
 	if (!(db.prepare('PRAGMA table_info(theater_worlds)').all() as Row[]).some((column) => column.name === 'model_settings_json')) db.exec('ALTER TABLE theater_worlds ADD COLUMN model_settings_json TEXT');
 	database = db;
 	try {
@@ -198,7 +200,7 @@ export function importWorld(raw: string): string {
 }
 
 function jobFromRow(row: Row): GenerationJob {
-	return { id: String(row.id), worldId: String(row.world_id), revision: Number(row.revision), status: row.status as GenerationJob['status'], request: JSON.parse(String(row.request_json)), createdAt: String(row.created_at), error: row.error === null ? null : String(row.error), progress: row.progress_json ? JSON.parse(String(row.progress_json)) : null, models: row.models_json ? checkedModelSelection(JSON.parse(String(row.models_json))) : null };
+	return { id: String(row.id), worldId: String(row.world_id), revision: Number(row.revision), status: row.status as GenerationJob['status'], request: JSON.parse(String(row.request_json)), createdAt: String(row.created_at), error: row.error === null ? null : String(row.error), progress: restoredProgress(row.progress_json ? JSON.parse(String(row.progress_json)) : null), models: row.models_json ? checkedModelSelection(JSON.parse(String(row.models_json))) : null };
 }
 export function getJob(id: string): GenerationJob | null {
 	const row = store().prepare('SELECT * FROM theater_jobs WHERE id = ?').get(id) as Row | undefined;
@@ -211,15 +213,31 @@ export function latestJob(worldId: string): GenerationJob | null {
 export function enqueue(worldId: string, revision: number, request: PlayerRequest, defaults: ModelSelection): GenerationJob {
 	return transaction(() => {
 		const world = getWorld(worldId);
+		const active = store().prepare("SELECT * FROM theater_jobs WHERE world_id = ? AND status IN ('pending', 'running')").get(worldId) as Row | undefined;
+		if (active) {
+			// Chat may arrive during inference with the revision rendered before its latest commit.
+			if (Number(active.revision) !== world.revision) throw new Error('장면이 변경되었습니다. 진행 상태를 새로고침해 주세요.');
+			if (request.kind !== 'speak') throw new Error('진행 중에는 채팅으로 말을 걸어 주세요.');
+			actionForRequest(world, request);
+			const inputs: PlayerRequest[] = active.inputs_json ? JSON.parse(String(active.inputs_json)) : [];
+			inputs.push(request);
+			store().prepare('UPDATE theater_jobs SET inputs_json = ? WHERE id = ?').run(JSON.stringify(inputs), String(active.id));
+			return jobFromRow(active);
+		}
 		if (world.revision !== revision) throw new Error('장면이 변경되었습니다. 다시 시도해 주세요.');
 		actionForRequest(world, request);
-		if (store().prepare("SELECT id FROM theater_jobs WHERE world_id = ? AND status IN ('pending', 'running')").get(worldId)) throw new Error('이 세계관의 장면을 이미 진행하고 있습니다.');
 		const id = randomUUID();
 		const models = checkedModelSelection(world.models ?? defaults);
 		store().prepare("INSERT INTO theater_jobs (id, world_id, revision, request_json, status, created_at, models_json) VALUES (?, ?, ?, ?, 'pending', ?, ?)")
 			.run(id, worldId, revision, JSON.stringify(request), new Date().toISOString(), JSON.stringify(models));
 		return getJob(id)!;
 	});
+}
+export function nextJobInput(job: GenerationJob, workerId: string, consumedInputs: number): PlayerRequest | null {
+	checkJob(job, workerId);
+	const row = store().prepare('SELECT inputs_json FROM theater_jobs WHERE id = ?').get(job.id) as Row;
+	const inputs: PlayerRequest[] = row.inputs_json ? JSON.parse(String(row.inputs_json)) : [];
+	return inputs[consumedInputs] ?? null;
 }
 export function runnableJobs(staleBefore: string): string[] {
 	return (store().prepare("SELECT id FROM theater_jobs WHERE status = 'pending' OR (status = 'running' AND heartbeat_at < ?) ORDER BY created_at").all(staleBefore) as Row[]).map((row) => String(row.id));
@@ -251,11 +269,13 @@ export function saveJobProgress(job: GenerationJob, workerId: string, world: Wor
 	job.progress = structuredClone(progress);
 	world.revision = job.revision;
 }
-export function finishJob(job: GenerationJob, workerId: string): void {
-	transaction(() => {
+export function finishJob(job: GenerationJob, workerId: string): boolean {
+	return transaction(() => {
 		checkJob(job, workerId);
-		if (!job.progress || job.progress.nextActorIndex !== job.progress.actorIds.length) throw new Error('아직 처리하지 않은 인물이 있습니다.');
+		if (!job.progress || job.progress.pendingActorIds.length) throw new Error('아직 처리하지 않은 반응이 있습니다.');
+		if (nextJobInput(job, workerId, job.progress.consumedInputs)) return false;
 		store().prepare("UPDATE theater_jobs SET status = 'completed', completed_at = ? WHERE id = ? AND worker_id = ?").run(new Date().toISOString(), job.id, workerId);
+		return true;
 	});
 }
 export function failJob(id: string, workerId: string, error: string): void {

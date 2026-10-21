@@ -8,6 +8,8 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
+// These fixtures answer once per player input, then deliberately choose to listen.
+const participation = (state) => state.recentEvents.some((event) => event.tick === state.time.tick && event.actorId === state.self.id && event.kind === 'speak') ? 'wait' : 'act';
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const scratchDirectories = [];
 function scratch() { const path = mkdtempSync(join(tmpdir(), 'newera-theater-integration-')); scratchDirectories.push(path); return path; }
@@ -68,7 +70,7 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		if (pauseNext) { const hold = pauseNext; pauseNext = null; hold.started(); await hold.wait; }
 		if (failNext) { failNext = false; response.statusCode = 503; response.end('{"error":"offline"}'); return; }
 		if (request.url === '/v1/systemone') {
-			response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: 'act' } } }));
+			response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: participation(body.state) } } }));
 		} else if (request.url === '/v1/chat/completions') {
 			const state = JSON.parse(body.messages[1].content);
 			const output = { actionId: 'speak:player', targetId: 'player', narrative: `${state.self.name}은 고개를 끄덕인다.`, utterance: `${state.self.name}의 대답입니다.`, memoUpdate: { summary: `${state.self.id}만의 메모`, currentIntention: '준비를 계속한다.', feelings: ['기대'], openThreads: [] } };
@@ -92,7 +94,7 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		const originalId = activeId();
 		await post(base, 'turn', { ...fields(), kind: 'speak', text: '함께 준비할까요?', targetId: 'seoyeon' });
 		await waitJob(base, db, originalId);
-		assert.deepEqual(calls.filter((call) => call.path.endsWith('systemone')).map((call) => call.body.state.self.id), ['seoyeon', 'harin']);
+		assert.deepEqual(calls.filter((call) => call.path.endsWith('systemone')).map((call) => call.body.state.self.id), ['seoyeon', 'harin', 'seoyeon']);
 		assert.ok(calls.filter((call) => call.path.endsWith('systemone'))[1].body.state.recentEvents.some((event) => event.actorId === 'seoyeon' && event.body.utterance === '서연의 대답입니다.'));
 		assert.equal(snapshot().state.events.filter((entry) => entry.kind === 'speak').length, 3);
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'seoyeon').memo.summary, 'seoyeon만의 메모');
@@ -124,7 +126,7 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		assert.equal(snapshot().state.activeSceneId, 'stage');
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'harin').sceneId, 'stage');
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'seoyeon').sceneId, 'lobby');
-		const lastDecisions = calls.filter((call) => call.path.endsWith('systemone')).slice(-2);
+		const lastDecisions = calls.filter((call) => call.path.endsWith('systemone') && call.body.state.time.tick === 3).slice(0, 2);
 		assert.deepEqual(lastDecisions.map((call) => call.body.state.self.id), ['jieun', 'harin']);
 		assert.ok(!JSON.stringify(lastDecisions[0].body.state).includes('함께 준비할까요?'));
 		await post(base, 'load', { ...fields(), slot: '1' });
@@ -239,7 +241,7 @@ test('individual results are visible while the next inference is pending and res
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
-		if (request.url === '/v1/systemone') { response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: 'act' } } })); return; }
+		if (request.url === '/v1/systemone') { response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: participation(body.state) } } })); return; }
 		const state = JSON.parse(body.messages[1].content);
 		calls.push(state.self.id);
 		callModels.push(body.model);
@@ -260,7 +262,7 @@ test('individual results are visible while the next inference is pending and res
 		assert.ok(held, 'the next actor must be waiting for generation');
 		const pending = await latestJob(running.base, db, worldId);
 		assert.equal(pending.status, 'running');
-		assert.deepEqual(pending.progress, { actorIds: ['seoyeon', 'harin'], nextActorIndex: 1 });
+		assert.deepEqual(pending.progress, { pendingActorIds: ['harin'], completedDecisions: 1, consumedInputs: 0 });
 		const partial = snapshot();
 		assert.equal(partial.revision, pending.revision);
 		assert.deepEqual(partial.state.events.map((event) => event.actorId), ['player', 'seoyeon']);
@@ -268,10 +270,12 @@ test('individual results are visible while the next inference is pending and res
 		const page = await (await fetch(running.base)).text();
 		assert.match(page, /서연의 확정된 대사/);
 		assert.ok(!page.includes('하린의 확정된 대사'));
-		assert.match(page, /\(1\/2\)/);
+		assert.match(page, /판단 1회 · 대기 1명/);
 		await post(running.base, 'models', { worldId, decisionModel: 'other-model', textModel: 'other-model' });
 
 		await running.stop();
+		// Simulate a job persisted by the old one-pass release at this same durable boundary.
+		db.prepare('UPDATE theater_jobs SET progress_json = ? WHERE id = ?').run(JSON.stringify({ actorIds: ['seoyeon', 'harin'], nextActorIndex: 1 }), pending.id);
 		db.prepare("UPDATE theater_jobs SET heartbeat_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(pending.id);
 		running = await app(directory, `http://127.0.0.1:${modelPort}/v1`);
 		release();
@@ -281,7 +285,7 @@ test('individual results are visible while the next inference is pending and res
 		assert.equal(calls.filter((id) => id === 'seoyeon').length, 1, 'the committed actor must not be inferred again');
 		assert.ok(callModels.every((model) => model === 'actor-model'), 'resuming a job must retain its original models after the session preference changes');
 		assert.deepEqual(resumed.state.events.slice(0, partial.state.events.length), partial.state.events);
-		assert.deepEqual(resumed.state.events.map((event) => event.actorId), ['player', 'seoyeon', 'harin']);
+		assert.deepEqual(resumed.state.events.map((event) => event.actorId), ['player', 'seoyeon', 'harin', 'seoyeon']);
 
 		failHarin = true;
 		await post(running.base, 'turn', { worldId, revision: String(resumed.revision), kind: 'wait' });
@@ -294,6 +298,64 @@ test('individual results are visible while the next inference is pending and res
 	} finally {
 		release(); await running.stop(); db.close(); model.closeAllConnections(); await new Promise((done) => model.close(done));
 	}
+});
+
+test('reactive dialogue repeats actors and queued stop chat survives restart without stale output or replay', async () => {
+	let generated = 0;
+	let held = false;
+	let release;
+	const hold = new Promise((done) => { release = done; });
+	const model = createServer(async (request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
+		const chunks = [];
+		for await (const chunk of request) chunks.push(chunk);
+		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (request.url === '/v1/systemone') {
+			const stopped = body.state.recentEvents.some((event) => event.actorId === 'player' && event.body.utterance === '이제 그만해.');
+			response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: stopped ? 'wait' : 'act' } } })); return;
+		}
+		const state = JSON.parse(body.messages[1].content);
+		const line = ['어서 와.', '서연아, 공연 준비는 잘 되어가?', '응, 이제 거의 다 준비됐어.', '확정되면 안 되는 대사'][generated++];
+		if (generated === 4) { held = true; await hold; }
+		const targetId = state.self.id === 'seoyeon' ? 'harin' : 'seoyeon';
+		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ actionId: `speak:${targetId}`, targetId, narrative: null, utterance: line, memoUpdate: null }) } }] }));
+	});
+	const modelPort = await listen(model);
+	const directory = scratch();
+	let running = await app(directory, `http://127.0.0.1:${modelPort}/v1`);
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const worldId = db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get().value;
+	const snapshot = () => JSON.parse(db.prepare('SELECT state_json FROM theater_worlds WHERE id = ?').get(worldId).state_json);
+	try {
+		await post(running.base, 'turn', { worldId, revision: '0', kind: 'wait' });
+		for (let index = 0; index < 300 && !held; index++) await pause(20);
+		assert.ok(held);
+		const pending = await latestJob(running.base, db, worldId);
+		assert.deepEqual(pending.progress, { pendingActorIds: ['harin'], completedDecisions: 3, consumedInputs: 0 });
+		const committed = snapshot();
+		assert.deepEqual(committed.events.filter((event) => event.kind === 'speak').map((event) => event.actorId), ['seoyeon', 'harin', 'seoyeon']);
+		const page = await (await fetch(running.base)).text();
+		assert.match(page, /응, 이제 거의 다 준비됐어\./);
+		assert.ok(!/<textarea\b[^>]*disabled/.test(page), 'chat must remain enabled while characters are reacting');
+		await post(running.base, 'turn', { worldId, revision: '0', kind: 'speak', text: '이제 그만해.', targetId: '' });
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_jobs WHERE world_id = ?').get(worldId).n, 1, 'chat joins the active job');
+		assert.equal(JSON.parse(db.prepare('SELECT inputs_json FROM theater_jobs WHERE id = ?').get(pending.id).inputs_json).length, 1);
+		await running.stop();
+		db.prepare("UPDATE theater_jobs SET heartbeat_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(pending.id);
+		running = await app(directory, `http://127.0.0.1:${modelPort}/v1`);
+		release();
+		const completed = await waitJob(running.base, db, worldId);
+		assert.equal(completed.id, pending.id);
+		assert.equal(completed.progress.consumedInputs, 1);
+		assert.deepEqual(completed.progress.pendingActorIds, []);
+		const state = snapshot();
+		assert.equal(state.tick, 2);
+		assert.deepEqual(state.events.slice(0, committed.events.length), committed.events);
+		assert.equal(state.events.filter((event) => event.actorId === 'player' && event.text === '이제 그만해.').length, 1);
+		assert.ok(!state.events.some((event) => event.utterance === '확정되면 안 되는 대사'));
+		assert.equal(generated, 4, 'stop is read before any new detailed generation');
+	} finally { release(); await running.stop(); db.close(); model.closeAllConnections(); await new Promise((done) => model.close(done)); }
 });
 
 test('session model selection is isolated, active jobs retain their snapshot and retries do not duplicate actions', async () => {
@@ -311,7 +373,7 @@ test('session model selection is isolated, active jobs retain their snapshot and
 		const body = JSON.parse(Buffer.concat(chunks).toString());
 		const state = request.url === '/v1/systemone' ? body.state : JSON.parse(body.messages[1].content);
 		calls.push({ path: request.url, model: body.model, actor: state.self.id });
-		if (request.url === '/v1/systemone') { response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: 'act' } } })); return; }
+		if (request.url === '/v1/systemone') { response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: participation(body.state) } } })); return; }
 		if (failFirst) {
 			failFirst = false; started = true; await hold;
 			response.statusCode = 502; response.end('{"error":{"code":"invalid_model_output","message":"Expecting value"}}'); return;
@@ -355,8 +417,8 @@ test('session model selection is isolated, active jobs retain their snapshot and
 		release();
 		await waitJob(running.base, db, first);
 		const completed = snapshot(first);
-		assert.deepEqual(completed.state.events.map((event) => event.actorId), ['player', 'seoyeon', 'harin']);
-		assert.equal(calls.filter((call) => call.path.endsWith('systemone') && call.actor === 'seoyeon').length, 1);
+		assert.deepEqual(completed.state.events.map((event) => event.actorId), ['player', 'seoyeon', 'harin', 'seoyeon']);
+		assert.equal(calls.filter((call) => call.path.endsWith('systemone') && call.actor === 'seoyeon').length, 2);
 		assert.equal(calls.filter((call) => call.path.endsWith('chat/completions') && call.actor === 'seoyeon').length, 2);
 		assert.ok(calls.filter((call) => call.path.endsWith('systemone')).every((call) => call.model === originalModels.decisionModel));
 		assert.ok(calls.filter((call) => call.path.endsWith('chat/completions')).every((call) => call.model === originalModels.textModel));
@@ -404,6 +466,7 @@ test('fresh storage contains only scene-based data and rejects unsupported impor
 		const beforeMigration = db.prepare('SELECT definition_json, state_json FROM theater_worlds WHERE id = ?').get(id);
 		await running.stop();
 		db.exec('ALTER TABLE theater_jobs DROP COLUMN progress_json');
+		db.exec('ALTER TABLE theater_jobs DROP COLUMN inputs_json');
 		db.exec('ALTER TABLE theater_jobs DROP COLUMN models_json');
 		db.exec('ALTER TABLE theater_worlds DROP COLUMN model_settings_json');
 		running = await app(directory, 'http://127.0.0.1:1/v1');

@@ -154,8 +154,9 @@ export type PlayerRequest =
 	| { kind: 'move'; destinationId: string }
 	| { kind: 'interact'; targetId: string; interactionId: string };
 export interface TurnProgress {
-	actorIds: string[];
-	nextActorIndex: number;
+	pendingActorIds: string[];
+	completedDecisions: number;
+	consumedInputs: number;
 }
 export interface GenerationJob {
 	id: string;

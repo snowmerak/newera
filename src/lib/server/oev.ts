@@ -108,7 +108,7 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 				checkpoint();
 				const response = await request(settings, '/systemone', signal, {
 					model: decisionModel, state, questions: {
-						participation: { type: 'choice', instructions: `self 인물이 지금 관찰한 사건과 자신의 목표에 따라 말하거나 행동할지, 아무 행동 없이 지켜볼지만 판단한다. 구체적인 행동이나 대사는 정하지 않는다. ${observationInstructions}`, criteria: { act: '지금 말하거나 행동한다.', wait: '아무 행동 없이 지켜본다.' } }
+						participation: { type: 'choice', instructions: `self 인물이 지금 관찰한 사건과 자신의 목표에 따라 말하거나 행동할지, 아무 행동 없이 지켜볼지만 판단한다. 구체적인 행동이나 대사는 정하지 않는다. 다른 인물이 새로 말하거나 행동하면 이미 한 번 반응했어도 다시 답하거나 행동할 수 있다. 자신의 최근 발언을 반복하거나 새 의도 없이 끼어들 필요는 없으며, 플레이어의 답이나 새로운 사건을 기다리는 편이 자연스러우면 wait를 선택한다. 플레이어의 중단 요청도 성격·감정·현재 의도에 따라 수용하거나 계속할 수 있다. ${observationInstructions}`, criteria: { act: '지금 말하거나 행동한다.', wait: '아무 행동 없이 지켜본다.' } }
 					}
 				});
 				return generatedOutput(() => {

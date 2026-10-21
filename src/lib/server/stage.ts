@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolveTurn, type Director } from '$lib/theater/ensemble';
 import type { PlayerRequest } from '$lib/theater/types';
 import { createDirector, modelSettings } from './oev';
-import { checkJob, claimJob, enqueue, failJob, finishJob, getWorld, heartbeatJob, runnableJobs, saveJobProgress } from './stage-store';
+import { checkJob, claimJob, enqueue, failJob, finishJob, getWorld, heartbeatJob, nextJobInput, runnableJobs, saveJobProgress } from './stage-store';
 
 const workerId = randomUUID();
 const scheduled = new Set<string>();
@@ -26,11 +26,13 @@ async function processJob(id: string): Promise<void> {
 			decide: async (state) => (await connection()).decide(state),
 			perform: async (state, actions) => (await connection()).perform(state, actions)
 		};
-		await resolveTurn(getWorld(job.worldId), job.request, director, checkpoint, {
-			progress: job.progress,
-			onProgress: (world, progress) => saveJobProgress(job, workerId, world, progress)
-		});
-		finishJob(job, workerId);
+		do {
+			await resolveTurn(getWorld(job.worldId), job.request, director, checkpoint, {
+				progress: job.progress,
+				nextInput: (consumedInputs) => nextJobInput(job, workerId, consumedInputs),
+				onProgress: (world, progress) => saveJobProgress(job, workerId, world, progress)
+			});
+		} while (!finishJob(job, workerId));
 	} catch (error) {
 		failJob(id, workerId, error instanceof Error ? error.message : '장면 진행에 실패했습니다.');
 	} finally { clearInterval(timer); }
