@@ -12,7 +12,7 @@ npm install
 npm run dev
 ```
 
-`http://localhost:5173`에서 플레이하고 `/lores`에서 세계관·씬·원형·인스턴스를 편집합니다. 처음 실행하면 **비가 그친 뒤의 극장**이 열립니다. 기존 DB가 있으면 이전 이야기를 먼저 옮깁니다. 새 예제는 `static/lore-presets/theater-opening.json`을 가져와 열 수 있습니다.
+`http://localhost:5173`에서 플레이하고 `/lores`에서 세계관·씬·원형·인스턴스를 편집합니다. 처음 실행하면 **비가 그친 뒤의 극장**이 열립니다. 새 예제는 `static/lore-presets/theater-opening.json`을 가져와 열 수 있습니다.
 
 ```powershell
 npm run build
@@ -36,13 +36,13 @@ npm start
 
 ## OEV 설정
 
-API 명세는 [OEV 제공 문서](http://macstudio:12821/.skill)를 따릅니다. 클라이언트는 먼저 `/v1/models`에서 `task=generation` 모델을 확인합니다. 모델 이름을 비워두면 첫 번째 generation 모델을 사용합니다.
+API 명세는 [OEV 제공 문서](http://macstudio:12821/.skill)를 따릅니다. 클라이언트는 먼저 `/v1/models`에서 `task=generation` 모델을 확인합니다. 판단 기본 모델은 `gemma4-26b`이며 대사 모델을 비워두면 판단 모델과 같은 모델을 사용합니다.
 
 | 설정 | 기본값 | 역할 |
 | --- | --- | --- |
 | `NEWERA_OEV_BASE_URL` | `http://macstudio:12821/v1` | 모델 검색·판단·대사 API |
-| `NEWERA_DECISION_MODEL` | 자동 검색 | `/systemone` 판단 모델 |
-| `NEWERA_TEXT_MODEL` | 판단 모델과 동일 | `/chat/completions` 대사 모델 |
+| `NEWERA_DECISION_MODEL` | `gemma4-26b` | `/systemone` 판단 모델 |
+| `NEWERA_TEXT_MODEL` | `gemma4-26b` (미지정 시 판단 모델과 동일) | `/chat/completions` 대사 모델 |
 | `NEWERA_DECISION_TIMEOUT_MS` | `30000` | 모델 검색·판단 요청별 대기 시간 |
 | `NEWERA_LLM_TIMEOUT_MS` | `120000` | 대사 요청별 대기 시간 |
 | `NEWERA_MAX_OUTPUT_TOKENS` | `512` | 대사 출력 토큰 한도 |
@@ -55,8 +55,8 @@ API 명세는 [OEV 제공 문서](http://macstudio:12821/.skill)를 따릅니다
 ```json
 {
   "baseUrl": "http://macstudio:12821/v1",
-  "decisionModel": "hermes3.6-35b",
-  "textModel": "hermes3.6-35b",
+  "decisionModel": "gemma4-26b",
+  "textModel": "gemma4-26b",
   "decisionTimeoutMs": 30000,
   "timeoutMs": 120000,
   "maxOutputTokens": 512,
@@ -70,9 +70,9 @@ API 명세는 [OEV 제공 문서](http://macstudio:12821/.skill)를 따릅니다
 
 이 기반에서는 개인의 최근 목격 기억을 사용하며 임베딩 서버를 호출하지 않습니다. 캐릭터가 없는 씬은 모델 연결 없이 진행할 수 있습니다. 모델이나 검증에 실패하면 그 진행의 상태와 사건을 저장하지 않습니다.
 
-## 이전 데이터
+## 데이터 형식
 
-기존 `data/newera.sqlite`의 원본 테이블은 유지하고 `theater_*` 테이블에 세계관별로 옮깁니다. 이전 세계관·인물 설명·사건·개인 기억·저장 슬롯을 보존하며, 위치 정보가 없는 이전 인물들은 현재 위치에 해당하는 첫 씬에 배치합니다. 이전 수치와 계산식은 새 실행기에서 사용하지 않습니다. 원본 데이터는 DB와 내보내기의 `legacyArchive`에 남습니다. 이전 `newera-lore` JSON도 가져올 수 있습니다.
+씬 기반 `newera-theater` version 2만 사용합니다. 세계관·진행·저장 슬롯·생성 작업은 `data/newera.sqlite`의 `theater_*` 테이블에 저장합니다. 구형 형식의 가져오기와 자동 이전은 지원하지 않습니다.
 
 ## 검증과 작성 도구
 

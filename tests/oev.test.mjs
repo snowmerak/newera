@@ -18,7 +18,7 @@ function provider(options = {}) {
 	globalThis.fetch = async (url, init) => {
 		const body = init.body ? JSON.parse(init.body) : null;
 		calls.push({ url: String(url), body, signal: init.signal });
-		if (String(url).endsWith('/models')) return json({ data: [{ id: 'embed', task: 'embedding' }, { id: 'actor-model', task: 'generation' }] });
+		if (String(url).endsWith('/models')) return json({ data: [{ id: 'embed', task: 'embedding' }, { id: 'actor-model', task: 'generation' }, { id: 'gemma4-26b', task: 'generation' }] });
 		if (String(url).endsWith('/systemone')) {
 			const criteria = body.questions.action.criteria;
 			const keys = Object.keys(criteria);
@@ -33,18 +33,19 @@ function provider(options = {}) {
 	return calls;
 }
 
-test('discovers generation models, uses typed choice/noul/score, and generates speech separately', async () => {
+test('defaults both decisions and speech to gemma4-26b regardless of catalog order', async () => {
 	const calls = provider();
 	try {
 		const director = await createDirector(new AbortController().signal);
 		const decision = await director.decide(state, actions);
 		assert.equal(decision.action.id, 'speak:player');
 		assert.equal(decision.intensity, 1.6);
-		assert.equal(decision.model, 'actor-model');
+		assert.equal(decision.model, 'gemma4-26b');
 		assert.match(await director.speak(state, decision), /반가워요/);
 		assert.deepEqual(calls[1].body.questions.react.criteria, { true: '지금 말하거나 상호작용하거나 이동할 구체적인 이유가 있다.', false: '새로 할 말이나 행동 없이 지켜보는 것이 자연스럽다.' });
 		assert.equal(calls[1].body.questions.intensity.type, 'score');
-		assert.equal(calls[2].body.model, 'actor-model');
+		assert.equal(calls[1].body.model, 'gemma4-26b');
+		assert.equal(calls[2].body.model, 'gemma4-26b');
 		assert.equal(calls[2].body.reasoning_effort, 'none');
 		assert.equal(calls[2].body.max_completion_tokens, 512);
 		assert.equal(calls[2].body.response_format, undefined);

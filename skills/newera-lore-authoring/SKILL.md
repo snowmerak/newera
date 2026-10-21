@@ -27,4 +27,4 @@ Create a world that can be imported from newera's `/lores` page. Preserve the us
 
 An exported `newera-theater` file contains `world.definition`, current `world.state`, and `saves`. Preserve instance IDs, current locations, state, witnessed memories, events and save slots unless the user asks to change them. Editing initial spawns does not move current instances. Validate after editing.
 
-Older source files can be converted by the build script. Older exported stories are converted by the application's importer. Keep compatibility code isolated in `legacy-format.mjs`; create new content in the current format.
+Only the scene-based version 2 formats are supported. Do not generate older source formats or include source archives in exported worlds.

@@ -4,7 +4,7 @@ import { exampleWorld } from '../src/lib/theater/fixtures.ts';
 import { initialState, beginTurn, availableActions, applyAction, observation } from '../src/lib/theater/runtime.ts';
 import { resolveTurn } from '../src/lib/theater/ensemble.ts';
 import { validateDefinition, validateState } from '../src/lib/theater/validation.ts';
-import { convertLegacy } from '../src/lib/theater/legacy.ts';
+import { buildBundle, validateBundle } from '../skills/newera-lore-authoring/scripts/lore-format.mjs';
 
 function world() { const definition = exampleWorld(); return { id: 'test-world', revision: 0, definition, state: initialState(definition) }; }
 const instance = (world, id) => world.state.instances.find((entry) => entry.id === id);
@@ -100,15 +100,11 @@ test('definition and snapshot validation reject broken references, duplicate IDs
 	assert.throws(() => validateState(stage.state, stage.definition), /동행/);
 });
 
-test('legacy story content and personal memories convert without bringing numeric mechanics into the runtime', () => {
-	const converted = convertLegacy('Old story', {
-		world: [{ turn: 4, day: 2, minute: 1200, location: 'Old room' }], config: [{ world_setting: 'A city', era_rules: 'PALAM increases' }],
-		characters: [{ id: 'a', name: 'Actor A', profile: 'A remembered person', palam_json: '{"rapport":90}' }],
-		events: [{ id: 1, turn: 3, narrative: 'An old conversation.' }], memories: [{ event_id: 1, character_id: 'a', created_turn: 3, summary: 'A personal memory.' }]
-	});
-	assert.equal(converted.state.tick, 4);
-	assert.equal(converted.state.instances[0].memories[0].text, 'A personal memory.');
-	assert.equal(converted.state.events[0].text, 'An old conversation.');
-	assert.ok(!JSON.stringify(converted).includes('PALAM'));
-	assert.ok(!JSON.stringify(converted).includes('palam_json'));
+test('authoring builds scene-based bundles and rejects unsupported formats', () => {
+	const bundle = buildBundle({ format: 'newera-theater-source', version: 2, definition: exampleWorld() });
+	assert.equal(validateBundle(bundle).sceneCount, 3);
+	assert.equal(bundle.world.state.instances.length, 6);
+	assert.deepEqual(Object.keys(bundle).sort(), ['format', 'saves', 'version', 'world']);
+	assert.throws(() => buildBundle({ format: 'newera-theater-source', version: 1 }), /version 2/);
+	assert.throws(() => validateBundle({ format: 'newera-theater', version: 1 }), /지원하지 않는/);
 });

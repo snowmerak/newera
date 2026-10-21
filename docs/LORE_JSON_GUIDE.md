@@ -111,4 +111,4 @@ npm run lore:build -- skills/newera-lore-authoring/assets/example-source.json wo
 npm run lore:validate -- world.json
 ```
 
-이전 `newera-lore` 파일은 가져오기에서 변환한다. 이전 `newera-lore-source` 원본은 빌드 도구가 새 파일로 변환할 수 있다. 이전 수치와 계산식은 새 런타임에 연결하지 않으며 원본 아카이브로 보존한다.
+가져오기·빌드·검증은 이 문서의 씬 기반 version 2 형식만 지원한다.

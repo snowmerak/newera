@@ -1,7 +1,5 @@
 import { initialState } from '../../../src/lib/theater/runtime.ts';
-import { convertLegacy } from '../../../src/lib/theater/legacy.ts';
 import { record, validateDefinition, validateState } from '../../../src/lib/theater/validation.ts';
-import { buildBundle as buildLegacy } from './legacy-format.mjs';
 
 export function validateSource(value) {
 	const source = record(value, '작성 원본');
@@ -10,21 +8,12 @@ export function validateSource(value) {
 }
 
 export function buildBundle(value) {
-	if (value?.format === 'newera-lore-source') {
-		const legacy = buildLegacy(value);
-		const world = convertLegacy(legacy.title, legacy.state);
-		return { format: 'newera-theater', version: 2, world, saves: [], legacyArchive: legacy };
-	}
 	const definition = validateSource(value);
 	return { format: 'newera-theater', version: 2, world: { definition, state: initialState(definition) }, saves: [] };
 }
 
 export function validateBundle(value) {
 	const bundle = record(value, '세계관 파일');
-	if (bundle.format === 'newera-lore' && bundle.version === 1) {
-		const converted = convertLegacy(bundle.title, bundle.state);
-		return { title: converted.definition.name, sceneCount: 1, instanceCount: converted.state.instances.length, tick: converted.state.tick };
-	}
 	if (bundle.format !== 'newera-theater' || bundle.version !== 2) throw new Error('지원하지 않는 세계관 파일입니다.');
 	const world = record(bundle.world, 'world');
 	const definition = validateDefinition(world.definition);

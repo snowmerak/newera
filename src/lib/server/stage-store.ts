@@ -3,7 +3,6 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { exampleWorld } from '$lib/theater/fixtures';
-import { convertLegacy } from '$lib/theater/legacy';
 import { actionForRequest, initialState, templateFor } from '$lib/theater/runtime';
 import type { GenerationJob, PlayerRequest, SaveSlot, StageView, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
 import { record, text, validateDefinition, validateState } from '$lib/theater/validation';
@@ -19,7 +18,7 @@ export function store(): DatabaseSync {
 	db.exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
 		CREATE TABLE IF NOT EXISTS theater_worlds (
 			id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, definition_json TEXT NOT NULL,
-			state_json TEXT NOT NULL, legacy_json TEXT, created_at TEXT NOT NULL
+			state_json TEXT NOT NULL, created_at TEXT NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS theater_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS theater_saves (
@@ -36,12 +35,9 @@ export function store(): DatabaseSync {
 	database = db;
 	try {
 		transaction(() => {
-			if (!db.prepare("SELECT value FROM theater_meta WHERE key = 'migrated'").get()) {
-				migrateLegacy(db);
-				db.prepare("INSERT INTO theater_meta VALUES ('migrated', '1')").run();
-			}
 			if (!db.prepare('SELECT id FROM theater_worlds LIMIT 1').get()) insertWorld(exampleWorld());
-			if (!db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get()) {
+			const active = db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get() as Row | undefined;
+			if (!active || !db.prepare('SELECT id FROM theater_worlds WHERE id = ?').get(String(active.value))) {
 				setActive(String((db.prepare('SELECT id FROM theater_worlds ORDER BY created_at LIMIT 1').get() as Row).id));
 			}
 		});
@@ -77,40 +73,9 @@ export function listWorlds(): WorldSummary[] {
 		.map((row) => ({ id: String(row.id), revision: Number(row.revision), name: String(JSON.parse(String(row.definition_json)).name) }));
 }
 
-function insertWorld(definition: WorldDefinition, state = initialState(definition), id: string = randomUUID(), legacy: unknown = null): string {
-	store().prepare('INSERT INTO theater_worlds VALUES (?, 0, ?, ?, ?, ?)').run(id, JSON.stringify(definition), JSON.stringify(state), legacy === null ? null : JSON.stringify(legacy), new Date().toISOString());
+function insertWorld(definition: WorldDefinition, state = initialState(definition), id: string = randomUUID()): string {
+	store().prepare('INSERT INTO theater_worlds (id, revision, definition_json, state_json, created_at) VALUES (?, 0, ?, ?, ?)').run(id, JSON.stringify(definition), JSON.stringify(state), new Date().toISOString());
 	return id;
-}
-
-function migrateLegacy(db: DatabaseSync): void {
-	const has = (name: string) => Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
-	if (!has('world_state')) return;
-	const capture = () => Object.fromEntries(['world_state', 'scenario_config', 'characters', 'character_templates', 'events', 'memories', 'modules'].map((table) => [
-		({ world_state: 'world', scenario_config: 'config', character_templates: 'characterTemplates' } as Record<string, string>)[table] || table,
-		has(table) ? db.prepare(`SELECT * FROM ${table}`).all() : []
-	]));
-	const active = has('lore_meta') ? String((db.prepare('SELECT active_lore_id FROM lore_meta WHERE id = 1').get() as Row | undefined)?.active_lore_id ?? '') : '';
-	const lores = has('lores') ? db.prepare('SELECT * FROM lores ORDER BY created_at, rowid').all() as Row[] : [];
-	if (!lores.length) {
-		const snapshot = capture();
-		if (!(snapshot.world as unknown[]).length) return;
-		const converted = convertLegacy('이전 이야기', snapshot);
-		insertWorld(converted.definition, converted.state, randomUUID(), snapshot);
-		return;
-	}
-	for (const lore of lores) {
-		const snapshot = String(lore.id) === active || lore.state_json === null ? capture() : JSON.parse(String(lore.state_json));
-		const converted = convertLegacy(String(lore.title), snapshot);
-		const id = `legacy-${lore.id}`;
-		insertWorld(converted.definition, converted.state, id, snapshot);
-		if (String(lore.id) === active) setActive(id);
-		if (has('lore_save_slots')) {
-			for (const save of db.prepare('SELECT * FROM lore_save_slots WHERE lore_id = ?').all(String(lore.id)) as Row[]) {
-				const previous = convertLegacy(String(lore.title), JSON.parse(String(save.snapshot_json)));
-				db.prepare('INSERT INTO theater_saves VALUES (?, ?, ?, ?)').run(id, Number(save.slot), String(save.saved_at), JSON.stringify(previous));
-			}
-		}
-	}
 }
 
 export function createWorld(name: string, description: string): string {
@@ -190,18 +155,16 @@ export function resetWorld(id: string, revision: number): void {
 
 export function exportWorld(id: string): string {
 	const world = getWorld(id);
-	const legacy = (store().prepare('SELECT legacy_json FROM theater_worlds WHERE id = ?').get(id) as Row).legacy_json;
 	const saves = (store().prepare('SELECT * FROM theater_saves WHERE world_id = ? ORDER BY slot').all(id) as Row[])
 		.map((row) => ({ slot: Number(row.slot), savedAt: String(row.saved_at), world: JSON.parse(String(row.snapshot_json)) }));
-	return JSON.stringify({ format: 'newera-theater', version: 2, world: { definition: world.definition, state: world.state }, saves, legacyArchive: legacy ? JSON.parse(String(legacy)) : null }, null, 2);
+	return JSON.stringify({ format: 'newera-theater', version: 2, world: { definition: world.definition, state: world.state }, saves }, null, 2);
 }
 
 export function importWorld(raw: string): string {
 	if (Buffer.byteLength(raw, 'utf8') > 100000000) throw new Error('세계관 파일은 100MB 이하여야 합니다.');
 	const bundle = record(JSON.parse(raw), '세계관 파일');
-	const legacy = bundle.format === 'newera-lore' && bundle.version === 1;
-	if (!legacy && (bundle.format !== 'newera-theater' || bundle.version !== 2)) throw new Error('지원하지 않는 세계관 파일입니다.');
-	const source = legacy ? convertLegacy(text(bundle.title, '세계관 이름', 200), bundle.state) : record(bundle.world, 'world');
+	if (bundle.format !== 'newera-theater' || bundle.version !== 2) throw new Error('씬 기반 세계관(version 2)만 가져올 수 있습니다.');
+	const source = record(bundle.world, 'world');
 	const definition = validateDefinition(source.definition);
 	const state = source.state === undefined ? initialState(definition) : validateState(source.state, definition);
 	if (!Array.isArray(bundle.saves) || bundle.saves.length > 3) throw new Error('저장 슬롯은 최대 3개입니다.');
@@ -209,13 +172,13 @@ export function importWorld(raw: string): string {
 		const save = record(entry, '슬롯');
 		const slot = Number(save.slot);
 		checkedSlot(slot);
-		const previous = legacy ? convertLegacy(definition.name, save.state) : record(save.world, '슬롯 세계관');
+		const previous = record(save.world, '슬롯 세계관');
 		const savedDefinition = validateDefinition(previous.definition);
 		return { slot, savedAt: text(save.savedAt, 'savedAt', 100), world: { definition: savedDefinition, state: validateState(previous.state, savedDefinition) } };
 	});
 	if (new Set(saves.map((save) => save.slot)).size !== saves.length) throw new Error('저장 슬롯이 중복됩니다.');
 	return transaction(() => {
-		const id = insertWorld(definition, state, randomUUID(), legacy ? bundle : bundle.legacyArchive ?? null);
+		const id = insertWorld(definition, state);
 		for (const save of saves) store().prepare('INSERT INTO theater_saves VALUES (?, ?, ?, ?)').run(id, save.slot, save.savedAt, JSON.stringify(save.world));
 		setActive(id);
 		return id;

@@ -31,9 +31,10 @@ export function modelSettings(): Settings {
 		if (!['http:', 'https:'].includes(url.protocol)) throw new Error('OEV 주소에는 http 또는 https가 필요합니다.');
 		const threshold = Number(file.reactionThreshold ?? process.env.NEWERA_REACTION_THRESHOLD ?? 0.5);
 		if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error('반응 기준은 0~1 사이여야 합니다.');
+		const decisionModel = text(file.decisionModel ?? process.env.NEWERA_DECISION_MODEL ?? '', '판단 모델', 200, true) || 'gemma4-26b';
 		const candidate: Settings = {
-			baseUrl, decisionModel: text(file.decisionModel ?? process.env.NEWERA_DECISION_MODEL ?? '', '판단 모델', 200, true),
-			textModel: text(file.textModel ?? process.env.NEWERA_TEXT_MODEL ?? '', '대사 모델', 200, true),
+			baseUrl, decisionModel,
+			textModel: text(file.textModel ?? process.env.NEWERA_TEXT_MODEL ?? '', '대사 모델', 200, true) || decisionModel,
 			timeoutMs: positive(file.timeoutMs ?? process.env.NEWERA_LLM_TIMEOUT_MS, 120000, '대사 대기 시간', 600000),
 			decisionTimeoutMs: positive(file.decisionTimeoutMs ?? process.env.NEWERA_DECISION_TIMEOUT_MS, 30000, '판단 대기 시간', 600000),
 			maxOutputTokens: positive(file.maxOutputTokens ?? process.env.NEWERA_MAX_OUTPUT_TOKENS, 512, '대사 토큰 한도', 32768), reactionThreshold: threshold
@@ -72,8 +73,8 @@ export async function createDirector(signal: AbortSignal): Promise<Director> {
 	const catalog = await request(settings, '/models', signal);
 	if (!Array.isArray(catalog.data)) throw new Error('OEV 모델 목록이 올바르지 않습니다.');
 	const generation = catalog.data.map((entry) => record(entry, '모델')).filter((entry) => entry.task === 'generation');
-	const decisionModel = settings.decisionModel || String(generation[0]?.id ?? '');
-	const textModel = settings.textModel || decisionModel;
+	const decisionModel = settings.decisionModel;
+	const textModel = settings.textModel;
 	if (!generation.some((entry) => entry.id === decisionModel) || !generation.some((entry) => entry.id === textModel)) throw new Error('설정한 판단·대사 모델이 OEV generation 모델 목록에 없습니다.');
 
 	async function choose(state: Record<string, unknown>, candidates: StageAction[], includeSignals: boolean): Promise<{ action: StageAction; reaction: number; intensity: number }> {

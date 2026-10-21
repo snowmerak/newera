@@ -193,37 +193,25 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 	}
 });
 
-test('legacy SQLite migration and old JSON imports preserve stories, slots and source tables', async () => {
+test('fresh storage contains only scene-based data and rejects unsupported imports', async () => {
 	const directory = scratch();
-	const legacy = JSON.parse(readFileSync('static/lore-presets/blue-moon-anomaly-unit.json', 'utf8'));
-	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
-	db.exec(`CREATE TABLE lores (id TEXT PRIMARY KEY, title TEXT, state_json TEXT, created_at TEXT);
-		CREATE TABLE lore_meta (id INTEGER PRIMARY KEY, active_lore_id TEXT);
-		CREATE TABLE world_state (id INTEGER PRIMARY KEY, turn INTEGER, day INTEGER, minute INTEGER, location TEXT);
-		CREATE TABLE scenario_config (id INTEGER PRIMARY KEY, world_setting TEXT);
-		CREATE TABLE characters (id TEXT PRIMARY KEY, name TEXT, profile TEXT);
-		CREATE TABLE events (id INTEGER PRIMARY KEY, turn INTEGER, narrative TEXT);
-		CREATE TABLE memories (id INTEGER PRIMARY KEY, event_id INTEGER, character_id TEXT, summary TEXT, created_turn INTEGER);
-		CREATE TABLE lore_save_slots (lore_id TEXT, slot INTEGER, saved_at TEXT, snapshot_json TEXT);`);
-	db.prepare('INSERT INTO lores VALUES (?, ?, ?, ?)').run('old-active', 'Existing story', null, new Date().toISOString());
-	db.prepare('INSERT INTO lores VALUES (?, ?, ?, ?)').run('old-inactive', legacy.title, JSON.stringify(legacy.state), new Date().toISOString());
-	db.exec("INSERT INTO lore_meta VALUES (1, 'old-active'); INSERT INTO world_state VALUES (1, 5, 2, 1200, 'Existing room'); INSERT INTO scenario_config VALUES (1, 'Existing world'); INSERT INTO characters VALUES ('a', 'Existing actor', 'Existing profile'); INSERT INTO events VALUES (1, 5, 'Existing narrative'); INSERT INTO memories VALUES (1, 1, 'a', 'Existing memory', 5);");
-	db.prepare('INSERT INTO lore_save_slots VALUES (?, 1, ?, ?)').run('old-active', new Date().toISOString(), JSON.stringify({ world: [{ turn: 3, day: 1, minute: 1000, location: 'Earlier room' }], config: [{ world_setting: 'Existing world' }], characters: [{ id: 'a', name: 'Existing actor', profile: 'Existing profile' }], events: [], memories: [] }));
-	const before = db.prepare('SELECT * FROM characters').all();
 	const running = await app(directory, 'http://127.0.0.1:1/v1');
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
 	try {
-		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_worlds').get().n, 2);
-		assert.deepEqual(db.prepare('SELECT * FROM characters').all(), before);
-		const world = (await exported(running.base, 'legacy-old-active')).world;
-		assert.equal(world.state.tick, 5);
-		assert.equal(world.state.events[0].text, 'Existing narrative');
-		assert.equal(world.state.instances[0].memories[0].text, 'Existing memory');
-		assert.equal((await exported(running.base, 'legacy-old-active')).saves.length, 1);
-		const file = new FormData(); file.append('file', new Blob([JSON.stringify(legacy)]), 'legacy.json');
-		assert.equal((await fetch(`${running.base}/lores?/importWorld`, { method: 'POST', headers: { origin: running.base }, body: file })).status, 200);
+		assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((row) => row.name), ['theater_jobs', 'theater_meta', 'theater_saves', 'theater_worlds']);
+		assert.deepEqual(db.prepare('PRAGMA table_info(theater_worlds)').all().map((row) => row.name), ['id', 'revision', 'definition_json', 'state_json', 'created_at']);
+		const unsupported = { format: 'newera-lore', version: 1, title: 'Unsupported', state: {}, saves: [] };
+		const file = new FormData(); file.append('file', new Blob([JSON.stringify(unsupported)]), 'unsupported.json');
+		const response = await fetch(`${running.base}/lores?/importWorld`, { method: 'POST', headers: { origin: running.base }, body: file });
+		assert.equal((await response.json()).type, 'failure');
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_worlds').get().n, 1);
 		const id = db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get().value;
-		assert.equal((await exported(running.base, id)).world.definition.name, legacy.title);
-		assert.equal((await exported(running.base, id)).legacyArchive.format, 'newera-lore');
+		const bundle = await exported(running.base, id);
+		assert.deepEqual(Object.keys(bundle).sort(), ['format', 'saves', 'version', 'world']);
+		assert.equal(bundle.world.definition.name, '비가 그친 뒤의 극장');
+		assert.equal(bundle.world.state.tick, 0);
+		assert.deepEqual(bundle.world.state.instances.filter((instance) => instance.companion).map((instance) => instance.name), ['하린']);
+		assert.equal(JSON.parse(readFileSync('static/lore-presets/theater-opening.json', 'utf8')).version, 2);
 	} finally { await running.stop(); db.close(); }
 });
 
