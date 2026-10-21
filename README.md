@@ -42,11 +42,10 @@ API 명세는 [OEV 제공 문서](http://macstudio:12821/.skill)를 따릅니다
 | --- | --- | --- |
 | `NEWERA_OEV_BASE_URL` | `http://macstudio:12821/v1` | 모델 검색·판단·대사 API |
 | `NEWERA_DECISION_MODEL` | `gemma4-26b` | `/systemone` 판단 모델 |
-| `NEWERA_TEXT_MODEL` | `gemma4-26b` (미지정 시 판단 모델과 동일) | `/chat/completions` 대사 모델 |
+| `NEWERA_TEXT_MODEL` | `gemma4-26b` (미지정 시 판단 모델과 동일) | `/chat/completions` 상세 행동·대사·메모 생성 모델 |
 | `NEWERA_DECISION_TIMEOUT_MS` | `30000` | 모델 검색·판단 요청별 대기 시간 |
-| `NEWERA_LLM_TIMEOUT_MS` | `120000` | 대사 요청별 대기 시간 |
-| `NEWERA_MAX_OUTPUT_TOKENS` | `512` | 대사 출력 토큰 한도 |
-| `NEWERA_REACTION_THRESHOLD` | `0.5` | `noul`이 이 값 미만이면 기다림 |
+| `NEWERA_LLM_TIMEOUT_MS` | `120000` | 구조화된 생성 요청별 대기 시간 |
+| `NEWERA_MAX_OUTPUT_TOKENS` | `512` | 구조화된 출력 토큰 한도 |
 | `NEWERA_DATA_DIR` | `./data` | SQLite와 기본 모델 설정 파일 위치 |
 | `NEWERA_MODEL_CONFIG` | `<data>/models.json` | 선택적인 실행 중 모델 설정 파일 |
 
@@ -59,14 +58,15 @@ API 명세는 [OEV 제공 문서](http://macstudio:12821/.skill)를 따릅니다
   "textModel": "gemma4-26b",
   "decisionTimeoutMs": 30000,
   "timeoutMs": 120000,
-  "maxOutputTokens": 512,
-  "reactionThreshold": 0.5
+  "maxOutputTokens": 512
 }
 ```
 
 환경 변수와 `.env`, SQLite 위치를 변경하면 서버를 재시작해야 합니다. 환경 변수는 프로세스 시작 입력이고 SQLite 연결은 한 데이터 디렉터리에 묶여 있습니다.
 
-판단은 `choice`(합법적인 다음 행동), `noul`(반응 신호), `score`(표현 강도)를 한 요청에 담습니다. OEV는 각 질문을 독립적으로 평가하므로 한 HTTP 요청이 한 번의 추론을 의미하지는 않습니다. 대사는 선택이 확정된 뒤 별도로 생성합니다. `noul`과 `score`는 제공한 기준에 대한 상대적 신호이며 실제 진실이나 성공 확률로 저장하지 않습니다. 행동 후보가 36개를 넘으면 묶음 선택 후 세부 선택을 진행합니다.
+판단은 `/systemone`의 `choice` 질문 하나로 **행동한다(`act`) / 지켜본다(`wait`)**만 고릅니다. 지켜보면 생성 호출을 생략합니다. 행동할 때는 `/chat/completions`에 `response_format: json_schema`를 보내 실제 행동·대상·묘사·대사·개인 메모를 추론합니다. `actionId`는 현장에서 실행할 수 있는 모든 행동 ID 중에서 생성 모델이 선택하며, 대상과 효과는 실행기가 해당 ID로 확인합니다. 기존 `noul`·`score` 질문과 반응 임계값, 후보 묶음 판단은 사용하지 않습니다.
+
+출력 필드는 `actionId`, `narrative`, `utterance`, `memoUpdate`입니다. 말하기에는 대사가, 이동·상호작용에는 행동 묘사가 필요합니다. 메모 갱신은 자신의 요약·현재 의도·감정·미해결 문제 전체를 교체하고, null이면 기존 메모를 유지합니다. 다른 인물의 입력에는 이 메모를 전달하지 않습니다. JSON 파싱·필드와 길이·실행 가능성을 클라이언트에서도 검증하며, 알 수 없는 행동이나 임의 상태 수정, 잘린 출력은 실행하지 않습니다. 일반 문자열로 자동 전환하지 않습니다.
 
 이 기반에서는 개인의 최근 목격 기억을 사용하며 임베딩 서버를 호출하지 않습니다. 캐릭터가 없는 씬은 모델 연결 없이 진행할 수 있습니다. 모델이나 검증에 실패하면 그 진행의 상태와 사건을 저장하지 않습니다.
 
@@ -85,3 +85,5 @@ npm run lore:validate -- output.json
 ```
 
 구조와 실행 규칙은 [PRODUCT](docs/PRODUCT.md), 파일 형식과 오브젝트 예제는 [세계관 JSON 안내](docs/LORE_JSON_GUIDE.md)를 참고하세요.
+
+동적 동행과 반복 반응 등 다음 확장 및 현재 반영 범위는 [반응형 씬 실행기 확장 설계](docs/REACTIVE_SCENE_DESIGN.md)에 정리했습니다.

@@ -7,7 +7,6 @@ import { createDirector, modelSettings } from '../src/lib/server/oev.ts';
 
 const originalFetch = globalThis.fetch;
 const actions = [
-	{ id: 'wait', kind: 'wait', targetId: null, label: 'wait' },
 	{ id: 'speak:player', kind: 'speak', targetId: 'player', label: 'speak to player' }
 ];
 const state = { scene: 'room', self: { id: 'actor' } };
@@ -20,65 +19,58 @@ function provider(options = {}) {
 		calls.push({ url: String(url), body, signal: init.signal });
 		if (String(url).endsWith('/models')) return json({ data: [{ id: 'embed', task: 'embedding' }, { id: 'actor-model', task: 'generation' }, { id: 'gemma4-26b', task: 'generation' }] });
 		if (String(url).endsWith('/systemone')) {
-			const criteria = body.questions.action.criteria;
-			const keys = Object.keys(criteria);
-			const answers = {
-				action: { type: 'choice', choice: options.choice ?? keys.at(-1) },
-				react: { type: 'noul', noul: options.noul ?? 0.9 }, intensity: { type: 'score', score: options.score ?? 1.6 }
-			};
-			return json({ answers });
+			return json({ answers: { participation: { type: options.type ?? 'choice', choice: options.choice ?? 'act' } } });
 		}
-		return json({ choices: [{ finish_reason: options.finishReason ?? 'stop', message: { content: '반가워요. 같이 준비할까요?' } }] });
+		const output = { actionId: 'speak:player', narrative: null, utterance: '반가워요. 같이 준비할까요?', memoUpdate: null, ...options.output };
+		return json({ choices: [{ finish_reason: options.finishReason ?? 'stop', message: { content: options.content ?? JSON.stringify(output) } }] });
 	};
 	return calls;
 }
 
-test('defaults both decisions and speech to gemma4-26b regardless of catalog order', async () => {
+test('binary participation precedes structured action inference with Gemma4 26B', async () => {
 	const calls = provider();
 	try {
 		const director = await createDirector(new AbortController().signal);
-		const decision = await director.decide(state, actions);
-		assert.equal(decision.action.id, 'speak:player');
-		assert.equal(decision.intensity, 1.6);
-		assert.equal(decision.model, 'gemma4-26b');
-		assert.match(await director.speak(state, decision), /반가워요/);
-		assert.deepEqual(calls[1].body.questions.react.criteria, { true: '지금 말하거나 상호작용하거나 이동할 구체적인 이유가 있다.', false: '새로 할 말이나 행동 없이 지켜보는 것이 자연스럽다.' });
-		assert.equal(calls[1].body.questions.intensity.type, 'score');
+		assert.deepEqual(await director.decide(state), { act: true, model: 'gemma4-26b' });
+		assert.match((await director.perform(state, actions)).utterance, /반가워요/);
+		assert.deepEqual(Object.keys(calls[1].body.questions), ['participation']);
+		assert.deepEqual(Object.keys(calls[1].body.questions.participation.criteria), ['act', 'wait']);
+		assert.deepEqual(calls[1].body.state, state);
 		assert.equal(calls[1].body.model, 'gemma4-26b');
 		assert.equal(calls[2].body.model, 'gemma4-26b');
 		assert.equal(calls[2].body.reasoning_effort, 'none');
 		assert.equal(calls[2].body.max_completion_tokens, 512);
-		assert.equal(calls[2].body.response_format, undefined);
+		assert.equal(calls[2].body.response_format.type, 'json_schema');
+		assert.equal(calls[2].body.response_format.json_schema.strict, true);
+		assert.deepEqual(JSON.parse(calls[2].body.messages[1].content).availableActions, actions);
+		assert.deepEqual(calls[2].body.response_format.json_schema.schema.properties.actionId.enum, ['speak:player']);
 	} finally { globalThis.fetch = originalFetch; }
 });
 
-test('soft reaction signal gates actions; malformed typed outputs fail closed', async () => {
+test('participation accepts only the two typed choices', async () => {
 	try {
-		provider({ noul: 0.1 });
+		provider({ choice: 'wait' });
 		let director = await createDirector(new AbortController().signal);
-		assert.equal((await director.decide(state, actions)).action.kind, 'wait');
+		assert.equal((await director.decide(state)).act, false);
 		provider({ choice: 'not-a-candidate' });
 		director = await createDirector(new AbortController().signal);
-		await assert.rejects(director.decide(state, actions), /후보에 없는 행동/);
-		provider({ noul: 2 });
+		await assert.rejects(director.decide(state), /act 또는 wait/);
+		provider({ type: 'noul' });
 		director = await createDirector(new AbortController().signal);
-		await assert.rejects(director.decide(state, actions), /noul/);
-		provider({ score: 3 });
-		director = await createDirector(new AbortController().signal);
-		await assert.rejects(director.decide(state, actions), /score/);
+		await assert.rejects(director.decide(state), /타입/);
 	} finally { globalThis.fetch = originalFetch; }
 });
 
-test('hierarchical selection preserves actions beyond the 36-choice API limit', async () => {
-	const many = [actions[0], ...Array.from({ length: 91 }, (_, index) => ({ id: `speak:${index}`, kind: 'speak', targetId: `${index}`, label: `target ${index}` }))];
-	const calls = provider();
+test('generation selects detailed actions beyond the typed endpoint choice limit', async () => {
+	const many = Array.from({ length: 91 }, (_, index) => ({ id: `speak:${index}`, kind: 'speak', targetId: `${index}`, label: `target ${index}` }));
+	const calls = provider({ output: { actionId: 'speak:90' } });
 	try {
 		const director = await createDirector(new AbortController().signal);
-		assert.equal((await director.decide(state, many)).action.id, 'speak:90');
+		await director.decide(state);
+		assert.equal((await director.perform(state, many)).actionId, 'speak:90');
 		const decisions = calls.filter((call) => call.url.endsWith('/systemone'));
-		assert.equal(decisions.length, 2);
-		assert.ok(decisions.every((call) => Object.keys(call.body.questions.action.criteria).length <= 36));
-		assert.equal(decisions[1].body.questions.react, undefined);
+		assert.equal(decisions.length, 1);
+		assert.equal(calls[2].body.response_format.json_schema.schema.properties.actionId.enum.length, 91);
 	} finally { globalThis.fetch = originalFetch; }
 });
 
@@ -86,8 +78,30 @@ test('truncated generation cannot become an executed utterance', async () => {
 	provider({ finishReason: 'length' });
 	try {
 		const director = await createDirector(new AbortController().signal);
-		const decision = await director.decide(state, actions);
-		await assert.rejects(director.speak(state, decision), /정상적으로 완료/);
+		await assert.rejects(director.perform(state, actions), /정상적으로 완료/);
+	} finally { globalThis.fetch = originalFetch; }
+});
+
+test('malformed JSON, unknown actions and invalid action payloads cannot execute', async () => {
+	try {
+		for (const [options, pattern] of [
+			[{ content: 'plain speech' }, /JSON/],
+			[{ output: { actionId: 'speak:offstage' } }, /실행할 수 없는 행동/],
+			[{ output: { utterance: null } }, /대사가 필요/],
+			[{ output: { effects: { open: true } } }, /허용되지 않거나 누락/],
+			[{ output: { memoUpdate: { summary: 'only summary' } } }, /개인 메모/]
+		]) {
+			provider(options);
+			const director = await createDirector(new AbortController().signal);
+			await assert.rejects(director.perform(state, actions), pattern);
+		}
+		const interact = [{ id: 'interact:light:on', kind: 'interact', targetId: 'light', interactionId: 'on', label: 'turn on' }];
+		provider({ output: { actionId: interact[0].id, narrative: null, utterance: null } });
+		let director = await createDirector(new AbortController().signal);
+		await assert.rejects(director.perform(state, interact), /묘사가 필요/);
+		provider({ output: { actionId: interact[0].id, narrative: '스위치를 누른다.' } });
+		director = await createDirector(new AbortController().signal);
+		await assert.rejects(director.perform(state, interact), /말하기 행동에서만/);
 	} finally { globalThis.fetch = originalFetch; }
 });
 

@@ -4,7 +4,7 @@ export function initialState(definition: WorldDefinition): WorldState {
 	return {
 		tick: 0, day: 1, minute: 18 * 60, activeSceneId: definition.startingSceneId, events: [],
 		instances: definition.spawns.map((spawn) => ({
-			...structuredClone(spawn), active: true, memories: [],
+			...structuredClone(spawn), active: true, memories: [], memo: null,
 			state: { ...definition.templates.find((template) => template.id === spawn.templateId)!.initialState, ...spawn.state }
 		}))
 	};

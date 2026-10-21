@@ -1,10 +1,11 @@
 import { actionForRequest, applyAction, availableActions, beginTurn, observation, residents, templateFor } from './runtime.ts';
-import type { DecisionTrace, PlayerRequest, StageAction, World } from './types.ts';
+import { checkedExpression } from './performance.ts';
+import type { ActorPerformance, PlayerRequest, StageAction, World } from './types.ts';
 
-export interface ActorDecision extends DecisionTrace { action: StageAction }
+export interface ActorDecision { act: boolean; model: string }
 export interface Director {
-	decide(state: Record<string, unknown>, actions: StageAction[]): Promise<ActorDecision>;
-	speak(state: Record<string, unknown>, decision: ActorDecision): Promise<string>;
+	decide(state: Record<string, unknown>): Promise<ActorDecision>;
+	perform(state: Record<string, unknown>, actions: StageAction[]): Promise<ActorPerformance>;
 }
 
 /** Resolve one bounded reaction round against a private draft. The caller commits it atomically. */
@@ -21,13 +22,24 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 		if (!actor.active || actor.sceneId !== draft.state.activeSceneId) continue;
 		const state = observation(draft, actor);
 		const actions = availableActions(draft, actor.id);
-		const decision = await director.decide(state, actions);
+		const decision = await director.decide(state);
 		checkpoint();
-		const action = actions.find((candidate) => candidate.id === decision.action.id);
-		if (!action) throw new Error('판단 결과에 실행할 수 없는 행동이 포함되었습니다.');
-		const text = action.kind === 'speak' ? await director.speak(state, decision) : action.label;
+		if (typeof decision.act !== 'boolean') throw new Error('행동 여부 판단이 올바르지 않습니다.');
+		if (!decision.act) {
+			const wait = actions.find((action) => action.kind === 'wait')!;
+			applyAction(draft, actor.id, wait, wait.label, { model: decision.model, choice: 'wait', acted: false });
+			continue;
+		}
+		const candidates = actions.filter((action) => action.kind !== 'wait');
+		const { model, ...output } = await director.perform(state, candidates);
 		checkpoint();
-		applyAction(draft, actor.id, action, text, { model: decision.model, choice: action.id, reaction: decision.reaction, intensity: decision.intensity });
+		const expression = checkedExpression(output, candidates);
+		const action = candidates.find((candidate) => candidate.id === expression.actionId)!;
+		const text = [expression.narrative, expression.utterance].filter(Boolean).join('\n') || action.label;
+		const resolved = applyAction(draft, actor.id, action, text, { model: decision.model, choice: action.id, acted: true, generationModel: model });
+		if (expression.narrative) resolved.narrative = expression.narrative;
+		if (expression.utterance) resolved.utterance = expression.utterance;
+		if (expression.memoUpdate) actor.memo = expression.memoUpdate;
 	}
 	return draft;
 }

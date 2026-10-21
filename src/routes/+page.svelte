@@ -84,7 +84,7 @@
 					<div class="event-byline"><strong>{actorName(world, event.actorId)}</strong><span>{eventScene?.name} · {event.tick}</span>{#if event.targetId}<span>→ {actorName(world, event.targetId)}</span>{/if}</div>
 					<p>{event.text}</p>
 					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}
-					{#if event.decision}<details class="decision-detail"><summary>선택 기록</summary><small>{event.decision.choice} · 반응 신호 {event.decision.reaction.toFixed(2)} · 강도 {event.decision.intensity.toFixed(2)} · {event.decision.model}</small></details>{/if}
+					{#if event.decision}<details class="decision-detail"><summary>선택 기록</summary><small>{event.decision.acted === undefined ? '이전 판단' : event.decision.acted ? '행동한다' : '지켜본다'} · {event.decision.choice} · 판단 {event.decision.model}{#if event.decision.generationModel} · 생성 {event.decision.generationModel}{/if}</small></details>{/if}
 				</article>
 			{:else}<div class="empty-stage"><p>아직 아무도 말을 꺼내지 않았다.</p><span>말을 걸거나, 주변 사물을 살피거나, 잠시 기다려 보세요.</span></div>{/each}
 		</div>
@@ -108,7 +108,7 @@
 				{#each interactionsFor(world, instance) as interaction}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="interact" /><input type="hidden" name="targetId" value={instance.id} /><button name="interactionId" value={interaction.id} disabled={busy}>{interaction.label}</button></form>{/each}
 			</div></article>{/each}
 		</div></section>{/if}
-		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>{#each characters as instance}<h3>{instance.name}</h3><ul>{#each instance.memories.slice(-8) as memory}<li>{memory.text}</li>{:else}<li>아직 기억한 사건이 없습니다.</li>{/each}</ul>{/each}</details>
+		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>{#each characters as instance}<h3>{instance.name}</h3>{#if instance.memo}<p>메모: {instance.memo.summary}</p><p>현재 의도: {instance.memo.currentIntention}</p><p>감정: {instance.memo.feelings.join(', ') || '없음'}</p><p>미해결 문제: {instance.memo.openThreads.join(', ') || '없음'}</p>{/if}<ul>{#each instance.memories.slice(-8) as memory}<li>{memory.text}</li>{:else}<li>아직 기억한 사건이 없습니다.</li>{/each}</ul>{/each}</details>
 		<footer class="reader-footer"><a href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>공연 기록 내려받기</a><details><summary>처음부터 다시</summary><p>현재 진행을 초기 배치로 되돌립니다. 저장 슬롯은 유지됩니다.</p><form method="POST" action="?/reset" use:enhance><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button disabled={busy}>현재 진행 초기화</button></form></details></footer>
 	</main>
 </div>

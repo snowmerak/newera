@@ -23,8 +23,8 @@ async function processJob(id: string): Promise<void> {
 		let connected: Promise<Director> | undefined;
 		const connection = () => connected ??= createDirector(controller.signal);
 		const director: Director = {
-			decide: async (state, actions) => (await connection()).decide(state, actions),
-			speak: async (state, decision) => (await connection()).speak(state, decision)
+			decide: async (state) => (await connection()).decide(state),
+			perform: async (state, actions) => (await connection()).perform(state, actions)
 		};
 		const result = await resolveTurn(getWorld(job.worldId), job.request, director, checkpoint);
 		finishJob(job, workerId, result);

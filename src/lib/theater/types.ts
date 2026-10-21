@@ -62,12 +62,29 @@ export interface EntityMemory {
 export interface EntityInstance extends Spawn {
 	active: boolean;
 	memories: EntityMemory[];
+	memo?: CharacterMemo | null;
 }
+export interface CharacterMemo {
+	summary: string;
+	currentIntention: string;
+	feelings: string[];
+	openThreads: string[];
+}
+export interface ActorExpression {
+	actionId: string;
+	narrative: string | null;
+	utterance: string | null;
+	memoUpdate: CharacterMemo | null;
+}
+export interface ActorPerformance extends ActorExpression { model: string }
 export interface DecisionTrace {
 	model: string;
 	choice: string;
-	reaction: number;
-	intensity: number;
+	acted?: boolean;
+	generationModel?: string;
+	/** Optional metadata from previously saved scene records; new decisions do not produce it. */
+	reaction?: number;
+	intensity?: number;
 }
 export interface StageEvent {
 	id: string;
@@ -81,6 +98,8 @@ export interface StageEvent {
 	destinationId?: string;
 	changes?: Properties;
 	decision?: DecisionTrace;
+	narrative?: string;
+	utterance?: string;
 }
 export interface WorldState {
 	tick: number;

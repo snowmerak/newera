@@ -56,6 +56,7 @@ async function waitJob(base, db, worldId, failure = false) {
 test('scene play, typed decisions, multiple residents, object state, companions and world isolation', async () => {
 	const calls = [];
 	let failNext = false;
+	let invalidNextGeneration = false;
 	let pauseNext = null;
 	const model = createServer(async (request, response) => {
 		response.setHeader('content-type', 'application/json');
@@ -67,12 +68,12 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		if (pauseNext) { const hold = pauseNext; pauseNext = null; hold.started(); await hold.wait; }
 		if (failNext) { failNext = false; response.statusCode = 503; response.end('{"error":"offline"}'); return; }
 		if (request.url === '/v1/systemone') {
-			const criteria = body.questions.action.criteria;
-			const choice = Object.entries(criteria).find(([, label]) => label === '플레이어에게 말한다')?.[0] || Object.keys(criteria)[0];
-			response.end(JSON.stringify({ answers: { action: { type: 'choice', choice }, react: { type: 'noul', noul: 0.9 }, intensity: { type: 'score', score: 1.3 } } }));
+			response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: 'act' } } }));
 		} else if (request.url === '/v1/chat/completions') {
 			const state = JSON.parse(body.messages[1].content);
-			response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: `${state.self.name}의 대답입니다.` } }] }));
+			const output = { actionId: 'speak:player', narrative: null, utterance: `${state.self.name}의 대답입니다.`, memoUpdate: { summary: `${state.self.id}만의 메모`, currentIntention: '준비를 계속한다.', feelings: ['기대'], openThreads: [] } };
+			if (invalidNextGeneration) { invalidNextGeneration = false; output.actionId = 'interact:offstage:forged'; }
+			response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(output) } }] }));
 		} else { response.statusCode = 404; response.end('{}'); }
 	});
 	const modelPort = await listen(model);
@@ -94,6 +95,12 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		assert.deepEqual(calls.filter((call) => call.path.endsWith('systemone')).map((call) => call.body.state.self.id), ['seoyeon', 'harin']);
 		assert.ok(calls.filter((call) => call.path.endsWith('systemone'))[1].body.state.recentEvents.some((event) => event.text === '서연의 대답입니다.'));
 		assert.equal(snapshot().state.events.filter((entry) => entry.kind === 'speak').length, 3);
+		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'seoyeon').memo.summary, 'seoyeon만의 메모');
+		assert.deepEqual(Object.keys(calls[0].body.questions), ['participation']);
+		const generation = calls.find((call) => call.path.endsWith('chat/completions'));
+		assert.equal(generation.body.response_format.json_schema.strict, true);
+		assert.equal(JSON.parse(generation.body.messages[1].content).availableActions.some((action) => action.kind === 'wait'), false);
+		assert.ok(!JSON.stringify(calls.filter((call) => call.path.endsWith('systemone'))[1].body).includes('seoyeon만의 메모'));
 		await post(base, 'turn', { ...fields(), kind: 'interact', targetId: 'desk-bell', interactionId: 'ring' });
 		await waitJob(base, db, originalId);
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'desk-bell').state.rung, true);
@@ -110,6 +117,12 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		await post(base, 'load', { ...fields(), slot: '1' });
 		assert.equal(snapshot().state.activeSceneId, 'lobby');
 		assert.equal(snapshot().state.tick, 2);
+		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'seoyeon').memo.summary, 'seoyeon만의 메모');
+		const beforeInvalidGeneration = snapshot();
+		invalidNextGeneration = true;
+		await post(base, 'turn', { ...fields(), kind: 'wait' });
+		await waitJob(base, db, originalId, true);
+		assert.deepEqual(snapshot(), beforeInvalidGeneration, 'invalid generated actions must not persist any partial events or memo updates');
 		failNext = true;
 		await post(base, 'turn', { ...fields(), kind: 'wait' });
 		await waitJob(base, db, originalId, true);
@@ -176,6 +189,7 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		const exportedWorld = await exported(base, originalId);
 		assert.equal(exportedWorld.version, 2);
 		assert.equal(exportedWorld.saves.length, 1);
+		assert.equal(exportedWorld.saves[0].world.state.instances.find((entry) => entry.id === 'seoyeon').memo.summary, 'seoyeon만의 메모');
 		const file = new FormData();
 		file.append('file', new Blob([JSON.stringify(exportedWorld)], { type: 'application/json' }), 'world.json');
 		assert.equal((await fetch(`${base}/lores?/importWorld`, { method: 'POST', headers: { origin: base }, body: file })).status, 200);

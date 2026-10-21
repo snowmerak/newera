@@ -1,4 +1,4 @@
-import type { Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
+import type { CharacterMemo, Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
 
 export function record(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}: JSON 객체가 필요합니다.`);
@@ -12,6 +12,13 @@ export function identifier(value: unknown, label: string): string {
 	const id = text(value, label, 120);
 	if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/.test(id) || ['__proto__', 'constructor', 'prototype'].includes(id)) throw new Error(`${label}: 사용할 수 없는 ID입니다.`);
 	return id;
+}
+export function checkedMemo(value: unknown): CharacterMemo {
+	const source = record(value, '개인 메모');
+	const keys = ['summary', 'currentIntention', 'feelings', 'openThreads'];
+	if (Object.keys(source).length !== keys.length || keys.some((key) => !Object.hasOwn(source, key))) throw new Error('개인 메모: 허용되지 않거나 누락된 항목이 있습니다.');
+	const notes = (value: unknown, label: string): string[] => list(value, label, 8).map((entry) => text(entry, label, 300));
+	return { summary: text(source.summary, '메모 요약', 1200, true), currentIntention: text(source.currentIntention, '현재 의도', 600, true), feelings: notes(source.feelings, '현재 감정'), openThreads: notes(source.openThreads, '미해결 문제') };
 }
 function list(value: unknown, label: string, maximum = 500): unknown[] {
 	if (!Array.isArray(value) || value.length > maximum) throw new Error(`${label}: 최대 ${maximum}개의 배열이 필요합니다.`);
@@ -112,7 +119,9 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 			const memory = record(item, 'memory');
 			return { eventId: text(memory.eventId, 'memory.eventId', 160), tick: integer(memory.tick, 'memory.tick', tick), text: text(memory.text, 'memory.text', 20000) };
 		});
-		return { ...instance, active, memories };
+		const memo = row.memo === undefined || row.memo === null ? null : checkedMemo(row.memo);
+		if (memo && template.kind !== 'character') throw new Error('개인 메모는 캐릭터에만 저장할 수 있습니다.');
+		return { ...instance, active, memories, memo };
 	}), 'instances');
 	const events = unique(list(source.events, 'events', 100000).map((entry): StageEvent => {
 		const row = record(entry, 'event');
@@ -129,11 +138,19 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 			if (!definition.scenes.some((scene) => scene.id === result.destinationId)) throw new Error('이벤트의 목적지가 존재하지 않습니다.');
 		}
 		if (row.changes !== undefined) result.changes = properties(row.changes, 'event.changes');
+		if (row.narrative !== undefined) result.narrative = text(row.narrative, 'event.narrative', 2000);
+		if (row.utterance !== undefined) result.utterance = text(row.utterance, 'event.utterance', 4000);
 		if (row.decision !== undefined) {
 			const trace = record(row.decision, 'decision');
-			if (typeof trace.reaction !== 'number' || trace.reaction < 0 || trace.reaction > 1 || !Number.isFinite(trace.reaction) ||
-				typeof trace.intensity !== 'number' || trace.intensity < 0 || trace.intensity > 2 || !Number.isFinite(trace.intensity)) throw new Error('판단 기록의 수치가 올바르지 않습니다.');
-			result.decision = { model: text(trace.model, 'decision.model', 200), choice: text(trace.choice, 'decision.choice', 500), reaction: trace.reaction, intensity: trace.intensity };
+			result.decision = { model: text(trace.model, 'decision.model', 200), choice: text(trace.choice, 'decision.choice', 500) };
+			if (trace.acted !== undefined) result.decision.acted = boolean(trace.acted, 'decision.acted');
+			if (trace.generationModel !== undefined) result.decision.generationModel = text(trace.generationModel, 'decision.generationModel', 200);
+			for (const [key, maximum] of [['reaction', 1], ['intensity', 2]] as const) {
+				const value = trace[key];
+				if (value === undefined) continue;
+				if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > maximum) throw new Error('판단 기록의 수치가 올바르지 않습니다.');
+				result.decision[key] = value;
+			}
 		}
 		return result;
 	}), 'events');
