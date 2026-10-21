@@ -23,6 +23,7 @@ async function processJob(id: string): Promise<void> {
 		let connected: Promise<Director> | undefined;
 		const connection = () => connected ??= createDirector(controller.signal, job.models, checkpoint);
 		const director: Director = {
+			reflect: async (state, context) => (await connection()).reflect(state, context),
 			decide: async (state) => (await connection()).decide(state),
 			perform: async (state, actions) => (await connection()).perform(state, actions)
 		};

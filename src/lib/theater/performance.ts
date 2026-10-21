@@ -5,6 +5,15 @@ function exactKeys(source: Record<string, unknown>, keys: string[], label: strin
 	if (Object.keys(source).length !== keys.length || keys.some((key) => !Object.hasOwn(source, key))) throw new Error(`${label}: 허용되지 않거나 누락된 항목이 있습니다.`);
 }
 
+export const memoUpdateSchema = { anyOf: [
+	{ type: 'null' },
+	{ type: 'object', additionalProperties: false, properties: {
+		summary: { type: 'string', maxLength: 1200 }, currentIntention: { type: 'string', maxLength: 600 },
+		feelings: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } },
+		openThreads: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } }
+	}, required: ['summary', 'currentIntention', 'feelings', 'openThreads'] }
+] };
+
 export function performanceSchema(actions: StageAction[]): Record<string, unknown> {
 	if (!actions.length) throw new Error('실행할 행동이 없습니다.');
 	return {
@@ -14,14 +23,7 @@ export function performanceSchema(actions: StageAction[]): Record<string, unknow
 			targetId: { type: ['string', 'null'], enum: [...new Set(actions.map((action) => action.targetId))] },
 			narrative: { type: ['string', 'null'], minLength: 1, maxLength: 2000 },
 			utterance: { type: ['string', 'null'], minLength: 1, maxLength: 4000 },
-			memoUpdate: { anyOf: [
-				{ type: 'null' },
-				{ type: 'object', additionalProperties: false, properties: {
-					summary: { type: 'string', maxLength: 1200 }, currentIntention: { type: 'string', maxLength: 600 },
-					feelings: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } },
-					openThreads: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 300 } }
-				}, required: ['summary', 'currentIntention', 'feelings', 'openThreads'] }
-			] }
+			memoUpdate: memoUpdateSchema
 		}, required: ['actionId', 'targetId', 'narrative', 'utterance', 'memoUpdate']
 	};
 }

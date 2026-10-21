@@ -4,6 +4,8 @@
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { actorName, residents, templateFor, interactionsFor } from '$lib/theater/runtime';
 	import { eventContent } from '$lib/theater/event-content';
+	import { relationshipMetrics } from '$lib/theater/types';
+	import { relationshipLabels } from '$lib/theater/reflection';
 	import { memoryForEvent } from '$lib/theater/memory';
 	import type { ModelSelection } from '$lib/theater/types';
 	import type { PageProps } from './$types';
@@ -174,6 +176,13 @@
 		</div></section>{/if}
 		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>
 			{#each characters as instance}<h3>{instance.name}</h3>
+				<details class="relationship-notes"><summary>상대별 관계 · 이 인물의 개인적 인식</summary>
+					{#each Object.entries(instance.relationships ?? {}) as [id, relation]}
+						<article><h4>{actorName(world, id)}</h4><dl>{#each relationshipMetrics as metric}<div><dt>{relationshipLabels[metric]}</dt><dd>{relation[metric] ?? '미평가'}</dd></div>{/each}</dl>
+						<p>{relation.impression || '아직 정리한 인식이 없습니다.'}</p>
+						{#if relation.evidenceEventIds.length}<details><summary>인식의 근거 {relation.evidenceEventIds.length}건</summary><ul>{#each relation.evidenceEventIds as eventId}{@const source = eventsById.get(eventId)}<li>{#if source}{actorName(world, source.actorId)} · {source.text}{:else}{eventId}{/if}</li>{/each}</ul></details>{:else}<small>초기 설정 또는 편집한 관계</small>{/if}</article>
+					{:else}<p>아직 평가한 상대가 없습니다. 미평가는 중간 점수와 다릅니다.</p>{/each}
+				</details>
 				{#if instance.memo}<p>메모: {instance.memo.summary}</p><p>현재 의도: {instance.memo.currentIntention}</p><p>감정: {instance.memo.feelings.join(', ') || '없음'}</p><p>미해결 문제: {instance.memo.openThreads.join(', ') || '없음'}</p>{/if}
 				<ul>{#each instance.memories.slice(-8) as memory}
 					{@const event = eventsById.get(memory.eventId)}

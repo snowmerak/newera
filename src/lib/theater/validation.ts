@@ -1,4 +1,5 @@
-import type { CharacterMemo, Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ModelSelection, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
+import { relationshipMetrics } from './types.ts';
+import type { CharacterReflection, ReflectionContext, Relationships, RelationshipScores, RelationshipMetric, CharacterMemo, Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ModelSelection, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
 import { memoryForEvent } from './memory.ts';
 
 export function record(value: unknown, label: string): Record<string, unknown> {
@@ -20,6 +21,53 @@ export function checkedMemo(value: unknown): CharacterMemo {
 	if (Object.keys(source).length !== keys.length || keys.some((key) => !Object.hasOwn(source, key))) throw new Error('개인 메모: 허용되지 않거나 누락된 항목이 있습니다.');
 	const notes = (value: unknown, label: string): string[] => list(value, label, 8).map((entry) => text(entry, label, 300));
 	return { summary: text(source.summary, '메모 요약', 1200, true), currentIntention: text(source.currentIntention, '현재 의도', 600, true), feelings: notes(source.feelings, '현재 감정'), openThreads: notes(source.openThreads, '미해결 문제') };
+}
+function exactKeys(source: Record<string, unknown>, keys: string[], label: string): void {
+	if (Object.keys(source).length !== keys.length || keys.some((key) => !Object.hasOwn(source, key))) throw new Error(`${label}: 허용되지 않거나 누락된 항목이 있습니다.`);
+}
+function relationshipScore(value: unknown): number | null {
+	return value === null ? null : integer(value, '관계 수치', 100);
+}
+export function checkedRelationships(value: unknown): Relationships {
+	const source = record(value, '상대별 관계');
+	if (Object.keys(source).length > 1001) throw new Error('관계 대상이 너무 많습니다.');
+	return Object.fromEntries(Object.entries(source).map(([id, value]) => {
+		const targetId = identifier(id, '관계 대상');
+		const relation = record(value, '관계');
+		exactKeys(relation, [...relationshipMetrics, 'impression', 'evidenceEventIds'], '관계');
+		const scores = Object.fromEntries(relationshipMetrics.map((key) => [key, relationshipScore(relation[key])])) as RelationshipScores;
+		return [targetId, { ...scores, impression: text(relation.impression, '상대 인식', 600, true), evidenceEventIds: [...new Set(list(relation.evidenceEventIds, '관계 근거', 8).map((id) => text(id, '근거 사건 ID', 160)))] }];
+	}));
+}
+export function checkedReflection(value: unknown, context: ReflectionContext): CharacterReflection {
+	const source = record(value, '관찰 해석');
+	exactKeys(source, ['relationshipUpdates', 'memoUpdate'], '관찰 해석');
+	const targets = new Set(context.targets.map((target) => target.id));
+	const evidence = new Set(context.evidenceEvents.map((event) => event.eventId));
+	const fresh = new Set(context.newEvents.map((event) => event.eventId));
+	const usedTargets = new Set<string>();
+	const relationshipUpdates = list(source.relationshipUpdates, '관계 갱신', 8).map((entry) => {
+		const update = record(entry, '관계 갱신');
+		exactKeys(update, ['targetId', 'changes', 'impression', 'evidenceEventIds'], '관계 갱신');
+		const targetId = identifier(update.targetId, '관계 대상');
+		if (!targets.has(targetId) || usedTargets.has(targetId)) throw new Error('관계 갱신 대상이 유효하지 않거나 중복됩니다.');
+		usedTargets.add(targetId);
+		const usedFields = new Set<string>();
+		const changes = list(update.changes, '관계 수치 변경', 5).map((entry) => {
+			const change = record(entry, '관계 수치 변경');
+			exactKeys(change, ['field', 'value'], '관계 수치 변경');
+			const field = change.field as RelationshipMetric;
+			if (!relationshipMetrics.includes(field) || usedFields.has(field)) throw new Error('관계 수치 항목이 올바르지 않거나 중복됩니다.');
+			usedFields.add(field);
+			return { field, value: relationshipScore(change.value) };
+		});
+		const impression = update.impression === null ? null : text(update.impression, '상대 인식', 600, true);
+		const evidenceEventIds = list(update.evidenceEventIds, '관계 근거', 8).map((id) => text(id, '근거 사건 ID', 160));
+		if (!evidenceEventIds.length || evidenceEventIds.some((id) => !evidence.has(id)) || !evidenceEventIds.some((id) => fresh.has(id))) throw new Error('관계 갱신에는 새로 목격한 사건의 근거가 필요합니다.');
+		if (!changes.length && impression === null) throw new Error('관계 갱신에 변경 내용이 없습니다.');
+		return { targetId, changes, impression, evidenceEventIds: [...new Set(evidenceEventIds)] };
+	});
+	return { relationshipUpdates, memoUpdate: source.memoUpdate === null ? null : checkedMemo(source.memoUpdate) };
 }
 export function checkedModelSelection(value: unknown): ModelSelection {
 	const source = record(value, '모델 선택');
@@ -75,7 +123,15 @@ function reaction(value: unknown): ObjectReaction {
 function spawn(value: unknown): Spawn {
 	const source = record(value, 'instance');
 	if (source.id === 'player' || source.id === 'stage') throw new Error('player와 stage는 인스턴스 ID로 사용할 수 없습니다.');
-	return { id: identifier(source.id, 'instance.id'), templateId: identifier(source.templateId, 'instance.templateId'), sceneId: identifier(source.sceneId, 'instance.sceneId'), name: text(source.name, 'instance.name', 200), companion: boolean(source.companion, 'instance.companion'), state: properties(source.state, 'instance.state') };
+	return { id: identifier(source.id, 'instance.id'), templateId: identifier(source.templateId, 'instance.templateId'), sceneId: identifier(source.sceneId, 'instance.sceneId'), name: text(source.name, 'instance.name', 200), companion: boolean(source.companion, 'instance.companion'), state: properties(source.state, 'instance.state'), relationships: checkedRelationships(source.relationships ?? {}) };
+}
+function validateRelationshipTargets(instance: Spawn, instances: Spawn[], templates: EntityTemplate[], initial = false): void {
+	const isCharacter = templates.find((template) => template.id === instance.templateId)?.kind === 'character';
+	for (const [id, relation] of Object.entries(instance.relationships ?? {})) {
+		const target = instances.find((other) => other.id === id);
+		if (!isCharacter || id === instance.id || (id !== 'player' && (!target || templates.find((template) => template.id === target.templateId)?.kind !== 'character'))) throw new Error('관계는 다른 캐릭터 또는 플레이어만 대상으로 할 수 있습니다.');
+		if (initial && relation.evidenceEventIds.length) throw new Error('초기 관계에는 실행 중 사건의 근거를 지정할 수 없습니다.');
+	}
 }
 export function validateDefinition(value: unknown): WorldDefinition {
 	const source = record(value, '세계관');
@@ -103,6 +159,7 @@ export function validateDefinition(value: unknown): WorldDefinition {
 	for (const instance of spawns) {
 		const template = templates.find((candidate) => candidate.id === instance.templateId);
 		if (!template || !scenes.some((scene) => scene.id === instance.sceneId)) throw new Error('인스턴스의 원형 또는 씬이 존재하지 않습니다.');
+		validateRelationshipTargets(instance, spawns, templates, true);
 		if (instance.companion && (template.kind !== 'character' || instance.sceneId !== startingSceneId)) throw new Error('동행 캐릭터는 시작 씬에 배치해야 합니다.');
 	}
 	return { name: text(source.name, '세계관 이름', 200), description: text(source.description, '세계관 설명', 40000), rules: text(source.rules, '세계관 규칙', 20000, true), startingSceneId, scenes, templates, spawns };
@@ -136,7 +193,9 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 		});
 		const memo = row.memo === undefined || row.memo === null ? null : checkedMemo(row.memo);
 		if (memo && template.kind !== 'character') throw new Error('개인 메모는 캐릭터에만 저장할 수 있습니다.');
-		return { ...instance, active, memories, memo };
+		const reflectedThroughEventId = row.reflectedThroughEventId === undefined || row.reflectedThroughEventId === null ? null : text(row.reflectedThroughEventId, '관찰 해석 위치', 160);
+		if (reflectedThroughEventId && template.kind !== 'character') throw new Error('관찰 해석 위치는 캐릭터에만 저장할 수 있습니다.');
+		return { ...instance, active, memories, memo, relationships: instance.relationships ?? {}, reflectedThroughEventId };
 	}), 'instances');
 	const events = unique(list(source.events, 'events', 100000).map((entry): StageEvent => {
 		const row = record(entry, 'event');
@@ -171,6 +230,7 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 	}), 'events');
 	const eventsById = new Map(events.map((event) => [event.id, event]));
 	for (const instance of instances) {
+		validateRelationshipTargets(instance, instances, definition.templates);
 		instance.memories = instance.memories.map((memory): EntityMemory => {
 			const event = eventsById.get(memory.eventId);
 			if ('body' in memory) {
@@ -183,6 +243,11 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 			// The referenced event is authoritative, including for old first-person text memories.
 			return event ? memoryForEvent(event) : memory;
 		});
+		const witnessed = new Set(instance.memories.filter((memory) => 'body' in memory).map((memory) => memory.eventId));
+		for (const relation of Object.values(instance.relationships)) {
+			if (relation.evidenceEventIds.some((id) => !witnessed.has(id))) throw new Error('관계의 근거 사건을 목격하지 않았습니다.');
+		}
+		if (instance.reflectedThroughEventId && !instance.memories.some((memory) => 'body' in memory && memory.eventId === instance.reflectedThroughEventId && memory.kind !== 'wait' && memory.actorId !== instance.id)) throw new Error('관찰 해석 위치가 목격 사건과 일치하지 않습니다.');
 	}
 	const day = integer(source.day, 'day');
 	if (day < 1) throw new Error('날짜는 1일차부터 시작합니다.');

@@ -6,7 +6,7 @@ import { restoredProgress } from '$lib/theater/ensemble';
 import { exampleWorld } from '$lib/theater/fixtures';
 import { actionForRequest, initialState, templateFor } from '$lib/theater/runtime';
 import type { GenerationJob, ModelSelection, PlayerRequest, SaveSlot, StageView, TurnProgress, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
-import { checkedModelSelection, record, text, validateDefinition, validateState } from '$lib/theater/validation';
+import { checkedModelSelection, checkedRelationships, record, text, validateDefinition, validateState } from '$lib/theater/validation';
 
 type Row = Record<string, unknown>;
 let database: DatabaseSync | undefined;
@@ -133,16 +133,18 @@ export function spawnInstance(id: string, revision: number, templateId: string, 
 		if (companion && sceneId !== world.state.activeSceneId) throw new Error('동행은 플레이어가 있는 씬에 배치해 주세요.');
 		const instance = { id: randomUUID(), templateId, sceneId, name: name.trim() || template.name, companion, state: { ...template.initialState } };
 		world.definition.spawns.push({ ...instance, sceneId: companion ? world.definition.startingSceneId : sceneId });
-		world.state.instances.push({ ...instance, active: true, memories: [] });
+		world.state.instances.push({ ...instance, active: true, memories: [], relationships: {}, reflectedThroughEventId: null });
 	});
 }
 
-export function editInstance(id: string, revision: number, instanceId: string, input: { name: string; sceneId: string; companion: boolean; state: unknown }): void {
+export function editInstance(id: string, revision: number, instanceId: string, input: { name: string; sceneId: string; companion: boolean; state: unknown; relationships?: unknown }): void {
 	editWorld(id, revision, (world) => {
 		const instance = world.state.instances.find((candidate) => candidate.id === instanceId);
 		if (!instance) throw new Error('인스턴스를 찾을 수 없습니다.');
 		if (input.companion && (templateFor(world, instance).kind !== 'character' || input.sceneId !== world.state.activeSceneId)) throw new Error('현재 씬에 있는 캐릭터만 동행할 수 있습니다.');
-		Object.assign(instance, { ...input, state: record(input.state, '상태') });
+		const { relationships, ...fields } = input;
+		Object.assign(instance, { ...fields, state: record(input.state, '상태') });
+		if (relationships !== undefined) instance.relationships = checkedRelationships(relationships);
 	});
 }
 

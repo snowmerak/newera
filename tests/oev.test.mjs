@@ -24,6 +24,9 @@ function provider(options = {}) {
 		if (String(url).endsWith('/systemone')) {
 			return json({ answers: { participation: { type: options.type ?? 'choice', choice: options.choice ?? 'act' } } });
 		}
+		if (body.response_format?.json_schema?.name === 'character_reflection') {
+			return json({ choices: [{ finish_reason: options.reflectionFinishReason ?? 'stop', message: { content: JSON.stringify(options.reflectionOutput ?? { relationshipUpdates: [], memoUpdate: null }) } }] });
+		}
 		const output = { actionId: 'speak:player', targetId: 'player', narrative: null, utterance: '반가워요. 같이 준비할까요?', memoUpdate: null, ...options.output };
 		return json({ choices: [{ finish_reason: options.finishReason ?? 'stop', message: { content: options.content ?? JSON.stringify(output) } }] });
 	};
@@ -50,6 +53,49 @@ test('binary participation precedes structured action inference with Gemma4 26B'
 		assert.deepEqual(calls[2].body.response_format.json_schema.schema.properties.targetId.enum, ['player']);
 		assert.equal(calls[2].body.response_format.json_schema.schema.properties.actorId, undefined);
 	} finally { globalThis.fetch = originalFetch; }
+});
+
+test('reflection uses the selected generation model and strict schema before binary participation', async () => {
+	const event = { eventId: 'witnessed-1', actorId: 'player', targetId: null, kind: 'speak', body: { narrative: null, utterance: '약속할게.' } };
+	const context = { targets: [{ id: 'player', name: '플레이어' }], newEvents: [event], evidenceEvents: [event] };
+	const output = { relationshipUpdates: [{ targetId: 'player', changes: [{ field: 'trust', value: 45 }], impression: '직접 확인하고 싶다.', evidenceEventIds: ['witnessed-1'] }], memoUpdate: null };
+	const calls = provider({ reflectionOutput: output, choice: 'wait' });
+	try {
+		const director = await createDirector(new AbortController().signal, { decisionModel: 'actor-model', textModel: 'gemma4-26b' });
+		assert.deepEqual(await director.reflect(state, context), output);
+		assert.equal((await director.decide(state)).act, false);
+		const body = calls[1].body;
+		assert.equal(body.model, 'gemma4-26b');
+		assert.equal(body.max_completion_tokens, 1024);
+		assert.equal(body.response_format.json_schema.name, 'character_reflection');
+		assert.equal(body.response_format.json_schema.strict, true);
+		assert.deepEqual(JSON.parse(body.messages[1].content).newEvents, [event]);
+		assert.deepEqual(Object.keys(calls[2].body.questions), ['participation']);
+		assert.equal(calls[2].body.model, 'actor-model');
+		for (const invalid of [{ ...output, actorId: 'other' }, { relationshipUpdates: [{ ...output.relationshipUpdates[0], evidenceEventIds: ['unseen'] }], memoUpdate: null }]) {
+			provider({ reflectionOutput: invalid });
+			const director = await createDirector(new AbortController().signal);
+			await assert.rejects(director.reflect(state, context));
+		}
+		provider({ reflectionFinishReason: 'length' });
+		await assert.rejects((await createDirector(new AbortController().signal)).reflect(state, context), /정상적으로 완료/);
+	} finally { globalThis.fetch = originalFetch; }
+});
+
+test('reflection retries only the failed interpretation without invoking participation', async () => {
+	await retrySettings(async () => {
+		const event = { eventId: 'new-1', actorId: 'player', targetId: null, kind: 'speak', body: { narrative: null, utterance: '안녕' } };
+		const context = { targets: [{ id: 'player', name: '플레이어' }], newEvents: [event], evidenceEvents: [event] };
+		const calls = provider(); const success = globalThis.fetch; let attempts = 0;
+		globalThis.fetch = async (url, init) => {
+			if (String(url).endsWith('chat/completions') && ++attempts === 1) return json({ error: 'temporary' }, 502);
+			return success(url, init);
+		};
+		const director = await createDirector(new AbortController().signal);
+		assert.deepEqual(await director.reflect(state, context), { relationshipUpdates: [], memoUpdate: null });
+		assert.equal(attempts, 2);
+		assert.equal(calls.filter((call) => call.url.endsWith('systemone')).length, 0);
+	});
 });
 
 test('participation accepts only the two typed choices', async () => {

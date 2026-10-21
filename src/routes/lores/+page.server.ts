@@ -46,7 +46,7 @@ export const actions: Actions = {
 		catch (error) { return failed(error); }
 	},
 	instance: async ({ request }) => {
-		try { const body = await request.formData(); editInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('instanceId')), { name: String(body.get('name')), sceneId: String(body.get('sceneId')), companion: body.get('companion') === 'on', state: json(body, 'state') }); return { message: '인스턴스 상태를 저장했습니다.' }; }
+		try { const body = await request.formData(); editInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('instanceId')), { name: String(body.get('name')), sceneId: String(body.get('sceneId')), companion: body.get('companion') === 'on', state: json(body, 'state'), ...(body.has('relationships') ? { relationships: json(body, 'relationships') } : {}) }); return { message: '인스턴스 상태를 저장했습니다.' }; }
 		catch (error) { return failed(error); }
 	},
 	importWorld: async ({ request }) => {

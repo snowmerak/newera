@@ -44,6 +44,31 @@ export interface Spawn {
 	name: string;
 	companion: boolean;
 	state: Properties;
+	relationships?: Relationships;
+}
+export const relationshipMetrics = ['trust', 'affinity', 'closeness', 'respect', 'wariness'] as const;
+export type RelationshipMetric = typeof relationshipMetrics[number];
+export type RelationshipScores = Record<RelationshipMetric, number | null>;
+export interface Relationship extends RelationshipScores {
+	impression: string;
+	evidenceEventIds: string[];
+}
+export type Relationships = Record<string, Relationship>;
+export interface RelationshipUpdate {
+	targetId: string;
+	changes: { field: RelationshipMetric; value: number | null }[];
+	/** null preserves the existing impression. */
+	impression: string | null;
+	evidenceEventIds: string[];
+}
+export interface ReflectionContext {
+	newEvents: WitnessedEvent[];
+	evidenceEvents: WitnessedEvent[];
+	targets: { id: string; name: string }[];
+}
+export interface CharacterReflection {
+	relationshipUpdates: RelationshipUpdate[];
+	memoUpdate: CharacterMemo | null;
 }
 export interface WorldDefinition {
 	name: string;
@@ -81,6 +106,8 @@ export interface EntityInstance extends Spawn {
 	active: boolean;
 	memories: EntityMemory[];
 	memo?: CharacterMemo | null;
+	relationships: Relationships;
+	reflectedThroughEventId: string | null;
 }
 export interface CharacterMemo {
 	summary: string;

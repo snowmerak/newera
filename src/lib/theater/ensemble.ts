@@ -1,9 +1,11 @@
 import { applyAction, availableActions, beginTurn, observation, residents, templateFor } from './runtime.ts';
 import { checkedExpression } from './performance.ts';
-import type { ActorPerformance, PlayerRequest, StageAction, TurnProgress, World } from './types.ts';
+import { applyReflection, reflectionContext } from './reflection.ts';
+import type { ActorPerformance, CharacterReflection, PlayerRequest, ReflectionContext, StageAction, TurnProgress, World } from './types.ts';
 
 export interface ActorDecision { act: boolean; model: string }
 export interface Director {
+	reflect(state: Record<string, unknown>, context: ReflectionContext): Promise<CharacterReflection>;
 	decide(state: Record<string, unknown>): Promise<ActorDecision>;
 	perform(state: Record<string, unknown>, actions: StageAction[]): Promise<ActorPerformance>;
 }
@@ -57,6 +59,24 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 		const actor = draft.state.instances.find((candidate) => candidate.id === actorId);
 		if (actor?.active && actor.sceneId === draft.state.activeSceneId) {
 			const state = observation(draft, actor);
+			const context = reflectionContext(draft, actor);
+			if (context) {
+				let reflection: CharacterReflection;
+				// A backlog batch must not see later memories through the ordinary recent-event window.
+				const reflectedState = { ...state, self: { ...(state.self as Record<string, unknown>), memories: context.evidenceEvents }, recentEvents: context.evidenceEvents };
+				try { reflection = await director.reflect(reflectedState, context); }
+				catch (error) {
+					checkpoint();
+					if (execution.nextInput?.(progress.consumedInputs)) continue;
+					throw error;
+				}
+				checkpoint();
+				if (execution.nextInput?.(progress.consumedInputs)) continue;
+				applyReflection(actor, reflection, context);
+				// Private state and its event cursor commit before deciding, without consuming the actor's turn.
+				execution.onProgress?.(draft, progress);
+				continue;
+			}
 			const actions = availableActions(draft, actor.id);
 			let decision: ActorDecision;
 			try { decision = await director.decide(state); }

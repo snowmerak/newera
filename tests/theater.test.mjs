@@ -2,11 +2,16 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { exampleWorld } from '../src/lib/theater/fixtures.ts';
 import { initialState, beginTurn, availableActions, applyAction, observation } from '../src/lib/theater/runtime.ts';
-import { resolveTurn, restoredProgress } from '../src/lib/theater/ensemble.ts';
+import { resolveTurn as executeTurn, restoredProgress } from '../src/lib/theater/ensemble.ts';
 import { eventContent } from '../src/lib/theater/event-content.ts';
 import { memoryForEvent } from '../src/lib/theater/memory.ts';
 import { validateDefinition, validateState } from '../src/lib/theater/validation.ts';
 import { buildBundle, validateBundle } from '../skills/newera-lore-authoring/scripts/lore-format.mjs';
+
+// These tests focus on scheduling and actions; relationship-specific tests supply their own reflection.
+const resolveTurn = (world, request, director, ...rest) => executeTurn(world, request, {
+	async reflect() { return { relationshipUpdates: [], memoUpdate: null }; }, ...director
+}, ...rest);
 
 function world() { const definition = exampleWorld(); return { id: 'test-world', revision: 0, definition, state: initialState(definition) }; }
 const instance = (world, id) => world.state.instances.find((entry) => entry.id === id);
@@ -238,7 +243,7 @@ test('incremental execution publishes complete actions and resumes from the save
 			return { actionId: 'speak:player', targetId: 'player', narrative: '고개를 끄덕인다.', utterance: state.self.id === 'harin' ? '먼저 답할게.' : null, memoUpdate: null, model: 'fake' };
 		}
 	}, () => {}, { onProgress: persist }), /대사가 필요/);
-	assert.equal(checkpoints.length, 2, 'only the input and complete first action are published');
+	assert.equal(checkpoints.length, 4, 'input, private reflections and the complete first action are published');
 	assert.deepEqual(progress, { pendingActorIds: ['seoyeon'], completedDecisions: 1, consumedInputs: 0 });
 	assert.deepEqual(saved.state.events.map((event) => event.actorId), ['player', 'harin']);
 	const ids = saved.state.events.map((event) => event.id);
