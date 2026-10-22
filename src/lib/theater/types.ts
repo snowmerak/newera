@@ -116,6 +116,10 @@ export interface LegacyMemory {
 	tick: number;
 	text: string;
 }
+export const inactivityModes = ['watch', 'continue', 'idle'] as const;
+export type InactivityMode = typeof inactivityModes[number];
+export const inactivityLabels: Record<InactivityMode, string> = { watch: '지켜본다', continue: '하던 일을 계속한다', idle: '아무것도 하지 않는다' };
+export interface InactivitySelection { mode: InactivityMode; tick: number; model: string }
 export type EntityMemory = WitnessedEvent | LegacyMemory;
 export interface EntityInstance extends Spawn {
 	active: boolean;
@@ -124,6 +128,8 @@ export interface EntityInstance extends Spawn {
 	relationships: Relationships;
 	reflectedThroughEventId: string | null;
 	appearanceSelection?: AppearanceSelection;
+	/** Latest non-participation choice; silent choices are private state, not witnessed events. */
+	inactivity?: InactivitySelection;
 }
 export interface CharacterMemo {
 	summary: string;
@@ -148,6 +154,7 @@ export interface DecisionTrace {
 	reaction?: number;
 	intensity?: number;
 }
+export interface CharacterPresentation { playerContext?: string; appearance?: string }
 export interface StageEvent {
 	id: string;
 	tick: number;
@@ -162,6 +169,8 @@ export interface StageEvent {
 	decision?: DecisionTrace;
 	narrative?: string;
 	utterance?: string;
+	/** Player-facing introduction captured at this event; excluded from witnessed action memory. */
+	presentation?: CharacterPresentation;
 }
 export interface WorldState {
 	tick: number;

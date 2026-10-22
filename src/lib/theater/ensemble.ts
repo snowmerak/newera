@@ -2,9 +2,10 @@ import { applyAction, availableActions, beginTurn, observation, residents, templ
 import { checkedExpression } from './performance.ts';
 import { applyReflection, reflectionContext } from './reflection.ts';
 import { applyAppearance, needsAppearance } from './appearance.ts';
-import type { ActorPerformance, CharacterReflection, OutfitOption, PlayerRequest, ReflectionContext, StageAction, TurnProgress, World } from './types.ts';
+import { inactivityModes } from './types.ts';
+import type { ActorPerformance, CharacterReflection, InactivityMode, OutfitOption, PlayerRequest, ReflectionContext, StageAction, TurnProgress, World } from './types.ts';
 
-export interface ActorDecision { act: boolean; model: string }
+export interface ActorDecision { act: boolean; model: string; inactivity?: InactivityMode }
 export interface Director {
 	chooseAppearance?(state: Record<string, unknown>, outfits: OutfitOption[]): Promise<{ outfitId: string; model: string }>;
 	reflect(state: Record<string, unknown>, context: ReflectionContext): Promise<CharacterReflection>;
@@ -109,8 +110,14 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 			if (execution.nextInput?.(progress.consumedInputs)) continue;
 			if (typeof decision.act !== 'boolean') throw new Error('행동 여부 판단이 올바르지 않습니다.');
 			if (!decision.act) {
-				const wait = actions.find((action) => action.kind === 'wait')!;
-				applyAction(draft, actor.id, wait, wait.label, { model: decision.model, choice: 'wait', acted: false });
+				// Older directors represented non-participation as watching. New model calls always specify a mode.
+				const mode = decision.inactivity ?? 'watch';
+				if (!inactivityModes.includes(mode)) throw new Error('비참여 선택이 올바르지 않습니다.');
+				actor.inactivity = { mode, tick: draft.state.tick, model: decision.model };
+				if (mode === 'watch') {
+					const wait = actions.find((action) => action.kind === 'wait')!;
+					applyAction(draft, actor.id, wait, '주변을 지켜본다.', { model: decision.model, choice: 'watch', acted: false });
+				}
 			} else {
 				const candidates = actions.filter((action) => action.kind !== 'wait');
 				let performance: ActorPerformance;
@@ -127,6 +134,7 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 				const action = candidates.find((candidate) => candidate.id === expression.actionId)!;
 				const text = [expression.narrative, expression.utterance].filter(Boolean).join('\n') || action.label;
 				applyAction(draft, actor.id, action, text, { model: decision.model, choice: action.id, acted: true, generationModel: model }, expression);
+				delete actor.inactivity;
 				if (expression.memoUpdate) actor.memo = expression.memoUpdate;
 			}
 		}

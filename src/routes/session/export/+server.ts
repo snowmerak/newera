@@ -2,15 +2,20 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { actorName } from '$lib/theater/runtime';
 import { eventContent } from '$lib/theater/event-content';
+import { eventPresentations } from '$lib/theater/presentation';
 import { getWorld } from '$lib/server/stage-store';
 
 export const GET: RequestHandler = ({ url }) => {
 	try {
 		const world = url.searchParams.has('worldId') ? getWorld(url.searchParams.get('worldId')!) : getWorld();
+		const presentations = eventPresentations(world);
 		const markdown = [`# ${world.definition.name}`, '', world.definition.description, '', ...world.state.events.flatMap((event) => {
 			const { narrative, utterance } = eventContent(event);
+			const presentation = presentations.get(event.id);
 			return [
 				`## ${event.tick} · ${world.definition.scenes.find((scene) => scene.id === event.sceneId)?.name} · ${actorName(world, event.actorId)}`, '',
+				...(presentation?.playerContext ? [presentation.playerContext, ''] : []),
+				...(presentation?.appearance ? [presentation.appearance, ''] : []),
 				...(narrative ? [`**행동**: ${narrative}`, ''] : []),
 				...(utterance ? ['**대사**', '', ...utterance.split('\n').map((line) => `> ${line}`), ''] : [])
 			];

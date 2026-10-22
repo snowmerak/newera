@@ -17,6 +17,71 @@ const resolveTurn = (world, request, director, ...rest) => executeTurn(world, re
 function world() { const definition = exampleWorld(); return { id: 'test-world', revision: 0, definition, state: initialState(definition) }; }
 const instance = (world, id) => world.state.instances.find((entry) => entry.id === id);
 
+test('watching is visible; continuing work and doing nothing commit private choices without events or generation', async () => {
+	for (const mode of ['watch', 'continue', 'idle']) {
+		let saved, progress, decisions = 0;
+		const result = await resolveTurn(world(), { kind: 'speak', text: '안녕', targetId: null }, {
+			async decide() { decisions++; return { act: false, inactivity: mode, model: 'fake' }; },
+			async perform() { assert.fail('non-participation never calls performance generation'); }
+		}, () => {}, { onProgress: (stage, cursor) => { saved = structuredClone(stage); progress = structuredClone(cursor); } });
+		assert.equal(decisions, 2, 'silent choices do not wake their peers');
+		assert.equal(progress.completedDecisions, 2);
+		assert.equal(result.state.events.length, mode === 'watch' ? 3 : 1);
+		for (const id of ['seoyeon', 'harin']) {
+			assert.deepEqual(instance(saved, id).inactivity, { mode, tick: 1, model: 'fake' });
+			assert.deepEqual(instance(result, id).inactivity, instance(saved, id).inactivity);
+			assert.equal(instance(result, id).memories.length, mode === 'watch' ? 3 : 1);
+			assert.equal(instance(result, id).memo, null, 'continue does not invent work completion or update intentions');
+		}
+		assert.equal(result.state.minute, 1081, 'NPC inactivity does not advance time');
+		const restored = validateState(result.state, result.definition);
+		assert.deepEqual(restored.instances.find(i => i.id === 'seoyeon').inactivity, instance(result, 'seoyeon').inactivity);
+		assert.equal(Object.hasOwn(observation(result, instance(result, 'harin')).present.find(i => i.id === 'seoyeon'), 'inactivity'), false);
+	}
+});
+
+test('new speech awakens a silent actor and performing clears the previous inactivity', async () => {
+	const decisions = [];
+	const result = await resolveTurn(world(), { kind: 'speak', text: '안녕', targetId: null }, {
+		async decide(state) {
+			decisions.push(state.self.id);
+			return { act: [2, 3].includes(decisions.length), inactivity: 'idle', model: 'fake' };
+		},
+		async perform(state) {
+			const targetId = state.self.id === 'harin' ? 'seoyeon' : 'harin';
+			if (state.self.id === 'seoyeon') assert.equal(state.self.inactivity.mode, 'idle');
+			return { actionId: `speak:${targetId}`, targetId, narrative: null, utterance: '이쪽도 볼래?', memoUpdate: null, model: 'fake' };
+		}
+	});
+	assert.deepEqual(decisions, ['seoyeon', 'harin', 'seoyeon', 'harin']);
+	assert.equal(result.state.events.length, 3);
+	assert.equal(instance(result, 'seoyeon').inactivity, undefined);
+	assert.equal(instance(result, 'harin').inactivity.mode, 'idle');
+});
+
+test('silent choices resume from the committed cursor and reject forged inactivity state', async () => {
+	let saved, progress;
+	await assert.rejects(resolveTurn(world(), { kind: 'speak', text: '안녕', targetId: null }, {
+		async decide(state) { if (state.self.id === 'harin') throw Error('offline'); return { act: false, inactivity: 'continue', model: 'fake' }; }
+	}, () => {}, { onProgress: (stage, cursor) => { saved = structuredClone(stage); progress = structuredClone(cursor); } }), /offline/);
+	assert.equal(saved.state.events.length, 1);
+	assert.deepEqual(progress.pendingActorIds, ['harin']);
+	const result = await resolveTurn(saved, { kind: 'speak', text: '안녕', targetId: null }, {
+		async decide(state) { assert.equal(state.self.id, 'harin'); return { act: false, inactivity: 'idle', model: 'fake' }; }
+	}, () => {}, { progress });
+	assert.equal(result.state.events.length, 1);
+	assert.equal(instance(result, 'seoyeon').inactivity.mode, 'continue');
+	for (const value of [{ mode: 'complete', tick: 1, model: 'fake' }, { mode: 'idle', tick: 2, model: 'fake' }]) {
+		const invalid = structuredClone(result.state);
+		invalid.instances.find(i => i.id === 'seoyeon').inactivity = value;
+		assert.throws(() => validateState(invalid, result.definition));
+	}
+	const invalid = structuredClone(result.state);
+	invalid.instances.find(i => i.id === 'desk-bell').inactivity = { mode: 'idle', tick: 1, model: 'fake' };
+	assert.throws(() => validateState(invalid, result.definition));
+	await assert.rejects(resolveTurn(world(), { kind: 'wait' }, { async decide() { return { act: false, inactivity: 'complete', model: 'fake' }; } }), /비참여/);
+});
+
 test('writing style is optional, bounded and reaches the performer without leaking into character observations', async () => {
 	const stage = world();
 	assert.equal(Object.hasOwn(validateDefinition(stage.definition), 'writingStyle'), false);

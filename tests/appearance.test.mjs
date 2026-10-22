@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { exampleWorld } from '../src/lib/theater/fixtures.ts';
-import { initialState, observation } from '../src/lib/theater/runtime.ts';
+import { applyAction, beginTurn, initialState, observation } from '../src/lib/theater/runtime.ts';
 import { applyAppearance, needsAppearance } from '../src/lib/theater/appearance.ts';
+import { eventPresentations } from '../src/lib/theater/presentation.ts';
 import { resolveTurn } from '../src/lib/theater/ensemble.ts';
 import { validateDefinition, validateState } from '../src/lib/theater/validation.ts';
 
@@ -19,6 +20,7 @@ function world() {
 const actor = stage => stage.state.instances.find(a => a.id === 'harin');
 const template = stage => stage.definition.templates.find(t => t.id === actor(stage).templateId);
 const request = { kind: 'speak', text: '안녕', targetId: null };
+const say = stage => applyAction(stage, 'harin', { id: 'speak:player', kind: 'speak', targetId: 'player', label: '말한다' }, '안녕', undefined, { narrative: null, utterance: '안녕' });
 const director = overrides => ({
 	async chooseAppearance() { return { outfitId: 'uniform', model: 'decision-model' }; },
 	async reflect() { return { relationshipUpdates: [], memoUpdate: null }; },
@@ -44,6 +46,67 @@ test('appearance refresh requires another scene and elapsed threshold, or a new 
 	stage.state.minute = 5;
 	assert.equal(needsAppearance(stage, a), true, 'next day refreshes even in same scene');
 	assert.throws(() => applyAppearance(a, template(stage), stage, 'invented', 'model'), /候補|후보/);
+});
+
+test('first relationship and changed outfits are captured once without changing past descriptions', () => {
+	const stage = world(), a = actor(stage);
+	a.appearance = '노란 가디건.';
+	const first = say(stage);
+	assert.deepEqual(first.presentation, { playerContext: '오늘 처음 만났다.', appearance: '노란 가디건.' });
+	const repeated = say(stage);
+	assert.equal(repeated.presentation, undefined);
+	// Selecting the same visible outfit on another day must not repeat its description.
+	stage.state.day++;
+	a.appearanceSelection = { day: stage.state.day, outfitId: 'uniform', model: 'another-model' };
+	assert.equal(say(stage).presentation, undefined);
+	a.appearance = '파란 재킷.';
+	const changed = say(stage);
+	assert.deepEqual(changed.presentation, { appearance: '파란 재킷.' });
+	a.appearance = '노란 가디건.';
+	const returned = say(stage);
+	assert.deepEqual(returned.presentation, { appearance: '노란 가디건.' });
+	a.playerContext = '나중에 편집한 초기 설정.';
+	const presented = eventPresentations(stage);
+	assert.deepEqual(presented.get(first.id), { playerContext: '오늘 처음 만났다.', appearance: '노란 가디건.' });
+	assert.equal(presented.has(repeated.id), false);
+	assert.deepEqual(presented.get(changed.id), { appearance: '파란 재킷.' });
+	assert.deepEqual(presented.get(returned.id), { appearance: '노란 가디건.' });
+	assert.equal(Object.hasOwn(a.memories[0], 'presentation'), false, 'player-facing introductions do not leak into character memories');
+	assert.deepEqual(validateState(stage.state, stage.definition).events.map(e => e.presentation), stage.state.events.map(e => e.presentation));
+});
+
+test('introductions are not repeated when the original appearance leaves the recent 100-event window', () => {
+	const stage = world();
+	actor(stage).appearance = '회색 교복.';
+	const first = say(stage);
+	for (let i = 0; i < 101; i++) beginTurn(stage, { kind: 'wait' });
+	const latest = say(stage);
+	assert.ok(!stage.state.events.slice(-100).some(e => e.id === first.id));
+	const presented = eventPresentations(stage);
+	assert.equal(presented.has(first.id), true);
+	assert.equal(presented.has(latest.id), false);
+	assert.equal(stage.state.events.slice(-100).filter(e => presented.has(e.id)).length, 0);
+});
+
+test('legacy records get one initial introduction; missing settings stay blank and malformed snapshots are rejected', () => {
+	const stage = world(), a = actor(stage);
+	stage.definition.spawns.find(i => i.id === a.id).appearance = '초기의 교복.';
+	a.appearance = '초기의 교복.';
+	const first = say(stage); delete first.presentation;
+	say(stage);
+	assert.deepEqual(eventPresentations(stage).get(first.id), { playerContext: '오늘 처음 만났다.', appearance: '초기의 교복.' });
+	a.appearance = '바뀐 가디건.';
+	const changed = say(stage);
+	assert.deepEqual(changed.presentation, { appearance: '바뀐 가디건.' });
+	for (const [id, presentation] of [[first.id, { secret: 'hidden' }], [first.id, { appearance: '가'.repeat(1201) }]]) {
+		const invalid = structuredClone(stage.state);
+		invalid.events.find(e => e.id === id).presentation = presentation;
+		assert.throws(() => validateState(invalid, stage.definition));
+	}
+	const blank = world(); delete actor(blank).playerContext;
+	const blankEvent = say(blank);
+	assert.deepEqual(blankEvent.presentation, { playerContext: '', appearance: '' });
+	assert.equal(eventPresentations(blank).has(blankEvent.id), false);
 });
 
 test('appearance, timing, public context and private preferences round trip without changing old records', () => {

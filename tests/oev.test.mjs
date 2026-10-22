@@ -22,7 +22,7 @@ function provider(options = {}) {
 		calls.push({ url: String(url), body, signal: init.signal });
 		if (String(url).endsWith('/models')) return json({ data: [{ id: 'embed', task: 'embedding' }, { id: 'actor-model', task: 'generation' }, { id: 'gemma4-26b', task: 'generation' }] });
 		if (String(url).endsWith('/systemone')) {
-			return json({ answers: { [body.questions.outfit ? 'outfit' : 'participation']: { type: options.type ?? 'choice', choice: options.choice ?? 'act' } } });
+			return json({ answers: { [body.questions.outfit ? 'outfit' : 'participation']: { type: options.type ?? 'choice', choice: options.choice ?? 'act' }, ...(body.questions.inactivity ? { inactivity: { type: options.inactivityType ?? 'choice', choice: options.inactivity ?? 'watch' } } : {}) } });
 		}
 		if (body.response_format?.json_schema?.name === 'character_reflection') {
 			return json({ choices: [{ finish_reason: options.reflectionFinishReason ?? 'stop', message: { content: JSON.stringify(options.reflectionOutput ?? { relationshipUpdates: [], memoUpdate: null }) } }] });
@@ -55,7 +55,7 @@ test('binary participation precedes structured action inference with Gemma4 26B'
 		const director = await createDirector(new AbortController().signal);
 		assert.deepEqual(await director.decide(state), { act: true, model: 'gemma4-26b' });
 		assert.match((await director.perform(state, actions)).utterance, /반가워요/);
-		assert.deepEqual(Object.keys(calls[1].body.questions), ['participation']);
+		assert.deepEqual(Object.keys(calls[1].body.questions), ['participation', 'inactivity']);
 		assert.deepEqual(Object.keys(calls[1].body.questions.participation.criteria), ['act', 'wait']);
 		assert.deepEqual(calls[1].body.state, state);
 		assert.equal(calls[1].body.model, 'gemma4-26b');
@@ -109,7 +109,7 @@ test('reflection uses the selected generation model and strict schema before bin
 		assert.equal(body.response_format.json_schema.name, 'character_reflection');
 		assert.equal(body.response_format.json_schema.strict, true);
 		assert.deepEqual(JSON.parse(body.messages[1].content).newEvents, [event]);
-		assert.deepEqual(Object.keys(calls[2].body.questions), ['participation']);
+		assert.deepEqual(Object.keys(calls[2].body.questions), ['participation', 'inactivity']);
 		assert.equal(calls[2].body.model, 'actor-model');
 		for (const invalid of [{ ...output, actorId: 'other' }, { relationshipUpdates: [{ ...output.relationshipUpdates[0], evidenceEventIds: ['unseen'] }], memoUpdate: null }]) {
 			provider({ reflectionOutput: invalid });
@@ -148,6 +148,25 @@ test('participation accepts only the two typed choices', async () => {
 		provider({ type: 'noul' });
 		director = await createDirector(new AbortController().signal);
 		await assert.rejects(director.decide(state), /타입/);
+	} finally { globalThis.fetch = originalFetch; }
+});
+
+test('non-participation distinguishes watch, continue and idle in the same typed request', async () => {
+	try {
+		for (const inactivity of ['watch', 'continue', 'idle']) {
+			const calls = provider({ choice: 'wait', inactivity });
+			const director = await createDirector(new AbortController().signal);
+			assert.deepEqual(await director.decide(state), { act: false, inactivity, model: 'gemma4-26b' });
+			assert.equal(calls.length, 2, 'one model lookup and one typed decision request');
+			assert.deepEqual(Object.keys(calls[1].body.questions.participation.criteria), ['act', 'wait']);
+			assert.deepEqual(Object.keys(calls[1].body.questions.inactivity.criteria), ['watch', 'continue', 'idle']);
+		}
+		for (const options of [{ inactivity: 'invented' }, { inactivityType: 'noul' }]) {
+			provider({ choice: 'wait', ...options });
+			await assert.rejects((await createDirector(new AbortController().signal)).decide(state));
+		}
+		provider({ choice: 'act', inactivity: 'unused' });
+		assert.equal((await (await createDirector(new AbortController().signal)).decide(state)).act, true);
 	} finally { globalThis.fetch = originalFetch; }
 });
 

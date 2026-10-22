@@ -49,10 +49,10 @@ flowchart TD
   V --> C[개인 관계·메모·해석 위치 원자적 저장]
   C --> D{판단 모델: act / wait}
   D -->|act| G[기존 상세 행동·대사 생성과 실행]
-  D -->|wait| W[기다림 기록]
+  D -->|wait| W[watch는 공개 기록, continue와 idle은 내부 상태만 저장]
 ```
 
-`Director.reflect()`는 `/chat/completions`의 `character_reflection` JSON Schema를 사용한다. 세션의 생성 모델 ID를 사용하며 작업 재개 시에도 해당 작업이 수락한 모델 ID를 유지한다. 판단 모델은 기존처럼 `/systemone`에서 `act/wait`만 결정한다.
+`Director.reflect()`는 `/chat/completions`의 `character_reflection` JSON Schema를 사용한다. 세션의 생성 모델 ID를 사용하며 작업 재개 시에도 해당 작업이 수락한 모델 ID를 유지한다. 판단 모델은 `/systemone`에서 `participation`의 `act/wait`와 비참여 태도인 `inactivity`의 `watch/continue/idle`을 같은 요청으로 고른다. 하던 일을 계속하거나 아무것도 하지 않는 선택은 공개 사건을 만들지 않지만, 그 전에 목격한 사건에 대한 관계·메모 해석은 저장한다.
 
 자기 행동과 단순 `wait`를 제외한 미처리 목격 사건을 한 번에 최대 16개씩, 오래된 것부터 해석한다. 근거 문맥에는 해당 묶음과 마지막 사건까지의 최근 기억 최대 32개를 합친다. 이후 사건을 일반 최근 기억 창을 통해 먼저 읽지 않도록 해석 입력의 기억 범위도 맞춘다. 처리할 새 사건이 없으면 해석 호출을 생략한다. 모든 묶음의 해석이 끝난 뒤 최신 관계·메모로 행동 여부를 판단한다.
 

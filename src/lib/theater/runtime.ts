@@ -1,5 +1,6 @@
 import type { DecisionTrace, EntityInstance, EntityTemplate, EventBody, Interaction, PlayerRequest, Properties, StageAction, StageEvent, World, WorldDefinition, WorldState } from './types.ts';
 import { memoryForEvent, witnessedMemories } from './memory.ts';
+import { nextPresentation } from './presentation.ts';
 
 export function initialState(definition: WorldDefinition): WorldState {
 	return {
@@ -33,7 +34,8 @@ function instanceInScene(world: World, id: string, sceneId: string): EntityInsta
 }
 
 function event(world: World, input: Omit<StageEvent, 'id' | 'tick'>): StageEvent {
-	const result = { ...input, tick: world.state.tick, id: globalThis.crypto.randomUUID() };
+	const presentation = nextPresentation(world, input.actorId);
+	const result = { ...input, ...(presentation ? { presentation } : {}), tick: world.state.tick, id: globalThis.crypto.randomUUID() };
 	world.state.events.push(result);
 	// A private memory records only events witnessed in this scene. No world-wide transcript is leaked to actors.
 	for (const instance of residents(world, input.sceneId)) {

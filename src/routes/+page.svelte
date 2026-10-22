@@ -4,7 +4,8 @@
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { actorName, residents, templateFor, interactionsFor } from '$lib/theater/runtime';
 	import { eventContent } from '$lib/theater/event-content';
-	import { relationshipMetrics } from '$lib/theater/types';
+	import { eventPresentations } from '$lib/theater/presentation';
+	import { inactivityLabels, relationshipMetrics } from '$lib/theater/types';
 	import { relationshipLabels } from '$lib/theater/reflection';
 	import { memoryForEvent } from '$lib/theater/memory';
 	import type { ModelSelection } from '$lib/theater/types';
@@ -23,11 +24,7 @@
 	let busy = $derived(submitting || generating);
 	let events = $derived(world.state.events.slice(-100));
 	let eventsById = $derived(new Map(world.state.events.map((event) => [event.id, event])));
-	let firstAppearance = $derived.by(() => {
-		const first = new Map<string, string>();
-		for (const event of events) if (!first.has(event.actorId)) first.set(event.actorId, event.id);
-		return first;
-	});
+	let presentations = $derived(eventPresentations(world));
 	let modelCatalog = $state<{ models: string[]; defaults: ModelSelection } | null>(null);
 	let modelsLoading = $state(false);
 	let modelsSaving = $state(false);
@@ -127,9 +124,6 @@
 		<div class="cast-strip" aria-label="현재 씬의 등장인물">
 			{#each characters as instance}<span class:companion={instance.companion}>{instance.name}{instance.companion ? ' · 동행' : ''}</span>{:else}<span>지금 이곳에는 나 혼자 있다.</span>{/each}
 		</div>
-		{#if characters.length}<section class="cast-introductions" aria-label="현재 등장인물 소개">
-			{#each characters as instance (instance.id)}<details class="cast-introduction"><summary>{instance.name}{#if instance.companion}<small>동행</small>{/if}<span>인물 소개</span></summary><CharacterIntroduction {instance} /></details>{/each}
-		</section>{/if}
 		<details class="model-settings" ontoggle={(event) => { if (event.currentTarget.open && !modelCatalog) void loadModels(); }}>
 			<summary>이 세션의 모델 설정</summary>
 			<small>판단: {world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정'} · 생성: {world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정'}</small>
@@ -154,12 +148,10 @@
 			{#each events as event (event.id)}
 				{@const eventScene = world.definition.scenes.find((entry) => entry.id === event.sceneId)}
 				{@const content = eventContent(event)}
-				{@const speaker = world.state.instances.find((instance) => instance.id === event.actorId)}
+				{@const presentation = presentations.get(event.id)}
 				<article class="stage-event" class:player={event.actorId === 'player'} class:dialogue={event.kind === 'speak'}>
 					<div class="event-byline"><strong>{actorName(world, event.actorId)}</strong><span>{eventScene?.name} · {event.tick}</span>{#if event.targetId}<span>→ {actorName(world, event.targetId)}</span>{/if}</div>
-					{#if speaker && templateFor(world, speaker).kind === 'character' && firstAppearance.get(speaker.id) === event.id}
-						<aside class="event-introduction" aria-label={`${speaker.name} 인물 소개`}><CharacterIntroduction instance={speaker} /></aside>
-					{/if}
+					{#if presentation}<CharacterIntroduction {presentation} characterId={event.actorId} />{/if}
 					{#if content.narrative}<div class="event-action"><span class="event-content-label">행동</span><p>{content.narrative}</p></div>{/if}
 					{#if content.utterance}<div class="event-speech"><span class="event-content-label">대사</span><blockquote>{content.utterance}</blockquote></div>{/if}
 					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}
@@ -182,13 +174,9 @@
 				{#each scene.exits as exit}{@const destination = world.definition.scenes.find((entry) => entry.id === exit)!}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="move" /><button name="destinationId" value={exit} disabled={busy}>{destination.name}(으)로 →</button></form>{/each}
 			</div>
 		</section>
-		{#if objects.length}<section class="objects-panel"><p class="eyebrow">ON THE SCENE</p><div class="object-grid">
-			{#each objects as instance}<article class="object-card"><h3>{instance.name}</h3><p>{templateFor(world, instance).description}</p><small>{Object.entries(instance.state).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small><div class="stage-options">
-				{#each interactionsFor(world, instance) as interaction}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="interact" /><input type="hidden" name="targetId" value={instance.id} /><button name="interactionId" value={interaction.id} disabled={busy}>{interaction.label}</button></form>{/each}
-			</div></article>{/each}
-		</div></section>{/if}
 		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>
 			{#each characters as instance}<h3>{instance.name}</h3>
+				{#if instance.inactivity}<p>최근 비참여 선택: {inactivityLabels[instance.inactivity.mode]} · 판단 {instance.inactivity.model}</p>{/if}
 				<details class="relationship-notes"><summary>상대별 관계 · 이 인물의 개인적 인식</summary>
 					{#each Object.entries(instance.relationships ?? {}) as [id, relation]}
 						<article><h4>{actorName(world, id)}</h4><dl>{#each relationshipMetrics as metric}<div><dt>{relationshipLabels[metric]}</dt><dd>{relation[metric] ?? '미평가'}</dd></div>{/each}</dl>
@@ -210,4 +198,9 @@
 		</details>
 		<footer class="reader-footer"><a href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>공연 기록 내려받기</a><details><summary>처음부터 다시</summary><p>현재 진행을 초기 배치로 되돌립니다. 저장 슬롯은 유지됩니다.</p><form method="POST" action="?/reset" use:enhance><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button disabled={busy}>현재 진행 초기화</button></form></details></footer>
 	</main>
+	<aside class="objects-panel" aria-label="현재 씬의 상호작용 오브젝트"><p class="eyebrow">ON THE SCENE</p><h2>주변 사물</h2><p class="objects-location">{scene.name}</p><div class="object-grid">
+		{#each objects as instance (instance.id)}<article class="object-card"><h3>{instance.name}</h3><p>{templateFor(world, instance).description}</p><small>{Object.entries(instance.state).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small><div class="stage-options">
+			{#each interactionsFor(world, instance) as interaction}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="interact" /><input type="hidden" name="targetId" value={instance.id} /><button name="interactionId" value={interaction.id} disabled={busy}>{interaction.label}</button></form>{/each}
+		</div></article>{:else}<p class="muted">지금 이곳에는 살펴볼 사물이 없습니다.</p>{/each}
+	</div></aside>
 </div>

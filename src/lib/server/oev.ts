@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { ActorDecision, Director } from '$lib/theater/ensemble';
-import type { ModelSelection } from '$lib/theater/types';
+import { inactivityModes, type InactivityMode, type ModelSelection } from '$lib/theater/types';
 import { checkedExpression, performanceSchema } from '$lib/theater/performance';
 import { reflectionSchema } from '$lib/theater/reflection';
 import { checkedModelSelection, checkedReflection, record, text } from '$lib/theater/validation';
@@ -150,13 +150,17 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 				checkpoint();
 				const response = await request(settings, '/systemone', signal, {
 					model: decisionModel, state, questions: {
-						participation: { type: 'choice', instructions: `self 인물이 지금 관찰한 사건과 자신의 목표·상대별 관계·개인 메모에 따라 말하거나 행동할지, 아무 행동 없이 지켜볼지만 판단한다. 구체적인 행동이나 대사는 정하지 않는다. 다른 인물이 새로 말하거나 행동하면 이미 한 번 반응했어도 다시 답하거나 행동할 수 있다. 자신의 최근 발언을 반복하거나 새 의도 없이 끼어들 필요는 없으며, 플레이어의 답이나 새로운 사건을 기다리는 편이 자연스러우면 wait를 선택한다. 플레이어의 중단 요청도 성격·감정·현재 의도에 따라 수용하거나 계속할 수 있다. ${observationInstructions}`, criteria: { act: '지금 말하거나 행동한다.', wait: '아무 행동 없이 지켜본다.' } }
+						participation: { type: 'choice', instructions: `self 인물이 지금 관찰한 사건과 자신의 목표·상대별 관계·개인 메모에 따라 새로운 말이나 행동으로 장면에 참여할지 판단한다. 구체적인 행동이나 대사는 정하지 않는다. 다른 인물이 새로 말하거나 행동하면 이미 한 번 반응했어도 다시 답하거나 행동할 수 있다. 자신의 최근 발언을 반복하거나 새 의도 없이 끼어들 필요는 없다. 새 참여 없이 상황에 주의를 기울이거나, 이미 하던 일을 계속하거나, 아무것도 하지 않으려면 wait를 고르고 inactivity에서 구분한다. 플레이어의 중단 요청도 성격·감정·현재 의도에 따라 수용하거나 계속할 수 있다. ${observationInstructions}`, criteria: { act: '지금 새로운 말이나 행동으로 참여한다.', wait: '지금 새로운 말이나 행동으로 참여하지 않는다.' } },
+						inactivity: { type: 'choice', instructions: 'participation이 wait일 때의 태도를 구분한다. 주의를 기울여 주변을 지켜보는 것은 watch, 실제로 이미 하던 활동을 새 개입 없이 이어가는 것은 continue, 딱히 활동하거나 주시하지 않는 것은 idle이다. 목표나 계획만으로 이미 일을 하고 있다고 가정하지 않는다. 단순히 말하지 않는다는 이유로 watch를 고르지 않는다. self.inactivity는 이전의 선택이며 영구 지시가 아니다. continue와 idle은 내부 상태로만 저장하며 새 서술이나 발언을 생성하지 않는다. 작업 완료·이동·물건 조작·시간 진행을 이 선택만으로 확정하지 않는다. act이면 이 답은 사용하지 않는다.', criteria: { watch: '주변의 상황이나 상대에게 주의를 기울여 지켜본다.', continue: '실제로 이미 하던 일을 그대로 이어간다. 새 개입은 없다.', idle: '딱히 주시하거나 활동하지 않고 아무것도 하지 않는다.' } }
 					}
 				});
 				return generatedOutput(() => {
 					const choice = answer(response, 'participation', 'choice').choice;
 					if (choice !== 'act' && choice !== 'wait') throw new Error('OEV 행동 여부는 act 또는 wait여야 합니다.');
-					return { act: choice === 'act', model: decisionModel };
+					if (choice === 'act') return { act: true, model: decisionModel };
+					const inactivity = answer(response, 'inactivity', 'choice').choice;
+					if (!inactivityModes.includes(inactivity as InactivityMode)) throw new Error('OEV 비참여 선택은 watch, continue 또는 idle이어야 합니다.');
+					return { act: false, inactivity: inactivity as InactivityMode, model: decisionModel };
 				});
 			});
 		},

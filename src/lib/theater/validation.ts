@@ -1,4 +1,4 @@
-import { relationshipMetrics } from './types.ts';
+import { inactivityModes, relationshipMetrics } from './types.ts';
 import type { CharacterReflection, ReflectionContext, Relationships, RelationshipScores, RelationshipMetric, CharacterMemo, Condition, EntityInstance, EntityMemory, EntityTemplate, EventKind, Interaction, ModelSelection, ObjectReaction, Properties, Scene, Spawn, StageEvent, Value, WorldDefinition, WorldState } from './types.ts';
 import { memoryForEvent } from './memory.ts';
 
@@ -211,6 +211,13 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 			};
 		});
 		const memo = row.memo === undefined || row.memo === null ? null : checkedMemo(row.memo);
+		let inactivity;
+		if (row.inactivity !== undefined) {
+			const selection = record(row.inactivity, '비참여 상태');
+			exactKeys(selection, ['mode', 'tick', 'model'], '비참여 상태');
+			if (template.kind !== 'character' || !inactivityModes.includes(selection.mode as typeof inactivityModes[number])) throw new Error('캐릭터의 비참여 상태가 올바르지 않습니다.');
+			inactivity = { mode: selection.mode as typeof inactivityModes[number], tick: integer(selection.tick, '비참여 선택 시점', tick), model: text(selection.model, '비참여 판단 모델', 200) };
+		}
 		let appearanceSelection;
 		if (row.appearanceSelection !== undefined) {
 			const selection = record(row.appearanceSelection, '오늘의 옷차림');
@@ -225,7 +232,7 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 		if (memo && template.kind !== 'character') throw new Error('개인 메모는 캐릭터에만 저장할 수 있습니다.');
 		const reflectedThroughEventId = row.reflectedThroughEventId === undefined || row.reflectedThroughEventId === null ? null : text(row.reflectedThroughEventId, '관찰 해석 위치', 160);
 		if (reflectedThroughEventId && template.kind !== 'character') throw new Error('관찰 해석 위치는 캐릭터에만 저장할 수 있습니다.');
-		return { ...instance, active, memories, memo, relationships: instance.relationships ?? {}, reflectedThroughEventId, ...(appearanceSelection ? { appearanceSelection } : {}) };
+		return { ...instance, active, memories, memo, relationships: instance.relationships ?? {}, reflectedThroughEventId, ...(appearanceSelection ? { appearanceSelection } : {}), ...(inactivity ? { inactivity } : {}) };
 	}), 'instances');
 	const events = unique(list(source.events, 'events', 100000).map((entry): StageEvent => {
 		const row = record(entry, 'event');
@@ -244,6 +251,14 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 		if (row.changes !== undefined) result.changes = properties(row.changes, 'event.changes');
 		if (row.narrative !== undefined) result.narrative = text(row.narrative, 'event.narrative', 2000);
 		if (row.utterance !== undefined) result.utterance = text(row.utterance, 'event.utterance', 4000);
+		if (row.presentation !== undefined) {
+			const presentation = record(row.presentation, '등장 서술');
+			if (Object.keys(presentation).some((key) => !['playerContext', 'appearance'].includes(key)) || !instances.some((actor) => actor.id === actorId && definition.templates.find((template) => template.id === actor.templateId)?.kind === 'character')) throw new Error('캐릭터의 등장 서술이 올바르지 않습니다.');
+			result.presentation = {
+				...(presentation.playerContext !== undefined ? { playerContext: text(presentation.playerContext, '등장 관계 서술', 1200, true) } : {}),
+				...(presentation.appearance !== undefined ? { appearance: text(presentation.appearance, '등장 인상착의', 1200, true) } : {})
+			};
+		}
 		if (row.decision !== undefined) {
 			const trace = record(row.decision, 'decision');
 			result.decision = { model: text(trace.model, 'decision.model', 200), choice: text(trace.choice, 'decision.choice', 500) };
