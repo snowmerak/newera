@@ -3,6 +3,7 @@
 	import { untrack } from 'svelte';
 	import type { EntityTemplate, World } from '$lib/theater/types';
 	import PropertiesEditor from './PropertiesEditor.svelte';
+	import WardrobeEditor from './WardrobeEditor.svelte';
 	let { world, template }: { world: World; template?: EntityTemplate } = $props();
 	let kind = $state(untrack(() => template?.kind ?? 'character'));
 </script>
@@ -13,6 +14,10 @@
 	<label>기본 이름<input name="name" value={template?.name ?? ''} maxlength="200" placeholder={kind === 'character' ? '예: 서연' : '예: 무대 작업등'} required /></label>
 	<label>{kind === 'character' ? '어떤 사람인가요?' : '어떤 사물인가요?'}<textarea name="description" rows="4" value={template?.description ?? ''} placeholder={kind === 'character' ? '역할, 배경, 알고 있는 것과 모르는 것…' : '생김새와 쓰임새를 알려 주세요.'} required></textarea></label>
 	{#if kind === 'character'}
+		<label>기본 외형<textarea name="baseAppearance" rows="2" maxlength="400" value={template?.baseAppearance ?? ''} placeholder="옷이 바뀌어도 유지되는 머리 모양, 안경 등."></textarea></label>
+		<label>옷 취향<textarea name="clothingPreferences" rows="3" maxlength="1200" value={template?.clothingPreferences ?? ''} placeholder="좋아하는 소재·색·스타일, 피하는 옷차림."></textarea></label>
+		<label>음식 취향<textarea name="foodPreferences" rows="3" maxlength="1200" value={template?.foodPreferences ?? ''} placeholder="좋아하고 꺼리는 맛과 메뉴. 개인적인 취향이며 다른 인물에게 자동 공개되지 않아요."></textarea></label>
+		<WardrobeEditor value={template?.wardrobe ?? []} />
 		<label>성격과 말투<textarea name="personality" rows="5" value={template?.personality ?? ''} placeholder="무엇을 중요하게 여기나요? 낯선 사람과 친구에게는 어떻게 말하나요?" maxlength="12000"></textarea></label>
 		<label>바라는 것 · 한 줄에 하나씩<textarea name="goals" rows="3" value={template?.goals.join('\n') ?? ''} placeholder="공연 전에 마지막 장면을 맞춰본다"></textarea></label>
 	{/if}

@@ -9,6 +9,7 @@
 	import { memoryForEvent } from '$lib/theater/memory';
 	import type { ModelSelection } from '$lib/theater/types';
 	import type { PageProps } from './$types';
+	import CharacterIntroduction from '$lib/components/CharacterIntroduction.svelte';
 	let { data, form }: PageProps = $props();
 	let submitting = $state(false);
 	let targetId = $state('');
@@ -22,6 +23,11 @@
 	let busy = $derived(submitting || generating);
 	let events = $derived(world.state.events.slice(-100));
 	let eventsById = $derived(new Map(world.state.events.map((event) => [event.id, event])));
+	let firstAppearance = $derived.by(() => {
+		const first = new Map<string, string>();
+		for (const event of events) if (!first.has(event.actorId)) first.set(event.actorId, event.id);
+		return first;
+	});
 	let modelCatalog = $state<{ models: string[]; defaults: ModelSelection } | null>(null);
 	let modelsLoading = $state(false);
 	let modelsSaving = $state(false);
@@ -121,6 +127,9 @@
 		<div class="cast-strip" aria-label="현재 씬의 등장인물">
 			{#each characters as instance}<span class:companion={instance.companion}>{instance.name}{instance.companion ? ' · 동행' : ''}</span>{:else}<span>지금 이곳에는 나 혼자 있다.</span>{/each}
 		</div>
+		{#if characters.length}<section class="cast-introductions" aria-label="현재 등장인물 소개">
+			{#each characters as instance (instance.id)}<details class="cast-introduction"><summary>{instance.name}{#if instance.companion}<small>동행</small>{/if}<span>인물 소개</span></summary><CharacterIntroduction {instance} /></details>{/each}
+		</section>{/if}
 		<details class="model-settings" ontoggle={(event) => { if (event.currentTarget.open && !modelCatalog) void loadModels(); }}>
 			<summary>이 세션의 모델 설정</summary>
 			<small>판단: {world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정'} · 생성: {world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정'}</small>
@@ -145,8 +154,12 @@
 			{#each events as event (event.id)}
 				{@const eventScene = world.definition.scenes.find((entry) => entry.id === event.sceneId)}
 				{@const content = eventContent(event)}
+				{@const speaker = world.state.instances.find((instance) => instance.id === event.actorId)}
 				<article class="stage-event" class:player={event.actorId === 'player'} class:dialogue={event.kind === 'speak'}>
 					<div class="event-byline"><strong>{actorName(world, event.actorId)}</strong><span>{eventScene?.name} · {event.tick}</span>{#if event.targetId}<span>→ {actorName(world, event.targetId)}</span>{/if}</div>
+					{#if speaker && templateFor(world, speaker).kind === 'character' && firstAppearance.get(speaker.id) === event.id}
+						<aside class="event-introduction" aria-label={`${speaker.name} 인물 소개`}><CharacterIntroduction instance={speaker} /></aside>
+					{/if}
 					{#if content.narrative}<div class="event-action"><span class="event-content-label">행동</span><p>{content.narrative}</p></div>{/if}
 					{#if content.utterance}<div class="event-speech"><span class="event-content-label">대사</span><blockquote>{content.utterance}</blockquote></div>{/if}
 					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}

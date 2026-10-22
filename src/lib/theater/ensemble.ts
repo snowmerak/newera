@@ -1,10 +1,12 @@
 import { applyAction, availableActions, beginTurn, observation, residents, templateFor } from './runtime.ts';
 import { checkedExpression } from './performance.ts';
 import { applyReflection, reflectionContext } from './reflection.ts';
-import type { ActorPerformance, CharacterReflection, PlayerRequest, ReflectionContext, StageAction, TurnProgress, World } from './types.ts';
+import { applyAppearance, needsAppearance } from './appearance.ts';
+import type { ActorPerformance, CharacterReflection, OutfitOption, PlayerRequest, ReflectionContext, StageAction, TurnProgress, World } from './types.ts';
 
 export interface ActorDecision { act: boolean; model: string }
 export interface Director {
+	chooseAppearance?(state: Record<string, unknown>, outfits: OutfitOption[]): Promise<{ outfitId: string; model: string }>;
 	reflect(state: Record<string, unknown>, context: ReflectionContext): Promise<CharacterReflection>;
 	decide(state: Record<string, unknown>): Promise<ActorDecision>;
 	perform(state: Record<string, unknown>, actions: StageAction[]): Promise<ActorPerformance>;
@@ -55,6 +57,24 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 		}
 		const actorId = progress.pendingActorIds[0];
 		if (!actorId) break;
+		// Dress every newly encountered resident before anyone reasons about the scene.
+		const dressingActor = residents(draft).find((actor) => templateFor(draft, actor).kind === 'character' && templateFor(draft, actor).wardrobe?.length && needsAppearance(draft, actor));
+		if (dressingActor) {
+			const template = templateFor(draft, dressingActor);
+			if (!director.chooseAppearance) throw new Error('오늘의 옷차림 판단기가 필요합니다.');
+			let selected;
+			try { selected = await director.chooseAppearance(observation(draft, dressingActor), template.wardrobe!); }
+			catch (error) {
+				checkpoint();
+				if (execution.nextInput?.(progress.consumedInputs)) continue;
+				throw error;
+			}
+			checkpoint();
+			if (execution.nextInput?.(progress.consumedInputs)) continue;
+			applyAppearance(dressingActor, template, draft, selected.outfitId, selected.model);
+			execution.onProgress?.(draft, progress);
+			continue;
+		}
 		const eventStart = draft.state.events.length;
 		const actor = draft.state.instances.find((candidate) => candidate.id === actorId);
 		if (actor?.active && actor.sceneId === draft.state.activeSceneId) {

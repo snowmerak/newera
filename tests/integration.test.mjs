@@ -721,6 +721,76 @@ test('fresh storage contains only scene-based data and rejects unsupported impor
 	} finally { await running.stop(); db.close(); }
 });
 
+test('appearance choices survive later inference failure, restart and slots; editor keeps current and initial looks separate', async () => {
+	let outfitCalls = 0, failReflection = true;
+	const model = createServer(async (request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
+		const chunks = []; for await (const chunk of request) chunks.push(chunk);
+		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (body.questions?.outfit) {
+			outfitCalls++;
+			response.end(JSON.stringify({ answers: { outfit: { type: 'choice', choice: 'uniform' } } })); return;
+		}
+		if (body.response_format?.json_schema?.name === 'character_reflection') {
+			if (failReflection) { response.statusCode = 503; response.end('{}'); return; }
+			replyReflection(body, response); return;
+		}
+		response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: 'wait' } } }));
+	});
+	const port = await listen(model), directory = scratch();
+	let running = await app(directory, `http://127.0.0.1:${port}/v1`);
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const worldId = db.prepare("SELECT value FROM theater_meta WHERE key='active'").get().value;
+	const snapshot = () => { const row = db.prepare('SELECT * FROM theater_worlds WHERE id=?').get(worldId); return { revision: row.revision, definition: JSON.parse(row.definition_json), state: JSON.parse(row.state_json) }; };
+	const fields = () => ({ worldId, revision: String(snapshot().revision) });
+	try {
+		const initial = snapshot();
+		for (const template of initial.definition.templates.filter(t => t.kind === 'character')) Object.assign(template, {
+			baseAppearance: '검은 단발.', clothingPreferences: '단정한 교복.', foodPreferences: '귤을 좋아한다.',
+			wardrobe: [{ id: 'uniform', name: '교복', appearance: '회색 교복을 입었다.', context: '등교일.' }]
+		});
+		initial.definition.spawns.find(i => i.id === 'harin').playerContext = '오늘 처음 만났다.';
+		await post(running.base, 'definition', { ...fields(), definition: JSON.stringify(initial.definition) }, '/lores');
+		await post(running.base, 'turn', { ...fields(), kind: 'speak', text: '안녕' });
+		await waitJob(running.base, db, worldId, true);
+		const partial = snapshot();
+		assert.equal(outfitCalls, 2);
+		const harin = partial.state.instances.find(i => i.id === 'harin');
+		assert.deepEqual(harin.appearanceSelection, { day: 1, minute: 1081, sceneId: 'lobby', outfitId: 'uniform', model: 'actor-model' });
+		assert.equal(partial.state.events.length, 1);
+		assert.equal(partial.state.minute, initial.state.minute + 1);
+		await running.stop();
+		failReflection = false;
+		running = await app(directory, `http://127.0.0.1:${port}/v1`);
+		assert.deepEqual(snapshot(), partial);
+		await post(running.base, 'turn', { ...fields(), kind: 'speak', text: '다시 인사할게' });
+		await waitJob(running.base, db, worldId);
+		assert.equal(outfitCalls, 2, 'saved outfit must not be rerolled after failure or restart');
+		await post(running.base, 'save', { worldId, slot: '1' });
+		const beforeEdit = snapshot();
+		const instance = beforeEdit.state.instances.find(i => i.id === 'harin');
+		await post(running.base, 'instance', { ...fields(), instanceId: instance.id, name: instance.name, sceneId: instance.sceneId, companion: 'on', state: JSON.stringify(instance.state), appearance: '파란 가디건.', playerContext: '오늘 안내를 부탁했다.' }, '/lores');
+		assert.equal(snapshot().state.instances.find(i => i.id === 'harin').appearanceSelection.model, 'manual');
+		assert.equal(snapshot().definition.spawns.find(i => i.id === 'harin').appearance, undefined);
+		const spawn = snapshot().definition.spawns.find(i => i.id === 'harin');
+		await post(running.base, 'initialInstance', { ...fields(), instanceId: spawn.id, name: spawn.name, sceneId: spawn.sceneId, companion: 'on', state: JSON.stringify(spawn.state), appearance: '초기 모습.', playerContext: '초기 소개.' }, '/lores');
+		assert.equal(snapshot().state.instances.find(i => i.id === 'harin').appearance, '파란 가디건.');
+		assert.deepEqual(snapshot().state.events, beforeEdit.state.events);
+		const settings = snapshot().definition;
+		await post(running.base, 'settings', { ...fields(), name: settings.name, description: settings.description, rules: settings.rules, appearanceChangeMinutes: '90' }, '/lores');
+		assert.equal(snapshot().definition.appearanceChangeMinutes, 90);
+		const template = snapshot().definition.templates.find(t => t.id === harin.templateId);
+		await post(running.base, 'template', { ...fields(), templateId: template.id, kind: 'character', name: template.name, description: template.description, personality: template.personality, goals: template.goals.join('\n'), initialState: JSON.stringify(template.initialState) }, '/lores');
+		assert.equal(snapshot().definition.templates.find(t => t.id === template.id).foodPreferences, template.foodPreferences, 'old forms keep optional preferences');
+		await post(running.base, 'load', { ...fields(), slot: '1' });
+		assert.deepEqual(snapshot().state, beforeEdit.state);
+		const bundle = await exported(running.base, worldId);
+		assert.deepEqual(bundle.world.state.instances.find(i => i.id === 'harin').appearanceSelection, harin.appearanceSelection);
+		assert.equal(bundle.saves.length, 1);
+	} finally { await running.stop(); db.close(); await new Promise(done => model.close(done)); }
+});
+
 test.after(() => {
 	for (const directory of scratchDirectories) {
 		if (resolve(directory).startsWith(resolve(tmpdir()) + '\\') && directory.includes('newera-theater-integration-')) rmSync(directory, { recursive: true, force: true });

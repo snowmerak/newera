@@ -22,7 +22,7 @@ function provider(options = {}) {
 		calls.push({ url: String(url), body, signal: init.signal });
 		if (String(url).endsWith('/models')) return json({ data: [{ id: 'embed', task: 'embedding' }, { id: 'actor-model', task: 'generation' }, { id: 'gemma4-26b', task: 'generation' }] });
 		if (String(url).endsWith('/systemone')) {
-			return json({ answers: { participation: { type: options.type ?? 'choice', choice: options.choice ?? 'act' } } });
+			return json({ answers: { [body.questions.outfit ? 'outfit' : 'participation']: { type: options.type ?? 'choice', choice: options.choice ?? 'act' } } });
 		}
 		if (body.response_format?.json_schema?.name === 'character_reflection') {
 			return json({ choices: [{ finish_reason: options.reflectionFinishReason ?? 'stop', message: { content: JSON.stringify(options.reflectionOutput ?? { relationshipUpdates: [], memoUpdate: null }) } }] });
@@ -32,6 +32,22 @@ function provider(options = {}) {
 	};
 	return calls;
 }
+
+test('outfit selection uses the session decision model and exact authored finite choices', async () => {
+	const outfits = [{ id: 'uniform', name: '교복', appearance: '회색 교복', context: '수업' }, { id: 'casual', name: '사복', appearance: '파란 셔츠', context: '휴일' }];
+	const calls = provider({ choice: 'uniform' });
+	try {
+		const director = await createDirector(new AbortController().signal, { decisionModel: 'actor-model', textModel: 'gemma4-26b' });
+		assert.deepEqual(await director.chooseAppearance(state, outfits), { outfitId: 'uniform', model: 'actor-model' });
+		assert.equal(calls[1].body.model, 'actor-model');
+		assert.deepEqual(Object.keys(calls[1].body.questions), ['outfit']);
+		assert.deepEqual(calls[1].body.questions.outfit.criteria, Object.fromEntries(outfits.map(({ id, ...rest }) => [id, rest])));
+		for (const options of [{ choice: 'invented' }, { choice: 'uniform', type: 'text' }]) {
+			provider(options);
+			await assert.rejects((await createDirector(new AbortController().signal)).chooseAppearance(state, outfits));
+		}
+	} finally { globalThis.fetch = originalFetch; }
+});
 
 test('binary participation precedes structured action inference with Gemma4 26B', async () => {
 	const calls = provider();

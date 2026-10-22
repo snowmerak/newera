@@ -6,7 +6,7 @@ export const load: PageServerLoad = ({ url }) => {
 	const tab = url.searchParams.get('tab') ?? 'scenes';
 	return { ...getStageView(), editorTab: ['world', 'scenes', 'templates', 'instances', 'advanced'].includes(tab) ? tab : 'scenes' };
 };
-import { jsonField as json, propertyFields, relationshipFields } from '$lib/server/editor-input';
+import { jsonField as json, propertyFields, relationshipFields, presentationFields } from '$lib/server/editor-input';
 function failed(error: unknown) { return fail(400, { message: error instanceof Error ? error.message : '편집 내용을 저장하지 못했습니다.', error: true }); }
 export const actions: Actions = {
 	settings: async ({ request }) => {
@@ -14,6 +14,7 @@ export const actions: Actions = {
 			const body = await request.formData();
 			editWorld(String(body.get('worldId')), Number(body.get('revision')), (world) => {
 				Object.assign(world.definition, { name: String(body.get('name')), description: String(body.get('description')), rules: String(body.get('rules') || '') });
+				if (body.has('appearanceChangeMinutes')) world.definition.appearanceChangeMinutes = Number(body.get('appearanceChangeMinutes'));
 				if (body.has('startingSceneId')) {
 					world.definition.startingSceneId = String(body.get('startingSceneId'));
 					for (const spawn of world.definition.spawns) if (spawn.companion) spawn.sceneId = world.definition.startingSceneId;
@@ -45,7 +46,8 @@ export const actions: Actions = {
 			const input = {
 				kind: String(body.get('kind')), name: String(body.get('name')), description: String(body.get('description')), personality: String(body.get('personality') || ''),
 				goals: String(body.get('goals') || '').split('\n').map((goal) => goal.trim()).filter(Boolean), initialState: propertyFields(body, 'initialState'),
-				...(body.has('interactions') ? { interactions: json(body, 'interactions', []) } : {}), ...(body.has('reactions') ? { reactions: json(body, 'reactions', []) } : {})
+				...(body.has('interactions') ? { interactions: json(body, 'interactions', []) } : {}), ...(body.has('reactions') ? { reactions: json(body, 'reactions', []) } : {}),
+				...(body.has('baseAppearance') ? { baseAppearance: String(body.get('baseAppearance') ?? '') } : {}), ...(body.has('clothingPreferences') ? { clothingPreferences: String(body.get('clothingPreferences') ?? '') } : {}), ...(body.has('foodPreferences') ? { foodPreferences: String(body.get('foodPreferences') ?? '') } : {}), ...(body.has('wardrobe') ? { wardrobe: json(body, 'wardrobe', []) } : {})
 			};
 			if (body.get('templateId')) editTemplate(String(body.get('worldId')), Number(body.get('revision')), String(body.get('templateId')), input);
 			else addTemplate(String(body.get('worldId')), Number(body.get('revision')), { interactions: [], reactions: [], ...input });
@@ -53,17 +55,17 @@ export const actions: Actions = {
 		} catch (error) { return failed(error); }
 	},
 	spawn: async ({ request }) => {
-		try { const body = await request.formData(); spawnInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('templateId')), String(body.get('sceneId')), String(body.get('name') || ''), body.get('companion') === 'on'); return { message: '씬에 인스턴스를 배치했습니다.' }; }
+		try { const body = await request.formData(); spawnInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('templateId')), String(body.get('sceneId')), String(body.get('name') || ''), body.get('companion') === 'on', presentationFields(body)); return { message: '씬에 인스턴스를 배치했습니다.' }; }
 		catch (error) { return failed(error); }
 	},
 	instance: async ({ request }) => {
-		try { const body = await request.formData(); editInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('instanceId')), { name: String(body.get('name')), sceneId: String(body.get('sceneId')), companion: body.get('companion') === 'on', state: propertyFields(body, 'state'), ...(body.has('relationships') ? { relationships: json(body, 'relationships') } : {}) }); return { message: '인스턴스 상태를 저장했습니다.' }; }
+		try { const body = await request.formData(); editInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('instanceId')), { name: String(body.get('name')), sceneId: String(body.get('sceneId')), companion: body.get('companion') === 'on', state: propertyFields(body, 'state'), ...presentationFields(body), ...(body.has('relationships') ? { relationships: json(body, 'relationships') } : {}) }); return { message: '인스턴스 상태를 저장했습니다.' }; }
 		catch (error) { return failed(error); }
 	},
 	initialInstance: async ({ request }) => {
 		try {
 			const body = await request.formData();
-			editInitialInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('instanceId')), { name: String(body.get('name')), sceneId: String(body.get('sceneId')), companion: body.get('companion') === 'on', state: propertyFields(body, 'state') });
+			editInitialInstance(String(body.get('worldId')), Number(body.get('revision')), String(body.get('instanceId')), { name: String(body.get('name')), sceneId: String(body.get('sceneId')), companion: body.get('companion') === 'on', state: propertyFields(body, 'state'), ...presentationFields(body) });
 			return { message: '처음 배치 설정을 저장했습니다. 현재 진행은 유지되며 초기화할 때 적용됩니다.' };
 		} catch (error) { return failed(error); }
 	},

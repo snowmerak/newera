@@ -11,7 +11,7 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"test:integration": "npm run build && node --test tests/integration.test.mjs",
-		"test": "node --experimental-strip-types --import ./tests/loader.mjs --test tests/theater.test.mjs tests/oev.test.mjs tests/relationships.test.mjs",
+		"test": "node --experimental-strip-types --import ./tests/loader.mjs --test tests/theater.test.mjs tests/oev.test.mjs tests/relationships.test.mjs tests/appearance.test.mjs",
 		"lore:build": "node skills/newera-lore-authoring/scripts/build-lore.mjs",
 		"lore:validate": "node skills/newera-lore-authoring/scripts/validate-lore.mjs",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"

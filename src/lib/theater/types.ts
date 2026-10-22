@@ -20,6 +20,8 @@ export interface ObjectReaction {
 	effects: Properties;
 	text: string;
 }
+export interface OutfitOption { id: string; name: string; appearance: string; context: string }
+export interface AppearanceSelection { day: number; minute?: number; sceneId?: string; outfitId: string | null; model: string }
 export interface EntityTemplate {
 	id: string;
 	kind: EntityKind;
@@ -27,6 +29,10 @@ export interface EntityTemplate {
 	description: string;
 	personality: string;
 	goals: string[];
+	baseAppearance?: string;
+	clothingPreferences?: string;
+	foodPreferences?: string;
+	wardrobe?: OutfitOption[];
 	initialState: Properties;
 	interactions: Interaction[];
 	reactions: ObjectReaction[];
@@ -44,6 +50,10 @@ export interface Spawn {
 	sceneId: string;
 	name: string;
 	companion: boolean;
+	/** Visible current appearance; separate from private state and impressions. */
+	appearance?: string;
+	/** Player-known starting relationship, not the character's private opinion. */
+	playerContext?: string;
 	state: Properties;
 	relationships?: Relationships;
 }
@@ -79,6 +89,8 @@ export interface WorldDefinition {
 	scenes: Scene[];
 	templates: EntityTemplate[];
 	spawns: Spawn[];
+	/** Minimum elapsed minutes before a different scene can prompt another outfit choice. */
+	appearanceChangeMinutes?: number;
 }
 export interface EventBody {
 	narrative: string | null;
@@ -109,6 +121,7 @@ export interface EntityInstance extends Spawn {
 	memo?: CharacterMemo | null;
 	relationships: Relationships;
 	reflectedThroughEventId: string | null;
+	appearanceSelection?: AppearanceSelection;
 }
 export interface CharacterMemo {
 	summary: string;

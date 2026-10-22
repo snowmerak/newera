@@ -17,7 +17,7 @@ interface Settings extends RetryPolicy {
 	reflectionMaxOutputTokens: number;
 }
 let acceptedSettings: Settings | undefined;
-const observationInstructions = 'self.id가 당신의 고정 ID다. 기억과 recentEvents의 actorId는 실행기가 기록한 실제 행동·발언 주체이며 targetId는 대상, body.narrative는 행동 묘사, body.utterance는 그 주체의 발언 원문이다. actorId가 player이면 플레이어의 행동이며 당신이 한 일이 아니다. 타인의 발언 내용은 그 사람의 주장이지 실제로 일어난 행동을 증명하지 않는다. 개인 메모는 주관적인 해석이며 사건의 주체와 충돌하면 사건 기록을 우선한다. 관찰되지 않은 실수·의도·감정·반응을 사실로 만들어내지 않는다.';
+const observationInstructions = 'self.id가 당신의 고정 ID다. 기억과 recentEvents의 actorId는 실행기가 기록한 실제 행동·발언 주체이며 targetId는 대상, body.narrative는 행동 묘사, body.utterance는 그 주체의 발언 원문이다. actorId가 player이면 플레이어의 행동이며 당신이 한 일이 아니다. 타인의 발언 내용은 그 사람의 주장이지 실제로 일어난 행동을 증명하지 않는다. 개인 메모는 주관적인 해석이며 사건의 주체와 충돌하면 사건 기록을 우선한다. 관찰되지 않은 실수·의도·감정·반응을 사실로 만들어내지 않는다. appearance는 현재 보이는 인상착의이고 playerContext는 플레이어가 아는 초기 관계이지 현재의 호감이나 동의가 아니다. 옷차림은 저장된 선택을 따르며 묘사만으로 옷을 바꾸지 않는다. 자신의 음식·옷 취향을 타인이 이미 안다고 가정하지 않는다.';
 
 function integerSetting(value: unknown, fallback: number, name: string, maximum: number, minimum = 1): number {
 	const parsed = value === undefined || value === '' ? fallback : Number(value);
@@ -116,6 +116,21 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 	if (!generation.includes(decisionModel) || !generation.includes(textModel)) throw new Error('설정한 판단·생성 모델이 OEV generation 모델 목록에 없습니다.');
 
 	return {
+		async chooseAppearance(state, outfits) {
+			return withRetries('오늘의 옷차림 판단', settings, signal, async () => {
+				checkpoint();
+				const response = await request(settings, '/systemone', signal, {
+					model: decisionModel, state, questions: {
+						outfit: { type: 'choice', instructions: 'self 인물의 첫 등장, 날짜 변경 또는 충분한 시간이 지난 뒤 다른 씬에 등장하여 옷차림을 선택할 수 있는 시점이다. 현재 씬·일차·시각, self.appearanceSelection의 마지막 선택 장소와 시각, 현재 appearance, 자기 옷 선호, 각 후보의 착용 맥락을 보고 하나를 고른다. 상황상 갈아입을 이유가 없으면 이전 후보를 다시 선택해 유지해도 된다. 아직 하지 않은 활동이나 이동, 만남, 물품 구입을 이미 했다고 가정하지 않는다. 없는 옷을 만들거나 음식 취향을 다른 인물의 지식으로 공유하지 않는다.', criteria: Object.fromEntries(outfits.map((outfit) => [outfit.id, { name: outfit.name, appearance: outfit.appearance, context: outfit.context }])) }
+					}
+				});
+				return generatedOutput(() => {
+					const outfitId = answer(response, 'outfit', 'choice').choice;
+					if (typeof outfitId !== 'string' || !outfits.some((outfit) => outfit.id === outfitId)) throw new Error('OEV 옷차림 판단이 후보와 다릅니다.');
+					return { outfitId, model: decisionModel };
+				});
+			});
+		},
 		async reflect(state, context) {
 			return withRetries('관찰·관계 해석', settings, signal, async () => {
 				checkpoint();

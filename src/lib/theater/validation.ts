@@ -123,7 +123,10 @@ function reaction(value: unknown): ObjectReaction {
 function spawn(value: unknown): Spawn {
 	const source = record(value, 'instance');
 	if (source.id === 'player' || source.id === 'stage') throw new Error('player와 stage는 인스턴스 ID로 사용할 수 없습니다.');
-	return { id: identifier(source.id, 'instance.id'), templateId: identifier(source.templateId, 'instance.templateId'), sceneId: identifier(source.sceneId, 'instance.sceneId'), name: text(source.name, 'instance.name', 200), companion: boolean(source.companion, 'instance.companion'), state: properties(source.state, 'instance.state'), relationships: checkedRelationships(source.relationships ?? {}) };
+	return { id: identifier(source.id, 'instance.id'), templateId: identifier(source.templateId, 'instance.templateId'), sceneId: identifier(source.sceneId, 'instance.sceneId'), name: text(source.name, 'instance.name', 200), companion: boolean(source.companion, 'instance.companion'),
+		...(source.appearance !== undefined ? { appearance: text(source.appearance, 'instance.appearance', 1200, true) } : {}),
+		...(source.playerContext !== undefined ? { playerContext: text(source.playerContext, 'instance.playerContext', 1200, true) } : {}),
+		state: properties(source.state, 'instance.state'), relationships: checkedRelationships(source.relationships ?? {}) };
 }
 function validateRelationshipTargets(instance: Spawn, instances: Spawn[], templates: EntityTemplate[], initial = false): void {
 	const isCharacter = templates.find((template) => template.id === instance.templateId)?.kind === 'character';
@@ -146,6 +149,13 @@ export function validateDefinition(value: unknown): WorldDefinition {
 		return {
 			id: identifier(row.id, 'template.id'), kind: row.kind, name: text(row.name, 'template.name', 200), description: text(row.description, 'template.description'),
 			personality: text(row.personality, 'template.personality', 12000, true), goals: list(row.goals, 'template.goals', 30).map((goal) => text(goal, 'goal', 1000)),
+			...(row.baseAppearance !== undefined ? { baseAppearance: text(row.baseAppearance, 'template.baseAppearance', 400, true) } : {}),
+			...(row.clothingPreferences !== undefined ? { clothingPreferences: text(row.clothingPreferences, 'template.clothingPreferences', 1200, true) } : {}),
+			...(row.foodPreferences !== undefined ? { foodPreferences: text(row.foodPreferences, 'template.foodPreferences', 1200, true) } : {}),
+			...(row.wardrobe !== undefined ? { wardrobe: unique(list(row.wardrobe, '옷차림 후보', 36).map((entry) => {
+				const outfit = record(entry, '옷차림 후보');
+				return { id: identifier(outfit.id, 'outfit.id'), name: text(outfit.name, 'outfit.name', 200), appearance: text(outfit.appearance, 'outfit.appearance', 700), context: text(outfit.context, 'outfit.context', 1200, true) };
+			}), '옷차림 후보') } : {}),
 			initialState: properties(row.initialState, 'template.initialState'), interactions: unique(list(row.interactions, 'template.interactions', 100).map(interaction), 'interactions'),
 			reactions: unique(list(row.reactions, 'template.reactions', 100).map(reaction), 'reactions')
 		};
@@ -162,7 +172,12 @@ export function validateDefinition(value: unknown): WorldDefinition {
 		validateRelationshipTargets(instance, spawns, templates, true);
 		if (instance.companion && (template.kind !== 'character' || instance.sceneId !== startingSceneId)) throw new Error('동행 캐릭터는 시작 씬에 배치해야 합니다.');
 	}
-	return { name: text(source.name, '세계관 이름', 200), description: text(source.description, '세계관 설명', 40000), rules: text(source.rules, '세계관 규칙', 20000, true), startingSceneId, scenes, templates, spawns };
+	let appearanceChangeMinutes;
+	if (source.appearanceChangeMinutes !== undefined) {
+		appearanceChangeMinutes = integer(source.appearanceChangeMinutes, '옷차림 재선택 간격', 1440);
+		if (appearanceChangeMinutes < 1) throw new Error('옷차림 재선택 간격은 1~1440분이어야 합니다.');
+	}
+	return { name: text(source.name, '세계관 이름', 200), description: text(source.description, '세계관 설명', 40000), rules: text(source.rules, '세계관 규칙', 20000, true), startingSceneId, scenes, templates, spawns, ...(appearanceChangeMinutes !== undefined ? { appearanceChangeMinutes } : {}) };
 }
 
 export function validateState(value: unknown, definition: WorldDefinition): WorldState {
@@ -192,10 +207,21 @@ export function validateState(value: unknown, definition: WorldDefinition): Worl
 			};
 		});
 		const memo = row.memo === undefined || row.memo === null ? null : checkedMemo(row.memo);
+		let appearanceSelection;
+		if (row.appearanceSelection !== undefined) {
+			const selection = record(row.appearanceSelection, '오늘의 옷차림');
+			if (template.kind !== 'character') throw new Error('오늘의 옷차림은 캐릭터만 설정할 수 있습니다.');
+			const day = integer(selection.day, '옷차림 선택 일차', integer(source.day, 'day'));
+			if (day < 1) throw new Error('옷차림 선택 일차는 1 이상이어야 합니다.');
+			if ((selection.minute === undefined) !== (selection.sceneId === undefined)) throw new Error('옷차림 선택 시각과 장소는 함께 지정해야 합니다.');
+			const timing = selection.minute === undefined ? {} : { minute: integer(selection.minute, '옷차림 선택 시각', 1439), sceneId: identifier(selection.sceneId, '옷차림 선택 장소') };
+			if (day === source.day && timing.minute !== undefined && timing.minute > Number(source.minute)) throw new Error('옷차림 선택 시각이 현재보다 미래입니다.');
+			appearanceSelection = { day, ...timing, outfitId: selection.outfitId === null ? null : identifier(selection.outfitId, 'outfit.id'), model: text(selection.model, '옷차림 판단 모델', 200) };
+		}
 		if (memo && template.kind !== 'character') throw new Error('개인 메모는 캐릭터에만 저장할 수 있습니다.');
 		const reflectedThroughEventId = row.reflectedThroughEventId === undefined || row.reflectedThroughEventId === null ? null : text(row.reflectedThroughEventId, '관찰 해석 위치', 160);
 		if (reflectedThroughEventId && template.kind !== 'character') throw new Error('관찰 해석 위치는 캐릭터에만 저장할 수 있습니다.');
-		return { ...instance, active, memories, memo, relationships: instance.relationships ?? {}, reflectedThroughEventId };
+		return { ...instance, active, memories, memo, relationships: instance.relationships ?? {}, reflectedThroughEventId, ...(appearanceSelection ? { appearanceSelection } : {}) };
 	}), 'instances');
 	const events = unique(list(source.events, 'events', 100000).map((entry): StageEvent => {
 		const row = record(entry, 'event');

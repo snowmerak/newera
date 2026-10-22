@@ -7,6 +7,13 @@ export function jsonField(body: FormData, name: string, fallback: unknown = {}):
 	return value ? JSON.parse(value) : fallback;
 }
 
+export function presentationFields(body: FormData): { appearance?: string; playerContext?: string } {
+	return {
+		...(body.has('appearance') ? { appearance: String(body.get('appearance') ?? '') } : {}),
+		...(body.has('playerContext') ? { playerContext: String(body.get('playerContext') ?? '') } : {})
+	};
+}
+
 /** Preserve types and duplicate-key validation when ordinary controls replace JSON textareas. */
 export function propertyFields(body: FormData, name: string) {
 	if (!body.has(`${name}Rows`)) return jsonField(body, name);

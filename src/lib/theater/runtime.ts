@@ -169,10 +169,11 @@ export function observation(world: World, actor: EntityInstance): Record<string,
 		world: { name: world.definition.name, description: world.definition.description, rules: world.definition.rules },
 		scene: world.definition.scenes.find((scene) => scene.id === actor.sceneId),
 		time: { tick: world.state.tick, day: world.state.day, minute: world.state.minute },
-		self: { ...actor, relationships: actor.relationships ?? {}, memories, description: template.description, personality: template.personality, goals: template.goals },
+		self: { ...actor, relationships: actor.relationships ?? {}, memories, description: template.description, personality: template.personality, goals: template.goals, clothingPreferences: template.clothingPreferences ?? '', foodPreferences: template.foodPreferences ?? '' },
 		player: { id: 'player', name: '플레이어', present: actor.sceneId === world.state.activeSceneId },
 		present: residents(world, actor.sceneId).filter((other) => other.id !== actor.id).map((other) => ({
 			id: other.id, name: other.name, kind: templateFor(world, other).kind, description: templateFor(world, other).description,
+			appearance: other.appearance ?? '',
 			state: templateFor(world, other).kind === 'object' ? other.state : undefined
 		})),
 		playerPresent: actor.sceneId === world.state.activeSceneId,

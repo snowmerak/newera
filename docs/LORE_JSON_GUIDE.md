@@ -2,6 +2,8 @@
 
 검증 기준은 `src/lib/theater/validation.ts`다. 새 세계관 파일은 `format: "newera-theater"`, `version: 2`를 사용한다. 실행 가능한 예제는 `static/lore-presets/theater-opening.json`, 작성 원본은 `skills/newera-lore-authoring/assets/example-source.json`이다.
 
+캐릭터의 선택적 외모·옷/음식 취향·옷차림 후보, 공개 초기 관계와 현재 인상착의, `appearanceSelection`, 세계관의 `appearanceChangeMinutes`는 [인물 소개·인상착의 계약](CHARACTER_PRESENTATION.md)을 따른다. 기존 v2 파일에는 이 필드가 없어도 된다.
+
 ## 파일 구성
 
 ```json
@@ -28,7 +30,7 @@
 
 `world.state`를 생략하면 `startingSceneId`와 `spawns`에서 초기 진행을 만든다. 내보내기에는 현재 `state`와 최대 세 개의 저장 슬롯이 포함된다. 슬롯의 형식은 `{ "slot": 1, "savedAt": "...", "world": { "definition": {}, "state": {} } }`다.
 
-씬·원형·인스턴스의 ID는 영문·숫자로 시작하고 영문·숫자·점·밑줄·콜론·하이픈을 쓴다. 인스턴스 ID `player`, `stage`는 예약되어 있다. ID는 각 목록 안에서 유일해야 하며 씬 출구·원형·배치 참조가 모두 존재해야 한다. 출구는 방향을 가진다. 편집 화면의 씬 추가는 선택한 씬과 양방향 출구를 만든다.
+씬·원형·인스턴스의 ID는 영문·숫자로 시작하고 영문·숫자·점·밑줄·콜론·하이픈을 쓴다. 인스턴스 ID `player`, `stage`는 예약되어 있다. ID는 각 목록 안에서 유일해야 하며 씬 출구·원형·배치 참조가 모두 존재해야 한다. 출구는 방향을 가진다. 편집 화면의 씬 추가·수정은 해당 씬의 인접 목록만 저장하며, 서로 오가려면 반대편 씬에도 출구를 등록한다.
 
 ## 원형과 독립 인스턴스
 
