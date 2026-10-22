@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { resolveTurn, type Director } from '$lib/theater/ensemble';
 import type { PlayerRequest } from '$lib/theater/types';
+import { generationHistoryEvents } from '$lib/theater/generation-history';
 import { createDirector, modelSettings } from './oev';
-import { checkJob, claimJob, enqueue, failJob, finishJob, getWorld, heartbeatJob, nextJobInput, runnableJobs, saveJobProgress } from './stage-store';
+import { createMemoryRecall } from './memory-search';
+import { checkJob, claimJob, enqueue, failJob, finishJob, getWorld, heartbeatJob, nextJobInput, retryFailedJob, runnableJobs, saveJobProgress } from './stage-store';
 
 const workerId = randomUUID();
 const scheduled = new Set<string>();
@@ -22,11 +24,17 @@ async function processJob(id: string): Promise<void> {
 		// Empty scenes and object-only turns do not need a model connection.
 		let connected: Promise<Director> | undefined;
 		const connection = () => connected ??= createDirector(controller.signal, job.models, checkpoint);
+		const recall = createMemoryRecall(controller.signal, checkpoint);
 		const director: Director = {
 			chooseAppearance: async (state, outfits) => (await connection()).chooseAppearance!(state, outfits),
 			reflect: async (state, context) => (await connection()).reflect(state, context),
-			decide: async (state) => (await connection()).decide(state),
-			perform: async (state, actions, writingStyle) => (await connection()).perform(state, actions, writingStyle)
+			decide: async (state) => (await connection()).decide(await recall(getWorld(job.worldId), state)),
+			perform: async (state, actions, writingStyle) => {
+				const world = getWorld(job.worldId);
+				const observed = await recall(world, state);
+				checkpoint();
+				return (await connection()).perform({ ...observed, generationEvents: generationHistoryEvents(world, String((state.self as Record<string, unknown>).id)) }, actions, writingStyle);
+			}
 		};
 		do {
 			await resolveTurn(getWorld(job.worldId), job.request, director, checkpoint, {
@@ -52,5 +60,9 @@ export function ensureStageWorker(): void {
 export function queueStageTurn(worldId: string, revision: number, request: PlayerRequest): void {
 	const settings = modelSettings();
 	const job = enqueue(worldId, revision, request, { decisionModel: settings.decisionModel, textModel: settings.textModel });
+	schedule(job.id);
+}
+export function retryStageTurn(worldId: string, revision: number, jobId: string): void {
+	const job = retryFailedJob(worldId, revision, jobId);
 	schedule(job.id);
 }

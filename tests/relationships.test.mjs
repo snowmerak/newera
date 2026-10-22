@@ -61,7 +61,7 @@ test('new events are batched in order and persisted cursors prevent reinterpreti
 		assert.ok(context.newEvents.every((event) => context.evidenceEvents.some((evidence) => evidence.eventId === event.eventId)));
 		applyReflection(harin, noop, context);
 	}
-	assert.deepEqual(batches, [16, 16, 3]);
+	assert.deepEqual(batches, [4, 4, 4, 4, 4, 4, 4, 4, 3]);
 	const restored = validateState(stage.state, stage.definition);
 	const reloaded = { ...stage, state: restored };
 	assert.equal(reflectionContext(reloaded, actor(reloaded, 'harin')), null);
@@ -85,7 +85,7 @@ test('backlog reflections receive only evidence through their current batch befo
 		},
 		async decide(state) { assert.ok(state.self.reflectedThroughEventId); return { act: false, model: 'fake' }; }
 	});
-	assert.deepEqual(batches, [16, 16, 3, 16, 16, 3]);
+	assert.deepEqual(batches, [4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 3]);
 });
 
 test('reflection proposals cannot forge subjects, targets, scores, fields or unobserved and old-only evidence', () => {

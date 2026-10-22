@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld, setWorldModels } from '$lib/server/stage-store';
-import { ensureStageWorker, queueStageTurn } from '$lib/server/stage';
+import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld, setWorldModels, stopJob } from '$lib/server/stage-store';
+import { ensureStageWorker, queueStageTurn, retryStageTurn } from '$lib/server/stage';
 import { getModelCatalog } from '$lib/server/oev';
 import { checkedModelSelection } from '$lib/theater/validation';
 
@@ -11,6 +11,20 @@ function failed(error: unknown) {
 	return fail(400, { message: error instanceof Error ? error.message : '요청을 처리하지 못했습니다.' });
 }
 export const actions: Actions = {
+	stop: async ({ request }) => {
+		try {
+			const body = await request.formData();
+			stopJob(String(body.get('worldId')), String(body.get('jobId')));
+			return { message: '' };
+		} catch (error) { return failed(error); }
+	},
+	retry: async ({ request }) => {
+		try {
+			const body = await request.formData();
+			retryStageTurn(String(body.get('worldId')), Number(body.get('revision')), String(body.get('jobId')));
+			return { message: '' };
+		} catch (error) { return failed(error); }
+	},
 	models: async ({ request }) => {
 		try {
 			const body = await request.formData();

@@ -37,6 +37,7 @@ export function checkedExpression(value: unknown, actions: StageAction[]): Actor
 	if (source.targetId !== action.targetId) throw new Error('생성 결과의 대상이 선택한 행동의 대상과 다릅니다.');
 	const narrative = source.narrative === null ? null : text(source.narrative, '행동 묘사', 2000);
 	const utterance = source.utterance === null ? null : text(source.utterance, '대사', 4000);
+	if (utterance && /\[(?:플레이어|사용자|주인공|player)(?:의|의\s*)?\s*(?:이름|name)\]|\{\{?\s*(?:player[_ .]?name|플레이어\s*이름)\s*\}?\}/i.test(utterance)) throw new Error('대사에 미완성 플레이어 이름 자리표시자가 포함되었습니다. 플레이어를 대신해 말할 수 없습니다.');
 	if (action.kind === 'speak' && !utterance) throw new Error('말하기 행동에는 대사가 필요합니다.');
 	if (action.kind !== 'speak' && utterance !== null) throw new Error('대사는 말하기 행동에서만 실행할 수 있습니다.');
 	if (action.kind !== 'speak' && action.kind !== 'wait' && !narrative) throw new Error('선택한 행동의 구체적인 묘사가 필요합니다.');

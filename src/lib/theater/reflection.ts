@@ -17,10 +17,10 @@ export function reflectionContext(world: World, actor: EntityInstance): Reflecti
 	const cursor = actor.reflectedThroughEventId ?? null;
 	const position = cursor === null ? -1 : events.findIndex((event) => event.eventId === cursor);
 	if (cursor !== null && position < 0) throw new Error('관찰 해석 위치를 찾을 수 없습니다.');
-	const newEvents = events.slice(position + 1, position + 17);
+	const newEvents = events.slice(position + 1, position + 5);
 	if (!newEvents.length) return null;
 	const lastIndex = memories.findIndex((memory) => memory.eventId === newEvents.at(-1)!.eventId);
-	const recent = memories.slice(Math.max(0, lastIndex - 31), lastIndex + 1).filter((event) => event.kind !== 'wait');
+	const recent = memories.slice(Math.max(0, lastIndex - 7), lastIndex + 1).filter((event) => event.kind !== 'wait');
 	const evidenceEvents = [...new Map([...newEvents, ...recent].map((event) => [event.eventId, event])).values()];
 	const knownIds = new Set([
 		...Object.keys(actor.relationships ?? {}),
@@ -47,7 +47,11 @@ export function reflectionSchema(context: ReflectionContext): Record<string, unk
 						properties: { field: { type: 'string', enum: [...relationshipMetrics] }, value: { type: ['integer', 'null'], minimum: 0, maximum: 100 } }, required: ['field', 'value']
 					} },
 					impression: { type: ['string', 'null'], maxLength: 600 },
-					evidenceEventIds: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', enum: context.evidenceEvents.map((event) => event.eventId) } }
+					evidenceEventIds: {
+						type: 'array', minItems: 1, maxItems: 8, uniqueItems: true,
+						items: { type: 'string', enum: context.evidenceEvents.map((event) => event.eventId) },
+						contains: { type: 'string', enum: context.newEvents.map((event) => event.eventId) }, minContains: 1
+					}
 				}, required: ['targetId', 'changes', 'impression', 'evidenceEventIds']
 			} },
 			memoUpdate: memoUpdateSchema

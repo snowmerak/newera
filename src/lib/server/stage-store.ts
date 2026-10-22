@@ -290,6 +290,26 @@ export function latestJob(worldId: string): GenerationJob | null {
 	const row = store().prepare('SELECT * FROM theater_jobs WHERE world_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(worldId) as Row | undefined;
 	return row ? jobFromRow(row) : null;
 }
+export function retryFailedJob(worldId: string, revision: number, jobId: string): GenerationJob {
+	return transaction(() => {
+		const world = getWorld(worldId);
+		const job = latestJob(worldId);
+		if (!job || job.id !== jobId || job.status !== 'failed') throw new Error('재시도할 실패 작업이 없습니다. 진행 상태를 새로고침해 주세요.');
+		if (world.revision !== revision || job.revision !== world.revision) throw new Error('실패 이후 장면이 변경되어 이어서 재시도할 수 없습니다.');
+		// Keep the request, committed cursor, queued chat and model snapshot: retry must not replay the input.
+		store().prepare("UPDATE theater_jobs SET status = 'pending', worker_id = NULL, heartbeat_at = NULL, completed_at = NULL, error = NULL WHERE id = ? AND status = 'failed'").run(job.id);
+		return getJob(job.id)!;
+	});
+}
+export function stopJob(worldId: string, jobId: string): void {
+	transaction(() => {
+		const job = latestJob(worldId);
+		if (!job || job.id !== jobId || !['pending', 'running'].includes(job.status)) throw new Error('중단할 진행 중인 작업이 없습니다.');
+		// Clear ownership first so even a response arriving before the next heartbeat cannot commit.
+		store().prepare("UPDATE theater_jobs SET status = 'failed', worker_id = NULL, error = ?, completed_at = ? WHERE id = ?")
+			.run('사용자가 자동 생성을 중단했습니다.', new Date().toISOString(), job.id);
+	});
+}
 export function enqueue(worldId: string, revision: number, request: PlayerRequest, defaults: ModelSelection): GenerationJob {
 	return transaction(() => {
 		const world = getWorld(worldId);

@@ -10,6 +10,15 @@ import { test } from 'node:test';
 
 // These fixtures answer once per player input, then deliberately choose to listen.
 const participation = (state) => state.recentEvents.some((event) => event.tick === state.time.tick && event.actorId === state.self.id && event.kind === 'speak') ? 'wait' : 'act';
+function replyPerformanceReview(body, response) {
+	if (body.questions?.identity_check) {
+		response.end(JSON.stringify({ answers: { identity_check: { type: 'choice', choice: 'consistent' } } }));
+		return true;
+	}
+	if (!body.questions?.performance_check) return false;
+	response.end(JSON.stringify({ answers: { performance_check: { type: 'choice', choice: 'accept' } } }));
+	return true;
+}
 function replyReflection(body, response) {
 	if (body.response_format?.json_schema?.name !== 'character_reflection') return false;
 	response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ relationshipUpdates: [], memoUpdate: null }) } }] }));
@@ -25,7 +34,7 @@ async function app(directory, provider, environment = {}) {
 	const port = await freePort();
 	const base = `http://127.0.0.1:${port}`;
 	let output = '';
-	const child = spawn(process.execPath, ['build/index.js'], { env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ORIGIN: base, NEWERA_DATA_DIR: directory, NEWERA_OEV_BASE_URL: provider, NEWERA_DECISION_MODEL: 'actor-model', NEWERA_TEXT_MODEL: 'actor-model', NEWERA_MAX_RETRIES: '0', ...environment }, stdio: ['ignore', 'pipe', 'pipe'] });
+	const child = spawn(process.execPath, ['build/index.js'], { env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ORIGIN: base, NEWERA_DATA_DIR: directory, NEWERA_OEV_BASE_URL: provider, NEWERA_DECISION_MODEL: 'actor-model', NEWERA_TEXT_MODEL: 'actor-model', NEWERA_MAX_RETRIES: '0', NEWERA_MEMORY_ENABLED: 'false', ...environment }, stdio: ['ignore', 'pipe', 'pipe'] });
 	for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk) => { output = (output + chunk).slice(-8000); });
 	for (let index = 0; index < 100; index++) {
 		if (child.exitCode !== null) throw new Error(`app exited: ${output}`);
@@ -72,6 +81,7 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (replyReflection(body, response)) return;
 		calls.push({ path: request.url, body });
 		if (pauseNext) { const hold = pauseNext; pauseNext = null; hold.started(); await hold.wait; }
@@ -101,20 +111,21 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		const originalId = activeId();
 		await post(base, 'turn', { ...fields(), kind: 'speak', text: '함께 준비할까요?', targetId: 'seoyeon' });
 		await waitJob(base, db, originalId);
-		assert.deepEqual(calls.filter((call) => call.path.endsWith('systemone')).map((call) => call.body.state.self.id), ['seoyeon', 'harin', 'seoyeon']);
+		assert.deepEqual(calls.filter((call) => call.body.questions?.participation).map((call) => call.body.state.self.id), ['seoyeon', 'harin', 'seoyeon']);
 		assert.ok(calls.filter((call) => call.path.endsWith('systemone'))[1].body.state.recentEvents.some((event) => event.actorId === 'seoyeon' && event.body.utterance === '서연의 대답입니다.'));
 		assert.equal(snapshot().state.events.filter((entry) => entry.kind === 'speak').length, 3);
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'seoyeon').memo.summary, 'seoyeon만의 메모');
-		assert.deepEqual(Object.keys(calls[0].body.questions), ['participation', 'inactivity']);
+		assert.deepEqual(Object.keys(calls[0].body.questions), ['participation']);
 		const generation = calls.find((call) => call.path.endsWith('chat/completions'));
 		assert.equal(generation.body.response_format.json_schema.strict, true);
 		assert.equal(JSON.parse(generation.body.messages[1].content).availableActions.some((action) => action.kind === 'wait'), false);
 		assert.ok(!JSON.stringify(calls.filter((call) => call.path.endsWith('systemone'))[1].body).includes('seoyeon만의 메모'));
 		const firstObservation = calls.find((call) => call.path.endsWith('systemone')).body.state;
-		assert.ok(firstObservation.self.memories.every((memory) => memory.actorId && memory.body && !Object.hasOwn(memory, 'text')));
-		assert.equal(firstObservation.self.memories.at(-1).actorId, 'player');
-		assert.equal(firstObservation.self.memories.at(-1).targetId, 'seoyeon');
-		assert.equal(firstObservation.self.memories.at(-1).body.utterance, '함께 준비할까요?');
+		assert.ok(!Object.hasOwn(firstObservation.self, 'memories'));
+		assert.ok(firstObservation.recentEvents.every((memory) => memory.actorId && memory.body && !Object.hasOwn(memory, 'text')));
+		assert.equal(firstObservation.recentEvents.at(-1).actorId, 'player');
+		assert.equal(firstObservation.recentEvents.at(-1).targetId, 'seoyeon');
+		assert.equal(firstObservation.recentEvents.at(-1).body.utterance, '함께 준비할까요?');
 		page = await (await fetch(base)).text();
 		const seoyeonArticle = page.match(/<article\b[^>]*class="stage-event[^>]*>[\s\S]*?<\/article>/g).find((article) => article.includes('서연의 대답입니다.'));
 		assert.match(seoyeonArticle, /class="event-action"[\s\S]*?<p>서연은 고개를 끄덕인다\.<\/p>/);
@@ -240,6 +251,7 @@ test('individual results are visible while the next inference is pending and res
 	const callModels = [];
 	let held = false;
 	let failHarin = false;
+	let retryHold = null;
 	let release;
 	const hold = new Promise((done) => { release = done; });
 	const model = createServer(async (request, response) => {
@@ -248,6 +260,7 @@ test('individual results are visible while the next inference is pending and res
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (replyReflection(body, response)) return;
 		if (request.url === '/v1/systemone') { response.end(participationResponse(participation(body.state))); return; }
 		const state = JSON.parse(body.messages[1].content);
@@ -255,6 +268,7 @@ test('individual results are visible while the next inference is pending and res
 		callModels.push(body.model);
 		if (state.self.id === 'harin' && !held) { held = true; await hold; }
 		if (state.self.id === 'harin' && failHarin) { response.statusCode = 503; response.end('{"error":"offline"}'); return; }
+		if (state.self.id === 'harin' && retryHold) { retryHold.started(); await retryHold.wait; }
 		const output = { actionId: 'speak:player', targetId: 'player', narrative: `${state.self.name}은 고개를 끄덕인다.`, utterance: `${state.self.name}의 확정된 대사`, memoUpdate: { summary: `${state.self.id} 메모`, currentIntention: '', feelings: [], openThreads: [] } };
 		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(output) } }] }));
 	});
@@ -297,15 +311,106 @@ test('individual results are visible while the next inference is pending and res
 
 		failHarin = true;
 		await post(running.base, 'turn', { worldId, revision: String(resumed.revision), kind: 'wait' });
-		await waitJob(running.base, db, worldId, true);
+		const failedJob = await waitJob(running.base, db, worldId, true);
 		const failed = snapshot();
 		assert.equal(failed.state.tick, 2);
 		assert.deepEqual(failed.state.events.slice(resumed.state.events.length).map((event) => event.actorId), ['player', 'seoyeon'], 'failure of a later actor must retain earlier results');
 		const failedPage = await (await fetch(running.base)).text();
 		assert.match(failedPage, /이미 확정된 말과 행동은 유지됩니다/);
+		assert.match(failedPage, /이어서 재시도/);
+		await post(running.base, 'models', { worldId, decisionModel: 'actor-model', textModel: 'actor-model' });
+		failHarin = false;
+		let retryStarted;
+		let releaseRetry;
+		const retryStart = new Promise((done) => { retryStarted = done; });
+		retryHold = { started: retryStarted, wait: new Promise((done) => { releaseRetry = done; }) };
+		const retryFields = { worldId, revision: String(failed.revision), jobId: failedJob.id };
+		try {
+			await post(running.base, 'retry', { ...retryFields, jobId: pending.id }, '/', true);
+			await post(running.base, 'retry', { ...retryFields, revision: String(failed.revision - 1) }, '/', true);
+			await post(running.base, 'retry', retryFields);
+			await retryStart;
+			const retrying = await latestJob(running.base, db, worldId);
+			assert.equal(retrying.id, failedJob.id, 'manual retry must resume the same durable job');
+			assert.equal(retrying.status, 'running');
+			assert.equal(retrying.error, null);
+			assert.deepEqual(retrying.progress, failedJob.progress);
+			assert.deepEqual(snapshot(), failed, 'retry must preserve committed state, memories, clock and revision until new output');
+			assert.equal(callModels.at(-1), failedJob.models.textModel, 'retry retains the original job model after preferences change');
+			await post(running.base, 'retry', retryFields, '/', true);
+		} finally { releaseRetry(); }
+		const completedJob = await waitJob(running.base, db, worldId);
+		const completed = snapshot();
+		assert.equal(completedJob.id, failedJob.id);
+		assert.equal(completed.state.tick, failed.state.tick, 'retry must not advance the input tick again');
+		assert.equal(completed.state.minute, failed.state.minute, 'retry must not advance time again');
+		assert.deepEqual(completed.state.events.slice(0, failed.state.events.length), failed.state.events);
+		assert.equal(completed.state.events.filter((event) => event.actorId === 'player').length, 2);
+		assert.deepEqual(completed.state.events.slice(failed.state.events.length).filter((event) => event.kind === 'speak').map((event) => event.actorId), ['harin']);
+		await post(running.base, 'retry', { ...retryFields, revision: String(completed.revision) }, '/', true);
+		assert.deepEqual(snapshot(), completed, 'a completed job cannot be replayed');
+
+		failHarin = true;
+		await post(running.base, 'turn', { worldId, revision: String(completed.revision), kind: 'wait' });
+		const staleJob = await waitJob(running.base, db, worldId, true);
+		await post(running.base, 'reset', { worldId, revision: String(snapshot().revision) });
+		await post(running.base, 'retry', { worldId, revision: String(snapshot().revision), jobId: staleJob.id }, '/', true);
+		assert.equal(snapshot().state.events.length, 0, 'retry must not restore a job invalidated by reset');
+		const stalePage = await (await fetch(running.base)).text();
+		assert.match(stalePage, /실패 이후 장면이 변경되어 재시도할 수 없습니다/);
+		assert.ok(!stalePage.includes('action="?/retry"'));
 	} finally {
 		release(); await running.stop(); db.close(); model.closeAllConnections(); await new Promise((done) => model.close(done));
 	}
+});
+
+test('role-confused proposals never publish and an operator stop fences off an in-flight review', async () => {
+	let generated = 0, reviews = 0, holdReview = false, held = false, release;
+	const gate = new Promise(done => { release = done; });
+	const model = createServer(async (request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
+		const chunks = []; for await (const chunk of request) chunks.push(chunk);
+		const payload = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyReflection(payload, response)) return;
+		if (payload.questions?.identity_check) { response.end(JSON.stringify({ answers: { identity_check: { type: 'choice', choice: generated === 1 ? 'contradiction' : 'consistent' } } })); return; }
+		if (payload.questions?.performance_check) {
+			reviews++;
+			if (holdReview) { held = true; await gate; }
+			response.end(JSON.stringify({ answers: { performance_check: { type: 'choice', choice: 'accept' } } })); return;
+		}
+		if (payload.questions) {
+			const act = payload.state.self.id === 'seoyeon' && participation(payload.state) === 'act';
+			response.end(participationResponse(act ? 'act' : 'wait', 'idle')); return;
+		}
+		generated++;
+		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ actionId: 'speak:player', targetId: 'player', narrative: null, utterance: generated === 1 ? '저는 오늘 전학 온 학생이에요.' : '나는 서연이야. 준비를 확인하고 올게.', memoUpdate: generated === 1 ? { summary: '나는 전학생이다.', currentIntention: '', feelings: [], openThreads: [] } : null }) } }] }));
+	});
+	const port = await listen(model), directory = scratch();
+	const running = await app(directory, `http://127.0.0.1:${port}/v1`, { NEWERA_MAX_RETRIES: '1', NEWERA_RETRY_BASE_MS: '1' });
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const worldId = db.prepare("SELECT value FROM theater_meta WHERE key='active'").get().value;
+	const snapshot = () => { const row = db.prepare('SELECT revision,state_json FROM theater_worlds WHERE id=?').get(worldId); return { revision: row.revision, state: JSON.parse(row.state_json) }; };
+	try {
+		await post(running.base, 'turn', { worldId, revision: '0', kind: 'wait' });
+		const firstJob = await waitJob(running.base, db, worldId);
+		assert.equal(generated, 2); assert.equal(reviews, 1);
+		assert.ok(!JSON.stringify(snapshot()).includes('전학생'), 'rejected speech and its memo must never enter the authoritative scene');
+		assert.equal(snapshot().state.events.filter(e => e.utterance).length, 1);
+		holdReview = true;
+		await post(running.base, 'turn', { worldId, revision: String(snapshot().revision), kind: 'wait' });
+		for (let i = 0; i < 300 && !held; i++) await pause(20);
+		assert.ok(held);
+		const active = await latestJob(running.base, db, worldId), beforeStop = snapshot();
+		assert.match(await (await fetch(running.base)).text(), /생성 중단/);
+		await post(running.base, 'stop', { worldId, jobId: firstJob.id }, '/', true);
+		await post(running.base, 'stop', { worldId, jobId: active.id });
+		const stopped = await waitJob(running.base, db, worldId, true);
+		assert.match(stopped.error, /사용자가 자동 생성을 중단/);
+		release(); await pause(100);
+		assert.deepEqual(snapshot(), beforeStop, 'a late accepted review cannot commit after operator stop');
+		assert.equal((await latestJob(running.base, db, worldId)).status, 'failed');
+	} finally { release(); await running.stop(); db.close(); model.closeAllConnections(); await new Promise(done => model.close(done)); }
 });
 
 test('reactive dialogue repeats actors and queued stop chat survives restart without stale output or replay', async () => {
@@ -319,6 +424,7 @@ test('reactive dialogue repeats actors and queued stop chat survives restart wit
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (replyReflection(body, response)) return;
 		if (request.url === '/v1/systemone') {
 			const stopped = body.state.recentEvents.some((event) => event.actorId === 'player' && event.body.utterance === '이제 그만해.');
@@ -380,9 +486,10 @@ test('session model selection is isolated, active jobs retain their snapshot and
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (replyReflection(body, response)) return;
 		const state = request.url === '/v1/systemone' ? body.state : JSON.parse(body.messages[1].content);
-		calls.push({ path: request.url, model: body.model, actor: state.self.id });
+		calls.push({ path: request.url, model: body.model, actor: state.self.id, question: body.questions && Object.keys(body.questions)[0] });
 		if (request.url === '/v1/systemone') { response.end(participationResponse(participation(body.state))); return; }
 		if (failFirst) {
 			failFirst = false; started = true; await hold;
@@ -428,7 +535,7 @@ test('session model selection is isolated, active jobs retain their snapshot and
 		await waitJob(running.base, db, first);
 		const completed = snapshot(first);
 		assert.deepEqual(completed.state.events.map((event) => event.actorId), ['player', 'seoyeon', 'harin', 'seoyeon']);
-		assert.equal(calls.filter((call) => call.path.endsWith('systemone') && call.actor === 'seoyeon').length, 2);
+		assert.equal(calls.filter((call) => call.question === 'participation' && call.actor === 'seoyeon').length, 2);
 		assert.equal(calls.filter((call) => call.path.endsWith('chat/completions') && call.actor === 'seoyeon').length, 2);
 		assert.ok(calls.filter((call) => call.path.endsWith('systemone')).every((call) => call.model === originalModels.decisionModel));
 		assert.ok(calls.filter((call) => call.path.endsWith('chat/completions')).every((call) => call.model === originalModels.textModel));
@@ -466,8 +573,9 @@ test('private relationships persist before a wait decision, survive restart and 
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (request.url === '/v1/systemone') {
-			if (body.state.self.id === 'harin') {
+			if (body.questions.participation && body.state.self.id === 'harin') {
 				assert.equal(body.state.self.relationships.player.trust, 45);
 				if (!held) { held = true; await hold; }
 			}
@@ -729,6 +837,7 @@ test('appearance choices survive later inference failure, restart and slots; edi
 		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
 		const chunks = []; for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (body.questions?.outfit) {
 			outfitCalls++;
 			response.end(JSON.stringify({ answers: { outfit: { type: 'choice', choice: 'uniform' } } })); return;
@@ -799,6 +908,7 @@ test('world style edits persist and change the next performance prompt without c
 		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
 		const chunks = []; for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		calls.push(body);
 		if (replyReflection(body, response)) return;
 		if (body.questions) { response.end(participationResponse(participation(body.state))); return; }
@@ -922,13 +1032,16 @@ test('world replacement replaces progress and slots without duplicates; deletion
 
 test('silent inactivity persists without public transcript rows across restart, slots and export', async () => {
 	let watch = false;
+	const questions = [];
 	const model = createServer(async (request, response) => {
 		response.setHeader('content-type', 'application/json');
 		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
 		const chunks = []; for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (replyReflection(body, response)) return;
-		assert.deepEqual(Object.keys(body.questions), ['participation', 'inactivity']);
+		assert.equal(Object.keys(body.questions).length, 1);
+		questions.push(Object.keys(body.questions)[0]);
 		const mode = watch ? 'watch' : body.state.self.id === 'seoyeon' ? 'continue' : 'idle';
 		response.end(participationResponse('wait', mode));
 	});
@@ -942,6 +1055,7 @@ test('silent inactivity persists without public transcript rows across restart, 
 		await post(running.base, 'turn', { ...fields(), kind: 'speak', text: '안녕' });
 		const job = await waitJob(running.base, db, worldId);
 		assert.equal(job.progress.completedDecisions, 2);
+		assert.deepEqual(questions, ['participation', 'inactivity', 'participation', 'inactivity']);
 		const silent = snapshot();
 		assert.equal(silent.state.events.length, 1);
 		assert.equal(silent.state.instances.find(i => i.id === 'seoyeon').inactivity.mode, 'continue');
@@ -971,6 +1085,7 @@ test('presentation snapshots keep the first relationship and each outfit change 
 		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
 		const chunks = []; for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString());
+		if (replyPerformanceReview(body, response)) return;
 		if (replyReflection(body, response)) return;
 		if (body.questions) { response.end(participationResponse(participation(body.state), 'idle')); return; }
 		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ actionId: 'speak:player', targetId: 'player', narrative: '고개를 끄덕인다.', utterance: '반가워.', memoUpdate: null }) } }] }));
@@ -1010,6 +1125,57 @@ test('presentation snapshots keep the first relationship and each outfit change 
 		await post(running.base, 'load', { ...fields(), slot: '1' });
 		assert.equal(speeches().length, 1);
 		assert.deepEqual(speeches()[0].presentation, { playerContext: '오늘 처음 만난 안내 담당이다.', appearance: '노란 가디건을 걸쳤다.' });
+	} finally { await running.stop(); db.close(); await new Promise(done => model.close(done)); }
+});
+
+test('built worker retrieves witnessed long-term memory through LanceDB and OEV into participation and expression', async () => {
+	const calls = [];
+	const model = createServer(async (request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }, { id: 'embeddinggemma2', task: 'embedding' }] })); return; }
+		const chunks = [];
+		for await (const chunk of request) chunks.push(chunk);
+		const body = JSON.parse(Buffer.concat(chunks).toString());
+		calls.push({ path: request.url, body });
+		if (request.url === '/v1/embeddings') {
+			response.end(JSON.stringify({ model: body.model, data: body.input.map((_, index) => ({ index, embedding: [1, ...new Array(body.dimensions - 1).fill(0)] })) }));
+			return;
+		}
+		if (replyReflection(body, response) || replyPerformanceReview(body, response)) return;
+		if (request.url === '/v1/systemone') { response.end(participationResponse('act')); return; }
+		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ actionId: 'speak:player', targetId: 'player', narrative: '안내 데스크를 가리킨다.', utterance: '아까 맡긴 파란 우산은 안내 데스크에 있어요.', memoUpdate: null }) } }] }));
+	});
+	const port = await listen(model), directory = scratch();
+	const running = await app(directory, `http://127.0.0.1:${port}/v1`, { NEWERA_MEMORY_ENABLED: 'true', NEWERA_EMBEDDING_MODEL: 'embeddinggemma2', NEWERA_EMBEDDING_DIMENSIONS: '768', NEWERA_MEMORY_DIR: join(directory, 'memory-lance') });
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	try {
+		const worldId = db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get().value;
+		const row = db.prepare('SELECT * FROM theater_worlds WHERE id = ?').get(worldId);
+		const state = JSON.parse(row.state_json);
+		for (const actor of state.instances) { if (actor.id !== 'seoyeon') actor.active = false; }
+		const old = { id: 'old-umbrella', actorId: 'player', targetId: 'seoyeon', sceneId: 'lobby', tick: 0, kind: 'speak', text: '파란 우산을 안내 데스크에 맡겼어.' };
+		const waits = Array.from({ length: 20 }, (_, index) => ({ id: `wait-${index}`, actorId: 'seoyeon', targetId: null, sceneId: 'lobby', tick: 0, kind: 'wait', text: '주변을 지켜본다.' }));
+		state.events = [old, ...waits];
+		const observer = state.instances.find(actor => actor.id === 'seoyeon');
+		observer.memories = state.events.map(event => ({ eventId: event.id, actorId: event.actorId, targetId: event.targetId, sceneId: event.sceneId, tick: event.tick, kind: event.kind, body: { narrative: event.kind === 'speak' ? null : event.text, utterance: event.kind === 'speak' ? event.text : null } }));
+		observer.reflectedThroughEventId = old.id;
+		db.prepare('UPDATE theater_worlds SET state_json = ? WHERE id = ?').run(JSON.stringify(state), worldId);
+		await post(running.base, 'turn', { worldId, revision: String(row.revision), kind: 'speak', text: '내 파란 우산을 어디에 맡겼더라?', targetId: 'seoyeon' });
+		await waitJob(running.base, db, worldId);
+		const participation = calls.find(call => call.body.questions?.participation).body.state;
+		assert.equal(participation.memorySearch.status, 'hybrid');
+		assert.equal(participation.recalledEvents[0].eventId, old.id);
+		assert.equal(participation.recalledEvents[0].actorId, 'player');
+		assert.ok(!participation.recentEvents.some(event => event.eventId === old.id));
+		const performance = calls.find(call => call.body.response_format?.json_schema?.name === 'actor_performance');
+		const generated = JSON.parse(performance.body.messages[1].content);
+		assert.equal(generated.history[0].eventId, old.id);
+		assert.equal(generated.historyWindow.tokenLimit, 32768);
+		assert.ok(generated.history.length > 16, 'generation sees history beyond the short decision window');
+		assert.ok(!('recentEvents' in generated) && !('recalledEvents' in generated), 'the same transcript is not sent twice');
+		assert.deepEqual(new Set(calls.filter(call => call.path === '/v1/embeddings').map(call => call.body.input_type)), new Set(['query', 'document']));
+		const saved = JSON.parse(db.prepare('SELECT state_json FROM theater_worlds WHERE id = ?').get(worldId).state_json);
+		assert.equal(saved.events.filter(event => event.id === old.id).length, 1, 'recall does not replay or duplicate historical facts');
 	} finally { await running.stop(); db.close(); await new Promise(done => model.close(done)); }
 });
 

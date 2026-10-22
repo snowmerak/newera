@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount, tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import type { SubmitFunction } from '@sveltejs/kit';
@@ -14,6 +15,11 @@
 	let { data, form }: PageProps = $props();
 	let submitting = $state(false);
 	let targetId = $state('');
+	let historyElement = $state<HTMLDivElement>();
+	let objectsOpen = $state(true);
+	let scrollContext = '';
+	let scrollVersion = 0;
+	let followingHistory = true;
 	let world = $derived(data.world);
 	let scene = $derived(world.definition.scenes.find((entry) => entry.id === world.state.activeSceneId)!);
 	let present = $derived(residents(world));
@@ -25,6 +31,38 @@
 	let events = $derived(world.state.events.slice(-100));
 	let eventsById = $derived(new Map(world.state.events.map((event) => [event.id, event])));
 	let presentations = $derived(eventPresentations(world));
+	let historyRevision = $derived(JSON.stringify([world.id, world.revision, data.generation?.status, form?.message]));
+	function nearHistoryEnd(element: HTMLDivElement): boolean {
+		const range = element.scrollHeight - element.clientHeight;
+		return range <= 0 || element.scrollTop >= range * 0.98;
+	}
+	$effect.pre(() => {
+		historyRevision;
+		const element = historyElement;
+		if (!element) return;
+		// Measure before new output grows the scroll range; measuring afterward would disable following.
+		const follow = scrollContext !== world.id || nearHistoryEnd(element);
+		const previousTop = element.scrollTop;
+		const version = ++scrollVersion;
+		scrollContext = world.id;
+		void tick().then(() => {
+			if (version !== scrollVersion || historyElement !== element) return;
+			element.scrollTop = follow ? element.scrollHeight : previousTop;
+			followingHistory = nearHistoryEnd(element);
+		});
+	});
+	onMount(() => {
+		const narrow = window.matchMedia('(max-width: 900px)');
+		const resizeObjects = () => { objectsOpen = !narrow.matches; };
+		resizeObjects();
+		narrow.addEventListener('change', resizeObjects);
+		const element = historyElement!;
+		const resizeHistory = new ResizeObserver(() => {
+			if (followingHistory) element.scrollTop = element.scrollHeight;
+		});
+		resizeHistory.observe(element);
+		return () => { narrow.removeEventListener('change', resizeObjects); resizeHistory.disconnect(); };
+	});
 	let modelCatalog = $state<{ models: string[]; defaults: ModelSelection } | null>(null);
 	let modelsLoading = $state(false);
 	let modelsSaving = $state(false);
@@ -66,6 +104,10 @@
 		submitting = true;
 		return async ({ update }) => { try { await update(); } finally { submitting = false; } };
 	};
+	const submitRetry: SubmitFunction = () => {
+		submitting = true;
+		return async ({ update }) => { try { await update({ reset: false }); } finally { submitting = false; } };
+	};
 	$effect(() => {
 		if (targetId && !characters.some((instance) => instance.id === targetId)) targetId = '';
 	});
@@ -95,6 +137,7 @@
 </script>
 
 <svelte:head><title>{world.definition.name} · newera</title><meta name="description" content="씬과 인물의 선택으로 이어지는 이야기" /></svelte:head>
+<div class="play-shell">
 <header class="topbar"><a class="brand" href="/">newera<span>THEATER</span></a><a class="top-link" href="/lores">세계관과 무대 편집 ↗</a></header>
 <div class="theater-layout">
 	<aside class="catalog">
@@ -120,6 +163,8 @@
 	</aside>
 	<main class="stage-reader">
 		<div class="scene-heading"><div><p class="eyebrow">SCENE / {world.state.tick}</p><h1>{scene.name}</h1></div><span>{world.state.day}일차 · {clock(world.state.minute)}</span></div>
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable history region needs keyboard focus for PageUp and PageDown.) -->
+		<div class="history-scroll" role="region" aria-label="대화 기록" tabindex="0" bind:this={historyElement} onscroll={() => { if (historyElement) followingHistory = nearHistoryEnd(historyElement); }}>
 		<p class="scene-description">{scene.description}</p>
 		<div class="cast-strip" aria-label="현재 씬의 등장인물">
 			{#each characters as instance}<span class:companion={instance.companion}>{instance.name}{instance.companion ? ' · 동행' : ''}</span>{:else}<span>지금 이곳에는 나 혼자 있다.</span>{/each}
@@ -144,36 +189,7 @@
 			</form>
 			{#if modelsError}<p class="feedback error" role="alert">{modelsError}</p>{/if}
 		</details>
-		<div class="event-thread" aria-live="polite">
-			{#each events as event (event.id)}
-				{@const eventScene = world.definition.scenes.find((entry) => entry.id === event.sceneId)}
-				{@const content = eventContent(event)}
-				{@const presentation = presentations.get(event.id)}
-				<article class="stage-event" class:player={event.actorId === 'player'} class:dialogue={event.kind === 'speak'}>
-					<div class="event-byline"><strong>{actorName(world, event.actorId)}</strong><span>{eventScene?.name} · {event.tick}</span>{#if event.targetId}<span>→ {actorName(world, event.targetId)}</span>{/if}</div>
-					{#if presentation}<CharacterIntroduction {presentation} characterId={event.actorId} />{/if}
-					{#if content.narrative}<div class="event-action"><span class="event-content-label">행동</span><p>{content.narrative}</p></div>{/if}
-					{#if content.utterance}<div class="event-speech"><span class="event-content-label">대사</span><blockquote>{content.utterance}</blockquote></div>{/if}
-					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}
-					{#if event.decision}<details class="decision-detail"><summary>선택 기록</summary><small>{event.decision.acted === undefined ? '이전 판단' : event.decision.acted ? '행동한다' : '지켜본다'} · {event.decision.choice} · 판단 {event.decision.model}{#if event.decision.generationModel} · 생성 {event.decision.generationModel}{/if}</small></details>{/if}
-				</article>
-			{:else}<div class="empty-stage"><p>아직 아무도 말을 꺼내지 않았다.</p><span>말을 걸거나, 주변 사물을 살피거나, 잠시 기다려 보세요.</span></div>{/each}
-		</div>
-		{#if generating}<p class="generation-status" role="status">현장의 인물들이 각자의 다음 행동을 고르고 있습니다…{#if data.generation?.progress} (판단 {data.generation.progress.completedDecisions}회 · 대기 {data.generation.progress.pendingActorIds.length}명){/if}</p>{/if}
-		{#if data.generation?.status === 'failed'}<p class="feedback error" role="alert">{data.generation.error} 이미 확정된 말과 행동은 유지됩니다.</p>{/if}
-		{#if form?.message}<p class="feedback" role="status">{form.message}</p>{/if}
-		<section class="player-console"><p class="eyebrow">YOUR NEXT LINE</p>
-			<form method="POST" action="?/turn" use:enhance={submitTurn} class="speech-form">
-				<input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="speak" />
-				<label>누구에게<select name="targetId" bind:value={targetId} disabled={submitting}><option value="">현장에 있는 모두에게</option>{#each characters as instance}<option value={instance.id}>{instance.name}</option>{/each}</select></label>
-				<label class="speech-input">나의 말<textarea name="text" rows="3" placeholder="지금 하고 싶은 말을 적어 주세요." maxlength="4000" required disabled={submitting}></textarea></label>
-				<button class="primary" disabled={submitting}>말하기</button>
-			</form>
-			<div class="stage-options">
-				<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button name="kind" value="wait" disabled={busy}>잠시 지켜본다</button></form>
-				{#each scene.exits as exit}{@const destination = world.definition.scenes.find((entry) => entry.id === exit)!}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="move" /><button name="destinationId" value={exit} disabled={busy}>{destination.name}(으)로 →</button></form>{/each}
-			</div>
-		</section>
+		<div class="scene-tools">
 		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>
 			{#each characters as instance}<h3>{instance.name}</h3>
 				{#if instance.inactivity}<p>최근 비참여 선택: {inactivityLabels[instance.inactivity.mode]} · 판단 {instance.inactivity.model}</p>{/if}
@@ -197,10 +213,66 @@
 			{/each}
 		</details>
 		<footer class="reader-footer"><a href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>공연 기록 내려받기</a><details><summary>처음부터 다시</summary><p>현재 진행을 초기 배치로 되돌립니다. 저장 슬롯은 유지됩니다.</p><form method="POST" action="?/reset" use:enhance><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button disabled={busy}>현재 진행 초기화</button></form></details></footer>
+		</div>
+		<div class="event-thread" aria-live="polite">
+			{#each events as event (event.id)}
+				{@const eventScene = world.definition.scenes.find((entry) => entry.id === event.sceneId)}
+				{@const content = eventContent(event)}
+				{@const presentation = presentations.get(event.id)}
+				<article class="stage-event" class:player={event.actorId === 'player'} class:dialogue={event.kind === 'speak'}>
+					<div class="event-byline"><strong>{actorName(world, event.actorId)}</strong><span>{eventScene?.name} · {event.tick}</span>{#if event.targetId}<span>→ {actorName(world, event.targetId)}</span>{/if}</div>
+					{#if presentation}<CharacterIntroduction {presentation} characterId={event.actorId} />{/if}
+					{#if content.narrative}<div class="event-action"><span class="event-content-label">행동</span><p>{content.narrative}</p></div>{/if}
+					{#if content.utterance}<div class="event-speech"><span class="event-content-label">대사</span><blockquote>{content.utterance}</blockquote></div>{/if}
+					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}
+					{#if event.decision}<details class="decision-detail"><summary>선택 기록</summary><small>{event.decision.acted === undefined ? '이전 판단' : event.decision.acted ? '행동한다' : '지켜본다'} · {event.decision.choice} · 판단 {event.decision.model}{#if event.decision.generationModel} · 생성 {event.decision.generationModel}{/if}</small></details>{/if}
+				</article>
+			{:else}<div class="empty-stage"><p>아직 아무도 말을 꺼내지 않았다.</p><span>말을 걸거나, 주변 사물을 살피거나, 잠시 기다려 보세요.</span></div>{/each}
+		</div>
+		{#if generating}
+			<div class="generation-status">
+				<p role="status">현장의 인물들이 각자의 다음 행동을 고르고 있습니다…{#if data.generation?.progress} (판단 {data.generation.progress.completedDecisions}회 · 대기 {data.generation.progress.pendingActorIds.length}명){/if}</p>
+				<form method="POST" action="?/stop" use:enhance={submitRetry}>
+					<input type="hidden" name="worldId" value={world.id} />
+					<input type="hidden" name="jobId" value={data.generation!.id} />
+					<button disabled={submitting}>생성 중단</button>
+				</form>
+			</div>
+		{/if}
+		{#if data.generation?.status === 'failed'}
+			<div class="feedback error generation-error">
+				<p role="alert">{data.generation.error} 이미 확정된 말과 행동은 유지됩니다.</p>
+				{#if data.generation.revision === world.revision}
+					<form method="POST" action="?/retry" use:enhance={submitRetry}>
+						<input type="hidden" name="worldId" value={world.id} />
+						<input type="hidden" name="revision" value={world.revision} />
+						<input type="hidden" name="jobId" value={data.generation.id} />
+						<button disabled={busy}>{submitting ? '재시도 요청 중…' : '이어서 재시도'}</button>
+						<small>실패한 지점부터 기존 모델로 다시 진행합니다.</small>
+					</form>
+				{:else}<small>실패 이후 장면이 변경되어 재시도할 수 없습니다. 새 말이나 행동으로 진행해 주세요.</small>{/if}
+			</div>
+		{/if}
+		{#if form?.message}<p class="feedback" role="status">{form.message}</p>{/if}
+		</div>
+		<section class="player-console"><p class="eyebrow">YOUR NEXT LINE</p>
+			<form method="POST" action="?/turn" use:enhance={submitTurn} class="speech-form">
+				<input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="speak" />
+				<label>누구에게<select name="targetId" bind:value={targetId} disabled={submitting}><option value="">현장에 있는 모두에게</option>{#each characters as instance}<option value={instance.id}>{instance.name}</option>{/each}</select></label>
+				<label class="speech-input">나의 말<textarea name="text" rows="2" placeholder="지금 하고 싶은 말을 적어 주세요." maxlength="4000" required disabled={submitting}></textarea></label>
+				<button class="primary" disabled={submitting}>말하기</button>
+			</form>
+			<div class="stage-options">
+				<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button name="kind" value="wait" disabled={busy}>잠시 지켜본다</button></form>
+				{#each scene.exits as exit}{@const destination = world.definition.scenes.find((entry) => entry.id === exit)!}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="move" /><button name="destinationId" value={exit} disabled={busy}>{destination.name}(으)로 →</button></form>{/each}
+			</div>
+		</section>
+
 	</main>
-	<aside class="objects-panel" aria-label="현재 씬의 상호작용 오브젝트"><p class="eyebrow">ON THE SCENE</p><h2>주변 사물</h2><p class="objects-location">{scene.name}</p><div class="object-grid">
+	<aside class="objects-panel" aria-label="현재 씬의 상호작용 오브젝트"><details class="objects-drawer" bind:open={objectsOpen}><summary>주변 사물 <span>{objects.length}</span></summary><div class="objects-content"><p class="eyebrow">ON THE SCENE</p><h2>주변 사물</h2><p class="objects-location">{scene.name}</p><div class="object-grid">
 		{#each objects as instance (instance.id)}<article class="object-card"><h3>{instance.name}</h3><p>{templateFor(world, instance).description}</p><small>{Object.entries(instance.state).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small><div class="stage-options">
 			{#each interactionsFor(world, instance) as interaction}<form method="POST" action="?/turn" use:enhance={submitTurn}><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><input type="hidden" name="kind" value="interact" /><input type="hidden" name="targetId" value={instance.id} /><button name="interactionId" value={interaction.id} disabled={busy}>{interaction.label}</button></form>{/each}
 		</div></article>{:else}<p class="muted">지금 이곳에는 살펴볼 사물이 없습니다.</p>{/each}
-	</div></aside>
+	</div></div></details></aside>
+</div>
 </div>
