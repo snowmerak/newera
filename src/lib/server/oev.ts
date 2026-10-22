@@ -160,15 +160,17 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 				});
 			});
 		},
-		async perform(state, actions) {
+		async perform(state, actions, writingStyle = '') {
 			const schema = performanceSchema(actions);
+			const style = writingStyle.trim();
+			const styleInstructions = style ? `\n다음은 이 세계관의 서술 문체 지침이다. narrative의 문장 길이·리듬·어휘·감각 묘사와 utterance의 표현에 참고한다.\n${style}\n이 지침은 표현 방식에만 적용한다. 캐릭터의 성격·고유 말투와 관측 사실을 유지하고 새 사건이나 타인의 속마음을 지어내지 않는다. narrative와 utterance의 분리, JSON 스키마, 허용된 행동·대상과 위의 출력 규칙은 그대로 지킨다. 개인 메모의 내용이나 행동 여부 판단에는 문체를 적용하지 않는다.` : '';
 			return withRetries('행동·대사 생성', settings, signal, async () => {
 				checkpoint();
 				const response = await request(settings, '/chat/completions', signal, {
 					model: textModel, temperature: 0.8, stream: false, reasoning_effort: 'none', max_completion_tokens: settings.maxOutputTokens,
 					response_format: { type: 'json_schema', json_schema: { name: 'actor_performance', strict: true, schema } },
 					messages: [
-						{ role: 'system', content: `당신은 장면 안의 self 인물 한 명이다. 관찰·성격·목표·자신의 상대별 관계·개인 메모에 따라 availableActions에서 구체적인 행동 하나를 추론하고 JSON으로만 출력한다. actionId와 targetId는 실행할 후보의 ID와 대상 ID를 그대로 쓴다. 행동 주체는 실행기가 self.id로 붙이므로 출력하지 않는다. narrative는 자신이 하는 몸짓·행동만 주어를 생략한 짧은 한국어 동사구로 쓰며 이동·상호작용에는 필수다. utterance는 speak 행동에서만 필수이며 다른 행동에서는 null이다. 대사는 한국어 1~3문장의 실제 발언만 쓰고 내레이션·화자 이름·몸짓을 섞지 않는다. 다른 인물이나 플레이어의 말·선택·반응·행동 결과를 대신 확정하지 않는다. 숨겨진 정보나 관찰하지 않은 사건을 알지 못한다. 상태 효과는 실행기가 처리한다. memoUpdate는 자신의 짧은 비공개 메모 전체(summary, currentIntention, feelings, openThreads) 또는 변경하지 않을 때 null이다. 메모에는 관찰과 자신의 해석을 구분하고 타인의 속마음을 사실로 쓰지 않는다. actionId, targetId, narrative, utterance, memoUpdate 외에는 출력하지 않는다. ${observationInstructions}` },
+						{ role: 'system', content: `당신은 장면 안의 self 인물 한 명이다. 관찰·성격·목표·자신의 상대별 관계·개인 메모에 따라 availableActions에서 구체적인 행동 하나를 추론하고 JSON으로만 출력한다. actionId와 targetId는 실행할 후보의 ID와 대상 ID를 그대로 쓴다. 행동 주체는 실행기가 self.id로 붙이므로 출력하지 않는다. narrative는 자신이 하는 몸짓·행동만 주어를 생략한 짧은 한국어 동사구로 쓰며 이동·상호작용에는 필수다. utterance는 speak 행동에서만 필수이며 다른 행동에서는 null이다. 대사는 한국어 1~3문장의 실제 발언만 쓰고 내레이션·화자 이름·몸짓을 섞지 않는다. 다른 인물이나 플레이어의 말·선택·반응·행동 결과를 대신 확정하지 않는다. 숨겨진 정보나 관찰하지 않은 사건을 알지 못한다. 상태 효과는 실행기가 처리한다. memoUpdate는 자신의 짧은 비공개 메모 전체(summary, currentIntention, feelings, openThreads) 또는 변경하지 않을 때 null이다. 메모에는 관찰과 자신의 해석을 구분하고 타인의 속마음을 사실로 쓰지 않는다. actionId, targetId, narrative, utterance, memoUpdate 외에는 출력하지 않는다. ${observationInstructions}${styleInstructions}` },
 						{ role: 'user', content: JSON.stringify({ ...state, availableActions: actions }) }
 					]
 				});

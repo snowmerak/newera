@@ -71,6 +71,29 @@ test('binary participation precedes structured action inference with Gemma4 26B'
 	} finally { globalThis.fetch = originalFetch; }
 });
 
+test('writing style reaches only performance generation and keeps the strict action schema', async () => {
+	const calls = provider();
+	const style = '담백한 현재형. 과한 비유 없이 구체적인 동작을 쓴다.';
+	try {
+		const director = await createDirector(new AbortController().signal);
+		await director.decide(state);
+		const output = await director.perform(state, actions, `  ${style}\n`);
+		assert.equal(output.targetId, 'player');
+		assert.ok(!JSON.stringify(calls[1].body).includes(style));
+		const generation = calls[2].body;
+		assert.equal(generation.messages.length, 2);
+		assert.equal(generation.messages[0].role, 'system');
+		assert.ok(generation.messages[0].content.includes(style));
+		assert.match(generation.messages[0].content, /표현 방식에만/);
+		assert.match(generation.messages[0].content, /narrative와 utterance의 분리/);
+		assert.equal(generation.response_format.json_schema.strict, true);
+		assert.deepEqual(JSON.parse(generation.messages[1].content).availableActions, actions);
+		await director.perform(state, actions, ' \n ');
+		assert.equal(calls[3].body.messages.length, 2, 'empty guidance retains the original default prompt');
+		assert.ok(!calls[3].body.messages[0].content.includes(style));
+	} finally { globalThis.fetch = originalFetch; }
+});
+
 test('reflection uses the selected generation model and strict schema before binary participation', async () => {
 	const event = { eventId: 'witnessed-1', actorId: 'player', targetId: null, kind: 'speak', body: { narrative: null, utterance: '약속할게.' } };
 	const context = { targets: [{ id: 'player', name: '플레이어' }], newEvents: [event], evidenceEvents: [event] };

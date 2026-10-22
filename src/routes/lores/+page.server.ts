@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { addScene, addTemplate, createWorld, editInstance, editInitialInstance, editRelationship, editScene, editTemplate, editWorld, getStageView, importWorld, saveDefinition, selectWorld, spawnInstance } from '$lib/server/stage-store';
+import { addScene, addTemplate, createWorld, deleteWorld, editInstance, editInitialInstance, editRelationship, editScene, editTemplate, editWorld, getStageView, importWorld, saveDefinition, selectWorld, spawnInstance } from '$lib/server/stage-store';
 
 export const load: PageServerLoad = ({ url }) => {
 	const tab = url.searchParams.get('tab') ?? 'scenes';
@@ -14,6 +14,7 @@ export const actions: Actions = {
 			const body = await request.formData();
 			editWorld(String(body.get('worldId')), Number(body.get('revision')), (world) => {
 				Object.assign(world.definition, { name: String(body.get('name')), description: String(body.get('description')), rules: String(body.get('rules') || '') });
+				if (body.has('writingStyle')) world.definition.writingStyle = String(body.get('writingStyle') ?? '');
 				if (body.has('appearanceChangeMinutes')) world.definition.appearanceChangeMinutes = Number(body.get('appearanceChangeMinutes'));
 				if (body.has('startingSceneId')) {
 					world.definition.startingSceneId = String(body.get('startingSceneId'));
@@ -30,6 +31,13 @@ export const actions: Actions = {
 	selectWorld: async ({ request }) => {
 		try { selectWorld(String((await request.formData()).get('worldId'))); return { message: '세계관을 열었습니다.' }; }
 		catch (error) { return failed(error); }
+	},
+	deleteWorld: async ({ request }) => {
+		try {
+			const body = await request.formData();
+			deleteWorld(String(body.get('worldId')), Number(body.get('revision')));
+			return { message: '세계관과 진행 기록·저장 슬롯을 삭제했습니다.' };
+		} catch (error) { return failed(error); }
 	},
 	definition: async ({ request }) => {
 		try { const body = await request.formData(); saveDefinition(String(body.get('worldId')), Number(body.get('revision')), json(body, 'definition')); return { message: '세계관·씬·원형과 초기 배치를 저장했습니다. 현재 인스턴스의 진행 상태는 유지됩니다.' }; }
@@ -80,10 +88,13 @@ export const actions: Actions = {
 	},
 	importWorld: async ({ request }) => {
 		try {
-			const file = (await request.formData()).get('file');
+			const body = await request.formData();
+			const file = body.get('file');
 			if (!file || typeof file === 'string' || file.size > 100000000) throw new Error('100MB 이하의 세계관 JSON 파일을 선택해 주세요.');
-			importWorld(await file.text());
-			return { message: '세계관과 저장 슬롯을 가져왔습니다.' };
+			const mode = String(body.get('mode') ?? 'new');
+			if (mode !== 'new' && mode !== 'replace') throw new Error('가져오기 방식을 선택해 주세요.');
+			importWorld(await file.text(), mode === 'replace' ? { worldId: String(body.get('worldId')), revision: Number(body.get('revision')) } : undefined);
+			return { message: mode === 'replace' ? '현재 세계관을 새 파일로 교체했습니다. 이전 진행·슬롯·모델 설정은 지웠습니다.' : '세계관과 저장 슬롯을 가져왔습니다.' };
 		} catch (error) { return failed(error); }
 	}
 };

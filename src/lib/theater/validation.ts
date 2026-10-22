@@ -177,7 +177,11 @@ export function validateDefinition(value: unknown): WorldDefinition {
 		appearanceChangeMinutes = integer(source.appearanceChangeMinutes, '옷차림 재선택 간격', 1440);
 		if (appearanceChangeMinutes < 1) throw new Error('옷차림 재선택 간격은 1~1440분이어야 합니다.');
 	}
-	return { name: text(source.name, '세계관 이름', 200), description: text(source.description, '세계관 설명', 40000), rules: text(source.rules, '세계관 규칙', 20000, true), startingSceneId, scenes, templates, spawns, ...(appearanceChangeMinutes !== undefined ? { appearanceChangeMinutes } : {}) };
+	return {
+		name: text(source.name, '세계관 이름', 200), description: text(source.description, '세계관 설명', 40000), rules: text(source.rules, '세계관 규칙', 20000, true),
+		...(source.writingStyle !== undefined ? { writingStyle: text(source.writingStyle, '서술 문체 지침', 4000, true) } : {}),
+		startingSceneId, scenes, templates, spawns, ...(appearanceChangeMinutes !== undefined ? { appearanceChangeMinutes } : {})
+	};
 }
 
 export function validateState(value: unknown, definition: WorldDefinition): WorldState {

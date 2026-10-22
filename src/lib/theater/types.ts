@@ -85,6 +85,8 @@ export interface WorldDefinition {
 	name: string;
 	description: string;
 	rules: string;
+	/** Expression guidance for generated narration and dialogue; does not alter action rules. */
+	writingStyle?: string;
 	startingSceneId: string;
 	scenes: Scene[];
 	templates: EntityTemplate[];

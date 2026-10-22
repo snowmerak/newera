@@ -23,6 +23,9 @@ h1, h2, h3, h4 { color: #f1e9de; }
 .top-link { font-size: 12px; }
 .eyebrow { font-size: 10px; color: #b39a78; letter-spacing: .18em; margin: 0 0 17px; }
 .muted { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.world-identity { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+.danger-button { color: #efb3a7; border-color: #87534d; background: #352524; }
+.danger-button:hover:not(:disabled) { border-color: #c17d72; background: #4b2e2a; }
 .theater-layout { max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: 240px minmax(0, 850px); gap: 68px; padding: 0 28px; }
 .catalog { padding: 36px 20px 60px 0; border-right: 1px solid var(--line); }
 .world-link { width: 100%; text-align: left; color: #b7b0a6; border: none; border-left: 2px solid transparent; background: transparent; border-radius: 0; margin: 2px 0; padding: 12px; font-size: 13px; overflow-wrap: anywhere; }

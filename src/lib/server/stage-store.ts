@@ -92,9 +92,33 @@ function insertWorld(definition: WorldDefinition, state = initialState(definitio
 	return id;
 }
 
+function blankDefinition(name: string, description: string): WorldDefinition {
+	return validateDefinition({ name, description, rules: '', startingSceneId: 'opening', scenes: [{ id: 'opening', name: '첫 장면', description: '이야기가 시작되는 곳.', exits: [] }], templates: [], spawns: [] });
+}
+
 export function createWorld(name: string, description: string): string {
-	const definition = validateDefinition({ name, description, rules: '', startingSceneId: 'opening', scenes: [{ id: 'opening', name: '첫 장면', description: '이야기가 시작되는 곳.', exits: [] }], templates: [], spawns: [] });
+	const definition = blankDefinition(name, description);
 	return transaction(() => { const id = insertWorld(definition); setActive(id); return id; });
+}
+
+function clearWorldHistory(id: string): void {
+	// Removing jobs also fences in-flight model responses before deleting their world or replacing its snapshot.
+	store().prepare('DELETE FROM theater_jobs WHERE world_id = ?').run(id);
+	store().prepare('DELETE FROM theater_saves WHERE world_id = ?').run(id);
+}
+
+export function deleteWorld(id: string, revision: number): void {
+	transaction(() => {
+		const world = getWorld(id);
+		if (world.revision !== revision) throw new Error('세계관이 변경되었습니다. 새로고침 후 다시 시도해 주세요.');
+		const active = activeWorldId() === id;
+		clearWorldHistory(id);
+		store().prepare('DELETE FROM theater_worlds WHERE id = ?').run(id);
+		if (active) {
+			const next = store().prepare('SELECT id FROM theater_worlds ORDER BY created_at DESC, rowid DESC LIMIT 1').get() as Row | undefined;
+			setActive(next ? String(next.id) : insertWorld(blankDefinition('새 이야기', '새로운 세계관을 만들거나 파일을 가져와 주세요.')));
+		}
+	});
 }
 
 export function editWorld(id: string, revision: number, operation: (world: World) => void): void {
@@ -222,7 +246,7 @@ export function exportWorld(id: string): string {
 	return JSON.stringify({ format: 'newera-theater', version: 2, world: { definition: world.definition, state: world.state }, saves }, null, 2);
 }
 
-export function importWorld(raw: string): string {
+export function importWorld(raw: string, replace?: { worldId: string; revision: number }): string {
 	if (Buffer.byteLength(raw, 'utf8') > 100000000) throw new Error('세계관 파일은 100MB 이하여야 합니다.');
 	const bundle = record(JSON.parse(raw), '세계관 파일');
 	if (bundle.format !== 'newera-theater' || bundle.version !== 2) throw new Error('씬 기반 세계관(version 2)만 가져올 수 있습니다.');
@@ -240,7 +264,15 @@ export function importWorld(raw: string): string {
 	});
 	if (new Set(saves.map((save) => save.slot)).size !== saves.length) throw new Error('저장 슬롯이 중복됩니다.');
 	return transaction(() => {
-		const id = insertWorld(definition, state);
+		let id;
+		if (replace) {
+			const previous = getWorld(replace.worldId);
+			if (previous.revision !== replace.revision) throw new Error('세계관이 변경되었습니다. 새로고침 후 다시 시도해 주세요.');
+			id = previous.id;
+			clearWorldHistory(id);
+			store().prepare('UPDATE theater_worlds SET definition_json = ?, state_json = ?, model_settings_json = NULL, revision = revision + 1 WHERE id = ?')
+				.run(JSON.stringify(definition), JSON.stringify(state), id);
+		} else id = insertWorld(definition, state);
 		for (const save of saves) store().prepare('INSERT INTO theater_saves VALUES (?, ?, ?, ?)').run(id, save.slot, save.savedAt, JSON.stringify(save.world));
 		setActive(id);
 		return id;

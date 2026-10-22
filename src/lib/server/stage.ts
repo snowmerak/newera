@@ -26,7 +26,7 @@ async function processJob(id: string): Promise<void> {
 			chooseAppearance: async (state, outfits) => (await connection()).chooseAppearance!(state, outfits),
 			reflect: async (state, context) => (await connection()).reflect(state, context),
 			decide: async (state) => (await connection()).decide(state),
-			perform: async (state, actions) => (await connection()).perform(state, actions)
+			perform: async (state, actions, writingStyle) => (await connection()).perform(state, actions, writingStyle)
 		};
 		do {
 			await resolveTurn(getWorld(job.worldId), job.request, director, checkpoint, {

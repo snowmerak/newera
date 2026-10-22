@@ -17,6 +17,30 @@ const resolveTurn = (world, request, director, ...rest) => executeTurn(world, re
 function world() { const definition = exampleWorld(); return { id: 'test-world', revision: 0, definition, state: initialState(definition) }; }
 const instance = (world, id) => world.state.instances.find((entry) => entry.id === id);
 
+test('writing style is optional, bounded and reaches the performer without leaking into character observations', async () => {
+	const stage = world();
+	assert.equal(Object.hasOwn(validateDefinition(stage.definition), 'writingStyle'), false);
+	const style = '담백한 현재형으로 쓴다.';
+	stage.definition = validateDefinition({ ...stage.definition, writingStyle: ` ${style}\n` });
+	assert.equal(stage.definition.writingStyle, style);
+	assert.equal(validateDefinition({ ...stage.definition, writingStyle: ' ' }).writingStyle, '');
+	assert.throws(() => validateDefinition({ ...stage.definition, writingStyle: '가'.repeat(4001) }), /4000/);
+	let performances = 0;
+	await resolveTurn(stage, { kind: 'speak', text: '안녕', targetId: null }, {
+		async decide(state) {
+			assert.ok(!JSON.stringify(state).includes(style));
+			return { act: performances === 0, model: 'decision' };
+		},
+		async perform(state, actions, writingStyle) {
+			performances++;
+			assert.equal(writingStyle, style);
+			const action = actions.find(a => a.kind === 'speak' && a.targetId === 'player');
+			return { actionId: action.id, targetId: 'player', narrative: '고개를 끄덕인다.', utterance: '반가워.', memoUpdate: null, model: 'generation' };
+		}
+	});
+	assert.equal(performances, 1);
+});
+
 test('event display separates structured actions and speech with a fallback for older records', () => {
 	const stage = world();
 	const speech = beginTurn(stage, { kind: 'speak', text: '안녕하세요.', targetId: 'seoyeon' });

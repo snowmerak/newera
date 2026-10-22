@@ -9,7 +9,7 @@ export interface Director {
 	chooseAppearance?(state: Record<string, unknown>, outfits: OutfitOption[]): Promise<{ outfitId: string; model: string }>;
 	reflect(state: Record<string, unknown>, context: ReflectionContext): Promise<CharacterReflection>;
 	decide(state: Record<string, unknown>): Promise<ActorDecision>;
-	perform(state: Record<string, unknown>, actions: StageAction[]): Promise<ActorPerformance>;
+	perform(state: Record<string, unknown>, actions: StageAction[], writingStyle?: string): Promise<ActorPerformance>;
 }
 
 interface TurnExecution {
@@ -114,7 +114,7 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 			} else {
 				const candidates = actions.filter((action) => action.kind !== 'wait');
 				let performance: ActorPerformance;
-				try { performance = await director.perform(state, candidates); }
+				try { performance = await director.perform(state, candidates, draft.definition.writingStyle); }
 				catch (error) {
 					checkpoint();
 					if (execution.nextInput?.(progress.consumedInputs)) continue;

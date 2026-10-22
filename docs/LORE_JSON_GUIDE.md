@@ -4,6 +4,8 @@
 
 캐릭터의 선택적 외모·옷/음식 취향·옷차림 후보, 공개 초기 관계와 현재 인상착의, `appearanceSelection`, 세계관의 `appearanceChangeMinutes`는 [인물 소개·인상착의 계약](CHARACTER_PRESENTATION.md)을 따른다. 기존 v2 파일에는 이 필드가 없어도 된다.
 
+`world.definition.writingStyle`은 선택적 서술 문체 프롬프트다. 최대 4000자의 문자열이며 비워두거나 생략하면 기존 기본 프롬프트를 사용한다. 상세 행동·대사 생성에만 전달하고 행동 여부 판단·관계 해석에는 전달하지 않는다. 저장 슬롯과 내보내기에 포함하며, [작업실 문체 설정](EDITOR_GUIDE.md#세계관)에서 수정한다.
+
 ## 파일 구성
 
 ```json

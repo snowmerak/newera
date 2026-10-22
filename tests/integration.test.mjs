@@ -791,6 +791,134 @@ test('appearance choices survive later inference failure, restart and slots; edi
 	} finally { await running.stop(); db.close(); await new Promise(done => model.close(done)); }
 });
 
+test('world style edits persist and change the next performance prompt without changing decisions or previous events', async () => {
+	const calls = [];
+	const model = createServer(async (request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
+		const chunks = []; for await (const chunk of request) chunks.push(chunk);
+		const body = JSON.parse(Buffer.concat(chunks).toString());
+		calls.push(body);
+		if (replyReflection(body, response)) return;
+		if (body.questions) { response.end(JSON.stringify({ answers: { participation: { type: 'choice', choice: participation(body.state) } } })); return; }
+		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ actionId: 'speak:player', targetId: 'player', narrative: '고개를 끄덕인다.', utterance: '반가워.', memoUpdate: null }) } }] }));
+	});
+	const port = await listen(model), directory = scratch();
+	let running = await app(directory, `http://127.0.0.1:${port}/v1`);
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const worldId = db.prepare("SELECT value FROM theater_meta WHERE key='active'").get().value;
+	const snapshot = () => { const row = db.prepare('SELECT * FROM theater_worlds WHERE id=?').get(worldId); return { revision: row.revision, definition: JSON.parse(row.definition_json), state: JSON.parse(row.state_json) }; };
+	const fields = () => ({ worldId, revision: String(snapshot().revision) });
+	const settings = () => { const d = snapshot().definition; return { ...fields(), name: d.name, description: d.description, rules: d.rules }; };
+	const generated = () => calls.filter(body => body.response_format?.json_schema?.name === 'actor_performance');
+	try {
+		const before = snapshot();
+		const style = '담백한 현재형으로 쓰고 과장된 비유를 줄인다.';
+		await post(running.base, 'settings', { ...settings(), writingStyle: style }, '/lores');
+		assert.equal(snapshot().definition.writingStyle, style);
+		assert.deepEqual(snapshot().state, before.state);
+		assert.match(await (await fetch(`${running.base}/lores?tab=world`)).text(), /name="writingStyle"/);
+		await post(running.base, 'settings', { ...settings(), writingStyle: '가'.repeat(4001) }, '/lores', true);
+		assert.equal(snapshot().definition.writingStyle, style, 'invalid guidance must retain the saved value');
+		await post(running.base, 'settings', settings(), '/lores');
+		assert.equal(snapshot().definition.writingStyle, style, 'legacy forms must preserve new settings');
+		await post(running.base, 'turn', { ...fields(), kind: 'speak', text: '안녕' });
+		await waitJob(running.base, db, worldId);
+		assert.ok(generated().length >= 2);
+		assert.ok(generated().every(body => body.messages[0].content.includes(style) && body.response_format.json_schema.strict));
+		assert.ok(calls.filter(body => body.questions || body.response_format?.json_schema?.name === 'character_reflection').every(body => !JSON.stringify(body).includes(style)));
+		await post(running.base, 'save', { worldId, slot: '1' });
+		const priorEvents = snapshot().state.events;
+		calls.length = 0;
+		const nextStyle = '짧은 문장으로 동작과 소리를 또렷하게 묘사한다.';
+		await post(running.base, 'settings', { ...settings(), writingStyle: nextStyle }, '/lores');
+		await post(running.base, 'turn', { ...fields(), kind: 'speak', text: '다음은?' });
+		await waitJob(running.base, db, worldId);
+		assert.ok(generated().length >= 2 && generated().every(body => body.messages[0].content.includes(nextStyle) && !body.messages[0].content.includes(style)));
+		assert.deepEqual(snapshot().state.events.slice(0, priorEvents.length), priorEvents);
+		await running.stop(); running = await app(directory, `http://127.0.0.1:${port}/v1`);
+		assert.equal(snapshot().definition.writingStyle, nextStyle);
+		await post(running.base, 'load', { ...fields(), slot: '1' });
+		assert.equal(snapshot().definition.writingStyle, style, 'slots restore style with the world definition');
+		assert.equal((await exported(running.base, worldId)).world.definition.writingStyle, style);
+		calls.length = 0;
+		await post(running.base, 'settings', { ...settings(), writingStyle: '' }, '/lores');
+		await post(running.base, 'turn', { ...fields(), kind: 'speak', text: '기본 문체로' });
+		await waitJob(running.base, db, worldId);
+		assert.ok(generated().length >= 2 && generated().every(body => body.messages.length === 2 && !body.messages[0].content.includes('서술 문체 지침')));
+	} finally { await running.stop(); db.close(); await new Promise(done => model.close(done)); }
+});
+
+test('world replacement replaces progress and slots without duplicates; deletion handles inactive, active and final worlds', async () => {
+	const directory = scratch();
+	let running = await app(directory, 'http://127.0.0.1:9/v1');
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const activeId = () => db.prepare("SELECT value FROM theater_meta WHERE key='active'").get().value;
+	const snapshot = id => { const row = db.prepare('SELECT * FROM theater_worlds WHERE id=?').get(id); return row ? { id, revision: row.revision, definition: JSON.parse(row.definition_json), state: JSON.parse(row.state_json) } : null; };
+	const count = () => db.prepare('SELECT count(*) AS n FROM theater_worlds').get().n;
+	async function replace(id, revision, bundle, failure = false) {
+		const body = new FormData();
+		body.append('mode', 'replace'); body.append('worldId', id); body.append('revision', String(revision));
+		body.append('file', new Blob([JSON.stringify(bundle)]), 'replacement.json');
+		const response = await fetch(`${running.base}/lores?/importWorld`, { method: 'POST', headers: { origin: running.base }, body });
+		assert.equal((await response.json()).type === 'failure', failure);
+	}
+	const seedJob = id => db.prepare('INSERT INTO theater_jobs (id,world_id,revision,request_json,status,worker_id,created_at) VALUES (?,?,?,?,?,?,?)').run(`stale-${id}`, id, snapshot(id).revision, '{"kind":"wait"}', 'running', 'old-worker', new Date().toISOString());
+	try {
+		const keepId = activeId(), keep = snapshot(keepId);
+		await post(running.base, 'createWorld', { name: '교체 전 세계', description: '버릴 진행.' }, '/lores');
+		const id = activeId();
+		await post(running.base, 'turn', { worldId: id, revision: String(snapshot(id).revision), kind: 'wait' });
+		await waitJob(running.base, db, id);
+		await post(running.base, 'save', { worldId: id, slot: '1' });
+		db.prepare('UPDATE theater_worlds SET model_settings_json=? WHERE id=?').run('{"decisionModel":"old","textModel":"old"}', id);
+		seedJob(id);
+		const before = snapshot(id);
+		assert.equal(before.state.events.length, 1);
+		const bundle = JSON.parse(readFileSync('static/lore-presets/solbit-high.json', 'utf8'));
+		bundle.world.definition.name = '교체 후 세계';
+		bundle.saves = [{ slot: 2, savedAt: new Date().toISOString(), world: structuredClone(bundle.world) }];
+		const invalid = structuredClone(bundle); invalid.world.state.activeSceneId = 'missing';
+		for (const [revision, candidate] of [[before.revision, invalid], [before.revision - 1, bundle]]) {
+			await replace(id, revision, candidate, true);
+			assert.deepEqual(snapshot(id), before);
+			assert.equal(db.prepare('SELECT count(*) AS n FROM theater_saves WHERE world_id=?').get(id).n, 1);
+			assert.equal(db.prepare("SELECT count(*) AS n FROM theater_jobs WHERE world_id=? AND status='running'").get(id).n, 1);
+		}
+		await replace(id, before.revision, bundle);
+		assert.equal(count(), 2, 'replacement must not insert another world');
+		assert.equal(activeId(), id);
+		assert.equal(snapshot(id).definition.name, '교체 후 세계');
+		assert.deepEqual(snapshot(id).state, bundle.world.state, 'discard old progress entirely');
+		assert.equal(db.prepare('SELECT model_settings_json FROM theater_worlds WHERE id=?').get(id).model_settings_json, null);
+		assert.deepEqual(db.prepare('SELECT slot FROM theater_saves WHERE world_id=?').all(id).map(row => row.slot), [2]);
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_jobs WHERE world_id=?').get(id).n, 0);
+		await post(running.base, 'selectWorld', { worldId: keepId }, '/lores');
+		seedJob(id);
+		await post(running.base, 'deleteWorld', { worldId: id, revision: String(before.revision) }, '/lores', true);
+		assert.ok(snapshot(id));
+		await post(running.base, 'deleteWorld', { worldId: id, revision: String(snapshot(id).revision) }, '/lores');
+		assert.equal(activeId(), keepId, 'deleting inactive world preserves current selection');
+		assert.equal(snapshot(id), null);
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_saves WHERE world_id=?').get(id).n, 0);
+		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_jobs WHERE world_id=?').get(id).n, 0);
+		assert.deepEqual(snapshot(keepId), keep);
+		await post(running.base, 'createWorld', { name: '현재 세계 삭제', description: '현재 항목.' }, '/lores');
+		const active = activeId();
+		await post(running.base, 'deleteWorld', { worldId: active, revision: String(snapshot(active).revision) }, '/lores');
+		assert.equal(activeId(), keepId, 'active deletion selects a remaining world');
+		await post(running.base, 'deleteWorld', { worldId: keepId, revision: String(snapshot(keepId).revision) }, '/lores');
+		assert.equal(count(), 1);
+		assert.equal(snapshot(activeId()).definition.name, '새 이야기');
+		assert.equal(snapshot(activeId()).state.instances.length, 0);
+		assert.equal(snapshot(activeId()).state.events.length, 0);
+		assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+		await running.stop(); running = await app(directory, 'http://127.0.0.1:9/v1');
+		assert.equal(count(), 1);
+		assert.equal(snapshot(activeId()).definition.name, '새 이야기');
+	} finally { await running.stop(); db.close(); }
+});
+
 test.after(() => {
 	for (const directory of scratchDirectories) {
 		if (resolve(directory).startsWith(resolve(tmpdir()) + '\\') && directory.includes('newera-theater-integration-')) rmSync(directory, { recursive: true, force: true });
