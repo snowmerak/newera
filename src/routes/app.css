@@ -160,7 +160,11 @@ h1, h2, h3, h4 { color: #f1e9de; }
 .graph-heading > span { color: #b7c5bb; font-size: 11px; white-space: nowrap; }
 .graph-scroll { overflow: auto; max-height: 480px; background: #1d2422; border-block: 1px solid #3e4b43; }
 .graph-scroll:focus-visible { outline: 2px solid #cfb792; outline-offset: -2px; }
-.graph-canvas { position: relative; }
+.graph-toolbar { display: flex; align-items: center; gap: 8px; padding: 0 20px 14px; }
+.graph-toolbar button { padding: 5px 10px; font-size: 12px; }
+.graph-toolbar output { min-width: 42px; color: var(--muted); font-size: 11px; text-align: center; }
+.graph-size { position: relative; margin-inline: auto; }
+.graph-canvas { position: absolute; inset: 0; transform-origin: top left; }
 .graph-canvas svg { position: absolute; inset: 0; pointer-events: none; }
 .graph-canvas line { stroke: #708578; stroke-width: 1.5; }
 .graph-canvas line.related { stroke: #ceba96; stroke-width: 2; }
@@ -180,6 +184,24 @@ h1, h2, h3, h4 { color: #f1e9de; }
 .add-card > summary { color: #cfb792; font-size: 13px; }
 .padded-card { padding: 24px; }
 .choice-field { border-radius: 9px; }
+.scene-neighbors { display: block !important; min-width: 0; border-radius: 10px; }
+.scene-neighbors legend { font-size: 12px; line-height: 1.6; }
+.scene-neighbors > label { margin-block: 12px 8px; font-size: 11px; }
+.neighbor-tags { display: flex; flex-wrap: wrap; gap: 7px; }
+.neighbor-tag { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; gap: 6px; padding: 4px 6px 4px 10px; border: 1px solid #627b69; background: #2b3c31; color: #d7e1d7; border-radius: 16px; font-size: 11px; }
+.neighbor-tag > span { overflow-wrap: anywhere; min-width: 0; }
+.neighbor-tag button { border: 0; border-radius: 50%; padding: 0; width: 24px; height: 24px; flex-shrink: 0; background: transparent; font-size: 17px; }
+.neighbor-add-row { display: flex; align-items: start; gap: 8px; min-width: 0; }
+.neighbor-add-row > button { flex-shrink: 0; padding: 10px; font-size: 12px; }
+.neighbor-combobox { flex: 1; min-width: 0; }
+.neighbor-search { display: flex; }
+.neighbor-search input { font-size: 12px; padding: 10px; border-radius: 7px 0 0 7px; }
+.neighbor-search > button { flex-shrink: 0; border-radius: 0 7px 7px 0; padding: 6px 9px; }
+.neighbor-options { margin-top: 6px; max-height: 220px; overflow-y: auto; border: 1px solid #6e7767; border-radius: 8px; background: #202824; }
+.neighbor-options > button { display: block; width: 100%; border: 0; border-radius: 0; padding: 9px 10px; text-align: left; background: transparent; font-size: 12px; overflow-wrap: anywhere; }
+.neighbor-options > button.highlighted { background: #41523f; }
+.neighbor-options small { display: block; margin-top: 3px; color: #a6b3a5; font-size: 9px; }
+.neighbor-options > p { padding: 8px 10px; }
 .choice-chip { display: inline-flex; align-items: center; gap: 8px; padding: 9px 11px; background: #2e2b30; border: 1px solid #514b52; border-radius: 8px; font-size: 12px; }
 .choice-chip:has(input:checked) { border-color: #ac8f65; background: #40382d; color: #eed5ae; }
 .choice-chip input, .metric-known input { width: auto; accent-color: #b89b73; }

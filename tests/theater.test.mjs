@@ -346,6 +346,29 @@ test('scene graph draws only saved adjacency lists, including one-way and discon
 	assert.ok(!edited.edges.some((edge) => edge.fromId === 'a' && edge.toId === 'b'));
 });
 
+test('30-scene layouts stay two-dimensional and keep labels apart without changing adjacency', () => {
+	for (const shape of ['chain', 'hub', 'disconnected']) {
+		const scenes = Array.from({ length: 30 }, (_, index) => ({
+			id: `scene-${index}`, name: `장소 ${index + 1}`, description: '',
+			exits: shape === 'chain' ? [index > 0 ? `scene-${index - 1}` : null, index < 29 ? `scene-${index + 1}` : null].filter(Boolean)
+				: shape === 'hub' ? index === 0 ? Array.from({ length: 29 }, (_, next) => `scene-${next + 1}`) : ['scene-0'] : []
+		}));
+		const before = structuredClone(scenes);
+		const graph = sceneGraph(scenes, 'scene-0');
+		assert.deepEqual(scenes, before);
+		assert.deepEqual(sceneGraph(scenes, 'scene-0'), graph, 'SSR and browser must use the same deterministic layout');
+		assert.equal(graph.nodes.length, 30);
+		assert.ok(graph.width < 1800 && graph.height < 1800, `${shape} must not turn into a long row or column`);
+		for (let i = 0; i < graph.nodes.length; i++) {
+			const node = graph.nodes[i];
+			assert.ok(Number.isFinite(node.x) && Number.isFinite(node.y));
+			for (const other of graph.nodes.slice(i + 1)) {
+				assert.ok(Math.abs(node.x - other.x) >= 164 || Math.abs(node.y - other.y) >= 60, `${shape}: ${node.id} overlaps ${other.id}`);
+			}
+		}
+	}
+});
+
 test('generated movement description is attached once to the departure, preserving arrival text', async () => {
 	const result = await resolveTurn(world(), { kind: 'wait' }, {
 		async decide(state) { return { act: state.self.id === 'seoyeon', model: 'fake' }; },
