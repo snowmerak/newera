@@ -153,6 +153,23 @@ h1, h2, h3, h4 { color: #f1e9de; }
 .workshop-card > summary small { display: block; margin-top: 6px; font-size: 10px; color: var(--muted); }
 .card-avatar { display: grid; place-items: center; flex: 0 0 38px; height: 38px; border-radius: 12px; color: #d9c7e5; background: #44394b; font-size: 16px; }
 .scene-avatar { color: #c6d8cd; background: #33483e; }
+.scene-graph { margin-bottom: 24px; }
+.graph-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px; }
+.graph-heading h3 { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
+.graph-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.graph-heading > span { color: #b7c5bb; font-size: 11px; white-space: nowrap; }
+.graph-scroll { overflow: auto; max-height: 480px; background: #1d2422; border-block: 1px solid #3e4b43; }
+.graph-scroll:focus-visible { outline: 2px solid #cfb792; outline-offset: -2px; }
+.graph-canvas { position: relative; }
+.graph-canvas svg { position: absolute; inset: 0; pointer-events: none; }
+.graph-canvas line { stroke: #708578; stroke-width: 1.5; }
+.graph-canvas line.related { stroke: #ceba96; stroke-width: 2; }
+.graph-node { position: absolute; transform: translate(-50%, -50%); width: 164px; height: 60px; padding: 8px 12px; border: 1px solid #5b7565; border-radius: 12px; background: #2c3a32; color: #d9e2da; text-align: left; }
+.graph-node.current { background: #4b4232; border-color: #c0a47b; color: #f0ddbe; }
+.graph-node strong { display: block; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.graph-node small { display: block; margin-top: 6px; font-size: 10px; opacity: .7; }
+.graph-legend { padding: 12px 20px; }
+@media (max-width: 680px) { .graph-heading { align-items: start; } .graph-heading > span { display: none; } }
 .object-avatar { color: #ddceae; background: #4c4230; }
 .card-edit-label { margin-left: auto; color: #d0b893; font-size: 11px; white-space: nowrap; }
 .card-body { padding: 0 20px 20px; }

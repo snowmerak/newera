@@ -118,7 +118,6 @@ export function addScene(id: string, revision: number, name: string, description
 	editWorld(id, revision, (world) => {
 		const sceneId = randomUUID();
 		world.definition.scenes.push({ id: sceneId, name, description, exits });
-		for (const scene of world.definition.scenes) if (exits.includes(scene.id)) scene.exits.push(sceneId);
 	});
 }
 

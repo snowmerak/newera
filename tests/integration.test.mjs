@@ -32,7 +32,7 @@ async function app(directory, provider, environment = {}) {
 		if (index === 99) { child.kill(); throw new Error(`app failed to start: ${output}`); }
 		await pause(50);
 	}
-	return { base, child, async stop() { if (child.exitCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; } } };
+	return { base, child, async stop() { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; } } };
 }
 async function post(base, action, fields, path = '/', failure = false) {
 	const response = await fetch(`${base}${path}?/${action}`, { method: 'POST', headers: { origin: base }, body: new URLSearchParams(fields) });
@@ -175,7 +175,7 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		assert.equal(snapshot().state.tick, 1);
 		await post(base, 'scene', { ...fields(), name: '정원', description: '작은 정원.', exits: 'opening' }, '/lores');
 		const garden = snapshot().definition.scenes.find((scene) => scene.name === '정원');
-		assert.ok(snapshot().definition.scenes[0].exits.includes(garden.id));
+		assert.deepEqual(snapshot().definition.scenes[0].exits, [], 'a new scene must not add an unselected reverse edge');
 		assert.deepEqual(garden.exits, ['opening']);
 		await post(base, 'template', { ...fields(), kind: 'object', name: '문', description: '정원으로 통하는 문.', initialState: '{"open":false}', interactions: JSON.stringify([{ id: 'open', label: '문을 연다', description: '문고리를 돌린다.', conditions: [{ key: 'open', equals: false }], effects: { open: true } }]), reactions: '[]' }, '/lores');
 		const doorTemplate = snapshot().definition.templates[0].id;
@@ -626,6 +626,65 @@ test('casual editor saves scenes, profiles, typed properties and directional cur
 		const relationPage = await (await fetch(`${running.base}/lores?tab=instances`)).text();
 		assert.match(relationPage, /type="range"/);
 		assert.match(relationPage, /name="trustKnown"/);
+	} finally { await running.stop(); db.close(); }
+});
+
+test('scene adjacency lists drive the graph and persist without changing other scenes or progress', async () => {
+	const directory = scratch();
+	const running = await app(directory, 'http://127.0.0.1:9/v1');
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const worldId = db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get().value;
+	const snapshot = () => {
+		const row = db.prepare('SELECT * FROM theater_worlds WHERE id = ?').get(worldId);
+		return { id: worldId, revision: row.revision, definition: JSON.parse(row.definition_json), state: JSON.parse(row.state_json) };
+	};
+	try {
+		let world = snapshot();
+		const fields = () => ({ worldId: world.id, revision: String(world.revision) });
+		const initialState = structuredClone(world.state);
+		const initialScenes = structuredClone(world.definition.scenes);
+		// Creating a corridor uses the same scene editor as any other place.
+		await post(running.base, 'scene', { ...fields(), name: '무대 복도', description: '로비에서 무대로 이어지는 복도.', exits: 'lobby' }, '/lores');
+		world = snapshot();
+		const corridor = world.definition.scenes.find((scene) => scene.name === '무대 복도');
+		assert.ok(corridor);
+		assert.deepEqual(world.definition.scenes.slice(0, initialScenes.length), initialScenes, 'creating a scene must not edit other adjacency lists');
+		const scene = (id) => world.definition.scenes.find((scene) => scene.id === id);
+		const saveNeighbors = async (sceneId, exits, failure = false, revision = world.revision) => {
+			const { name, description } = scene(sceneId);
+			const body = new URLSearchParams({ worldId: world.id, revision: String(revision), sceneId, name, description });
+			for (const id of exits) body.append('exits', id);
+			await post(running.base, 'scene', body, '/lores', failure);
+			world = snapshot();
+		};
+		await saveNeighbors('lobby', [corridor.id]);
+		await saveNeighbors(corridor.id, ['lobby', 'stage']);
+		await saveNeighbors('stage', []);
+		assert.deepEqual(scene('lobby').exits, [corridor.id]);
+		assert.deepEqual(scene(corridor.id).exits, ['lobby', 'stage']);
+		assert.ok(!scene('stage').exits.includes(corridor.id), 'one-way connection must not add a reverse path');
+		assert.deepEqual(world.state, initialState, 'editing the graph must preserve all running scene state');
+		const page = await (await fetch(`${running.base}/lores?tab=scenes`)).text();
+		assert.match(page, /data-testid="scene-graph"/);
+		assert.match(page, /로비에서 무대로 이어지는 복도/);
+		assert.match(page, /인접 씬 목록/);
+		assert.match(page, new RegExp(`data-from="${corridor.id}" data-to="stage" data-bidirectional="false"`));
+		assert.ok(!page.includes('name="direction"') && !page.includes('?/connection'), 'the graph must only display adjacency lists');
+		await saveNeighbors('stage', [corridor.id]);
+		assert.ok(scene('stage').exits.includes(corridor.id));
+		const stable = structuredClone(world);
+		for (const [exits, revision] of [
+			[['lobby'], world.revision],
+			[['missing'], world.revision],
+			[['stage'], world.revision - 1]
+		]) {
+			await saveNeighbors('lobby', exits, true, revision);
+			assert.deepEqual(world, stable);
+		}
+		await running.stop();
+		const restarted = await app(directory, 'http://127.0.0.1:9/v1');
+		try { assert.deepEqual(await current(restarted.base), { definition: stable.definition, state: stable.state }, 'connections must survive a server restart'); }
+		finally { await restarted.stop(); }
 	} finally { await running.stop(); db.close(); }
 });
 

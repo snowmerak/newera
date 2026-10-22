@@ -5,6 +5,7 @@ import { initialState, beginTurn, availableActions, applyAction, observation } f
 import { resolveTurn as executeTurn, restoredProgress } from '../src/lib/theater/ensemble.ts';
 import { eventContent } from '../src/lib/theater/event-content.ts';
 import { memoryForEvent } from '../src/lib/theater/memory.ts';
+import { sceneGraph } from '../src/lib/theater/scene-graph.ts';
 import { validateDefinition, validateState } from '../src/lib/theater/validation.ts';
 import { buildBundle, validateBundle } from '../skills/newera-lore-authoring/scripts/lore-format.mjs';
 
@@ -300,6 +301,49 @@ test('actor movement respects exits; companions follow the player rather than mo
 	assert.equal(stage.state.activeSceneId, 'lobby');
 	assert.ok(!observation(stage, instance(stage, 'harin')).present.some((entry) => entry.id === 'seoyeon'));
 	assert.throws(() => beginTurn(stage, { kind: 'move', destinationId: 'unknown' }), /할 수 없는 행동/);
+});
+
+test('a corridor is a full scene and reachable destinations still require each direct move', () => {
+	const stage = world();
+	stage.definition.scenes = [
+		{ id: 'lobby', name: '로비', description: '입구.', exits: ['corridor'] },
+		{ id: 'corridor', name: '복도', description: '사람들이 마주치는 긴 복도.', exits: ['lobby', 'stage'] },
+		{ id: 'stage', name: '무대', description: '무대.', exits: ['corridor'] },
+		{ id: 'rehearsal', name: '연습실', description: '별도 출입구.', exits: [] }
+	];
+	validateDefinition(stage.definition);
+	assert.equal(availableActions(stage, 'seoyeon').some((action) => action.destinationId === 'stage'), false);
+	assert.throws(() => applyAction(stage, 'seoyeon', { kind: 'move', destinationId: 'stage' }, '바로 간다'), /이동할 수 없는/);
+	assert.throws(() => beginTurn(stage, { kind: 'move', destinationId: 'stage' }), /할 수 없는 행동/);
+	beginTurn(stage, { kind: 'move', destinationId: 'corridor' });
+	assert.equal(instance(stage, 'harin').sceneId, 'corridor');
+	assert.equal(observation(stage, instance(stage, 'harin')).scene.name, '복도');
+	assert.ok(availableActions(stage, 'player').some((action) => action.destinationId === 'stage'));
+	beginTurn(stage, { kind: 'move', destinationId: 'stage' });
+	assert.deepEqual(stage.state.events.filter((event) => event.actorId === 'player').map((event) => [event.kind, event.sceneId]), [
+		['leave', 'lobby'], ['enter', 'corridor'], ['leave', 'corridor'], ['enter', 'stage']
+	]);
+	validateState(stage.state, stage.definition);
+});
+
+test('scene graph draws only saved adjacency lists, including one-way and disconnected scenes', () => {
+	const scenes = [
+		{ id: 'a', name: '입구', description: '', exits: ['b'] },
+		{ id: 'b', name: '복도', description: '', exits: ['c'] },
+		{ id: 'c', name: '무대', description: '', exits: ['b'] },
+		{ id: 'd', name: '별관', description: '', exits: [] }
+	];
+	const before = structuredClone(scenes);
+	const graph = sceneGraph(scenes, 'a');
+	assert.deepEqual(graph.nodes.map((node) => node.id).sort(), ['a', 'b', 'c', 'd']);
+	assert.equal(graph.edges.length, 2, 'bidirectional paths must be drawn once');
+	assert.equal(graph.edges.find((edge) => edge.fromId === 'a').both, false);
+	assert.equal(graph.edges.find((edge) => edge.fromId === 'b').both, true);
+	assert.deepEqual(scenes, before, 'drawing must not add reverse or shortcut connections');
+	scenes[0].exits = ['d'];
+	const edited = sceneGraph(scenes, 'a');
+	assert.ok(edited.edges.some((edge) => edge.fromId === 'a' && edge.toId === 'd'));
+	assert.ok(!edited.edges.some((edge) => edge.fromId === 'a' && edge.toId === 'b'));
 });
 
 test('generated movement description is attached once to the departure, preserving arrival text', async () => {

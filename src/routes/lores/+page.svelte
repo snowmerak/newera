@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
 	import SceneEditor from '$lib/components/editor/SceneEditor.svelte';
+	import SceneGraph from '$lib/components/editor/SceneGraph.svelte';
 	import TemplateEditor from '$lib/components/editor/TemplateEditor.svelte';
 	import InstanceEditor from '$lib/components/editor/InstanceEditor.svelte';
 	import type { PageProps } from './$types';
@@ -40,7 +41,8 @@
 					<div class="section-intro"><h3>이야기의 큰 배경</h3><p>인물들이 살아가는 세계와 지켜야 할 규칙을 알려 주세요.</p></div>
 					<form method="POST" action="?/settings" use:enhance class="settings-form workshop-card padded-card"><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><label>세계관 이름<input name="name" value={world.definition.name} maxlength="200" required /></label><label>배경과 분위기<textarea name="description" rows="6" value={world.definition.description} maxlength="40000" required></textarea></label><label>이 세계의 규칙<textarea name="rules" rows="5" value={world.definition.rules} maxlength="20000" placeholder="예: 인물은 자신이 보거나 들은 일에만 반응한다."></textarea></label><label>이야기가 시작되는 씬<select name="startingSceneId" value={world.definition.startingSceneId}>{#each world.definition.scenes as scene}<option value={scene.id}>{scene.name}</option>{/each}</select></label><p class="field-hint">시작 씬을 바꾸면 처음 동행하는 인물의 시작 위치도 함께 옮겨요. 지금 진행 중인 위치는 유지됩니다.</p><button class="primary">세계관 저장</button></form>
 				{:else if section === 'scenes'}
-					<div class="section-intro"><h3>어디에서 만날까요?</h3><p>씬 카드를 펼쳐 장소와 이동할 수 있는 길을 바꿔 보세요.</p></div>
+					<div class="section-intro"><h3>어디에서 만날까요?</h3><p>각 씬 카드에서 인접 씬을 선택하세요. 저장한 목록대로 위 지도에 연결을 그려요.</p></div>
+					<SceneGraph {world} />
 					<div class="workshop-grid">{#each world.definition.scenes as scene (scene.id)}<details class="workshop-card scene-editor" data-testid={`scene-${scene.id}`}><summary><span class="card-avatar scene-avatar">{scene.name.slice(0, 1)}</span><span><strong>{scene.name}</strong><small>{scene.id === world.state.activeSceneId ? '지금 있는 곳' : scene.id === world.definition.startingSceneId ? '시작하는 곳' : '씬'}</small></span><span class="card-edit-label">편집</span></summary><p class="card-description">{scene.description}</p><div class="connection-chips">{#each scene.exits as id}<span>→ {world.definition.scenes.find((other) => other.id === id)?.name}</span>{:else}<span>연결된 길이 없어요</span>{/each}</div><div class="card-body">{#key world.revision}<SceneEditor {world} {scene} />{/key}</div></details>{/each}</div>
 					<details class="workshop-card add-card"><summary>+ 새로운 씬 만들기</summary><div class="card-body">{#key world.revision}<SceneEditor {world} />{/key}</div></details>
 				{:else if section === 'templates'}

@@ -35,6 +35,7 @@ export interface Scene {
 	id: string;
 	name: string;
 	description: string;
+	/** Directed graph edges: only these scenes can be reached in a single move. */
 	exits: string[];
 }
 export interface Spawn {
