@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { restoredProgress } from '$lib/theater/ensemble';
 import { exampleWorld } from '$lib/theater/fixtures';
 import { actionForRequest, initialState, templateFor } from '$lib/theater/runtime';
-import type { GenerationJob, ModelSelection, PlayerRequest, SaveSlot, StageView, TurnProgress, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
+import type { GenerationJob, ModelSelection, PlayerRequest, RelationshipScores, SaveSlot, StageView, TurnProgress, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
 import { checkedModelSelection, checkedRelationships, record, text, validateDefinition, validateState } from '$lib/theater/validation';
 
 type Row = Record<string, unknown>;
@@ -122,8 +122,28 @@ export function addScene(id: string, revision: number, name: string, description
 	});
 }
 
+export function editScene(id: string, revision: number, sceneId: string, input: { name: string; description: string; exits: string[] }): void {
+	editWorld(id, revision, (world) => {
+		const scene = world.definition.scenes.find((scene) => scene.id === sceneId);
+		if (!scene) throw new Error('씬을 찾을 수 없습니다.');
+		// Existing exits may be one-way. Editing this scene must preserve the other scenes' exits.
+		Object.assign(scene, input);
+	});
+}
+
 export function addTemplate(id: string, revision: number, input: unknown): void {
 	editWorld(id, revision, (world) => { world.definition.templates.push({ ...record(input, '원형'), id: randomUUID() } as unknown as WorldDefinition['templates'][number]); });
+}
+
+export function editTemplate(id: string, revision: number, templateId: string, input: Record<string, unknown>): void {
+	editWorld(id, revision, (world) => {
+		const template = world.definition.templates.find((template) => template.id === templateId);
+		if (!template) throw new Error('캐릭터·사물 설정을 찾을 수 없습니다.');
+		const { name, description, personality, goals, initialState, interactions, reactions } = input;
+		Object.assign(template, { name, description, personality, goals, initialState });
+		if (interactions !== undefined) template.interactions = interactions as typeof template.interactions;
+		if (reactions !== undefined) template.reactions = reactions as typeof template.reactions;
+	});
 }
 
 export function spawnInstance(id: string, revision: number, templateId: string, sceneId: string, name: string, companion: boolean): void {
@@ -145,6 +165,28 @@ export function editInstance(id: string, revision: number, instanceId: string, i
 		const { relationships, ...fields } = input;
 		Object.assign(instance, { ...fields, state: record(input.state, '상태') });
 		if (relationships !== undefined) instance.relationships = checkedRelationships(relationships);
+	});
+}
+
+export function editInitialInstance(id: string, revision: number, instanceId: string, input: { name: string; sceneId: string; companion: boolean; state: unknown }): void {
+	editWorld(id, revision, (world) => {
+		const spawn = world.definition.spawns.find((spawn) => spawn.id === instanceId);
+		if (!spawn) throw new Error('처음 배치 설정을 찾을 수 없습니다.');
+		Object.assign(spawn, { ...input, state: record(input.state, '초기 상태') });
+	});
+}
+
+export function editRelationship(id: string, revision: number, instanceId: string, scope: 'current' | 'initial', targetId: string, scores: RelationshipScores | null, impression: string): void {
+	editWorld(id, revision, (world) => {
+		const instances = scope === 'initial' ? world.definition.spawns : world.state.instances;
+		const instance = instances.find((instance) => instance.id === instanceId);
+		if (!instance || world.definition.templates.find((template) => template.id === instance.templateId)?.kind !== 'character') throw new Error('관계를 편집할 캐릭터를 찾을 수 없습니다.');
+		const target = instances.find((instance) => instance.id === targetId);
+		if (targetId === instanceId || (targetId !== 'player' && (!target || world.definition.templates.find((template) => template.id === target.templateId)?.kind !== 'character'))) throw new Error('다른 캐릭터 또는 플레이어를 선택해 주세요.');
+		const relationships = { ...(instance.relationships ?? {}) };
+		if (scores === null) delete relationships[targetId];
+		else relationships[targetId] = { ...scores, impression, evidenceEventIds: scope === 'current' ? [...(relationships[targetId]?.evidenceEventIds ?? [])] : [] };
+		instance.relationships = checkedRelationships(relationships);
 	});
 }
 

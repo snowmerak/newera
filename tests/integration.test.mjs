@@ -223,7 +223,7 @@ test('scene play, typed decisions, multiple residents, object state, companions 
 		assert.equal(snapshot().definition.name, exportedWorld.world.definition.name);
 		assert.notEqual(activeId(), originalId);
 		assert.equal(db.prepare('SELECT count(*) AS n FROM theater_saves WHERE world_id = ?').get(activeId()).n, 1);
-		page = await (await fetch(`${base}/lores`)).text();
+		page = await (await fetch(`${base}/lores?tab=instances`)).text();
 		assert.match(page, /씬의 인스턴스와 동행/);
 		assert.ok(!page.includes('era 규칙'));
 		assert.equal((await fetch(`${base}/api/suggestions`, { method: 'POST' })).status, 404);
@@ -504,8 +504,8 @@ test('private relationships persist before a wait decision, survive restart and 
 		const page = await (await fetch(running.base)).text();
 		assert.match(page, /상대별 관계/);
 		assert.match(page, /플레이어의 약속을 직접 확인하고 싶다/);
-		const editor = await (await fetch(`${running.base}/lores`)).text();
-		assert.match(editor, /name="relationships"/);
+		const editor = await (await fetch(`${running.base}/lores?tab=instances`)).text();
+		assert.match(editor, /name="trustKnown"/);
 		await running.stop();
 		db.prepare("UPDATE theater_jobs SET heartbeat_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(pending.id);
 		running = await app(directory, `http://127.0.0.1:${modelPort}/v1`);
@@ -516,8 +516,9 @@ test('private relationships persist before a wait decision, survive restart and 
 		const persisted = snapshot();
 		assert.deepEqual(persisted.state.instances.find((entry) => entry.id === 'harin').relationships, harin.relationships);
 		await post(running.base, 'save', { worldId, slot: '1' });
-		const changed = structuredClone(harin.relationships); changed.player.trust = 10;
-		await post(running.base, 'instance', { worldId, revision: String(persisted.revision), instanceId: 'harin', name: '하린', sceneId: 'lobby', companion: 'on', state: JSON.stringify(harin.state), relationships: JSON.stringify(changed) }, '/lores');
+		await post(running.base, 'relationship', { worldId, revision: String(persisted.revision), instanceId: 'harin', scope: 'current', targetId: 'player', trustKnown: 'on', trust: '10', affinityKnown: 'on', affinity: '85', closenessKnown: 'on', closeness: '90', respectKnown: 'on', respect: '65', warinessKnown: 'on', wariness: '5', impression: harin.relationships.player.impression }, '/lores');
+		assert.deepEqual(snapshot().state.instances.find((entry) => entry.id === 'harin').relationships.player.evidenceEventIds, harin.relationships.player.evidenceEventIds);
+		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'harin').reflectedThroughEventId, harin.reflectedThroughEventId);
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'harin').relationships.player.trust, 10);
 		await post(running.base, 'load', { worldId, revision: String(snapshot().revision), slot: '1' });
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'harin').relationships.player.trust, 45);
@@ -539,6 +540,93 @@ test('private relationships persist before a wait decision, survive restart and 
 		assert.deepEqual(snapshot().state.instances.find((entry) => entry.id === 'harin').relationships, harin.relationships);
 		assert.equal(snapshot().state.instances.find((entry) => entry.id === 'harin').reflectedThroughEventId, harin.reflectedThroughEventId);
 	} finally { release(); await running.stop(); db.close(); model.closeAllConnections(); await new Promise((done) => model.close(done)); }
+});
+
+test('casual editor saves scenes, profiles, typed properties and directional current and initial relationships', async () => {
+	const directory = scratch();
+	const running = await app(directory, 'http://127.0.0.1:9/v1');
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const worldId = db.prepare("SELECT value FROM theater_meta WHERE key = 'active'").get().value;
+	const snapshot = () => { const row = db.prepare('SELECT * FROM theater_worlds WHERE id = ?').get(worldId); return { revision: row.revision, definition: JSON.parse(row.definition_json), state: JSON.parse(row.state_json) }; };
+	const fields = () => ({ worldId, revision: String(snapshot().revision) });
+	const current = (id) => snapshot().state.instances.find((instance) => instance.id === id);
+	const initial = (id) => snapshot().definition.spawns.find((instance) => instance.id === id);
+	try {
+		const page = await (await fetch(`${running.base}/lores`)).text();
+		assert.match(page, /편집 항목/);
+		assert.match(page, /data-testid="scene-lobby"/);
+		assert.ok(!page.includes('name="definition"'), 'raw definitions must not be the primary editing surface');
+		const before = snapshot();
+		await post(running.base, 'scene', { ...fields(), sceneId: 'lobby', name: '입구 로비', description: '손님을 맞이하는 따뜻한 로비.', exits: 'stage' }, '/lores');
+		assert.deepEqual(snapshot().definition.scenes[0], { id: 'lobby', name: '입구 로비', description: '손님을 맞이하는 따뜻한 로비.', exits: ['stage'] });
+		assert.deepEqual(snapshot().definition.scenes[2].exits, before.definition.scenes[2].exits, 'editing outgoing exits must preserve other scenes');
+		assert.deepEqual(snapshot().state, before.state, 'scene descriptions must not reset the performance');
+		const unchanged = snapshot();
+		await post(running.base, 'scene', { ...fields(), sceneId: 'lobby', name: '잘못된 씬', description: '자기 연결', exits: 'lobby' }, '/lores', true);
+		assert.deepEqual(snapshot(), unchanged);
+		const stateRows = JSON.stringify([{ key: 'mood', type: 'text', value: '차분함' }, { key: 'ready', type: 'boolean', value: 'true' }, { key: 'rehearsals', type: 'number', value: '3.5' }, { key: 'note', type: 'null', value: '' }]);
+		await post(running.base, 'template', { ...fields(), templateId: 'actor', name: '서연 기본 설정', description: '신중하게 준비하는 배우.', personality: '차분한 존댓말을 쓴다.', goals: '공연을 준비한다.\n동료의 의견을 듣는다.', initialStateRows: stateRows }, '/lores');
+		const template = snapshot().definition.templates.find((template) => template.id === 'actor');
+		assert.equal(template.kind, 'character');
+		assert.deepEqual(template.goals, ['공연을 준비한다.', '동료의 의견을 듣는다.']);
+		assert.deepEqual(template.initialState, { mood: '차분함', ready: true, rehearsals: 3.5, note: null });
+		assert.equal(current('seoyeon').name, '서연');
+		assert.equal(current('seoyeon').state.mood, '긴장함');
+		const lightBefore = snapshot().definition.templates.find((template) => template.id === 'light');
+		await post(running.base, 'template', { ...fields(), templateId: 'light', name: '작업등', description: '오래된 전등.', initialStateRows: JSON.stringify([{ key: 'on', type: 'boolean', value: 'false' }]) }, '/lores');
+		assert.deepEqual(snapshot().definition.templates.find((template) => template.id === 'light').interactions, lightBefore.interactions, 'basic edits must preserve advanced interactions');
+		await post(running.base, 'initialInstance', { ...fields(), instanceId: 'harin', name: '동행 하린', sceneId: 'lobby', companion: 'on', stateRows: JSON.stringify([{ key: 'mood', type: 'text', value: '편안함' }]) }, '/lores');
+		assert.equal(initial('harin').name, '동행 하린');
+		assert.equal(current('harin').name, '하린');
+		await post(running.base, 'relationship', { ...fields(), instanceId: 'harin', scope: 'initial', targetId: 'player', trustKnown: 'on', trust: '73', impression: '오래 아는 친구.' }, '/lores');
+		assert.equal(initial('harin').relationships.player.trust, 73);
+		assert.equal(initial('harin').relationships.player.affinity, null);
+		assert.equal(current('harin').relationships.player.trust, 80);
+		await post(running.base, 'relationship', { ...fields(), instanceId: 'harin', scope: 'current', targetId: 'player', trustKnown: 'on', trust: '28', affinityKnown: 'on', affinity: '70', impression: '좋아하지만 아직 확인하고 싶다.' }, '/lores');
+		assert.equal(current('harin').relationships.player.trust, 28);
+		assert.equal(current('harin').relationships.player.affinity, 70);
+		assert.equal(current('harin').relationships.player.respect, null);
+		assert.equal(initial('harin').relationships.player.trust, 73);
+		const relations = structuredClone(current('harin').relationships);
+		await post(running.base, 'instance', { ...fields(), instanceId: 'harin', name: '하린 친구', sceneId: 'lobby', companion: 'on', stateRows: JSON.stringify([{ key: 'mood', type: 'text', value: '평온함' }]) }, '/lores');
+		assert.equal(current('harin').name, '하린 친구');
+		assert.deepEqual(current('harin').relationships, relations, 'placement edits must preserve private relationships');
+		for (const bad of [
+			{ instanceId: 'harin', scope: 'current', targetId: 'harin' },
+			{ instanceId: 'harin', scope: 'current', targetId: 'desk-bell' },
+			{ instanceId: 'harin', scope: 'current', targetId: 'player', trustKnown: 'on', trust: '101' },
+			{ instanceId: 'harin', scope: 'neither', targetId: 'player' }
+		]) {
+			const unchanged = snapshot();
+			await post(running.base, 'relationship', { ...fields(), ...bad }, '/lores', true);
+			assert.deepEqual(snapshot(), unchanged);
+		}
+		const duplicates = snapshot();
+		await post(running.base, 'instance', { ...fields(), instanceId: 'harin', name: '하린', sceneId: 'lobby', companion: 'on', stateRows: JSON.stringify([{ key: 'same', type: 'text', value: 'a' }, { key: 'same', type: 'text', value: 'b' }]) }, '/lores', true);
+		assert.deepEqual(snapshot(), duplicates);
+		const worldSettings = snapshot().definition;
+		await post(running.base, 'settings', { ...fields(), name: worldSettings.name, description: worldSettings.description, rules: worldSettings.rules, startingSceneId: 'stage' }, '/lores');
+		assert.equal(snapshot().definition.startingSceneId, 'stage');
+		assert.equal(initial('harin').sceneId, 'stage');
+		assert.equal(snapshot().state.activeSceneId, 'lobby', 'changing the starting scene must not move the current performance');
+		await post(running.base, 'save', { worldId, slot: '1' });
+		await post(running.base, 'reset', fields());
+		assert.equal(current('harin').name, '동행 하린');
+		assert.equal(current('harin').relationships.player.trust, 73);
+		assert.equal(current('seoyeon').state.ready, true);
+		await post(running.base, 'load', { ...fields(), slot: '1' });
+		assert.equal(current('harin').relationships.player.trust, 28);
+		await post(running.base, 'relationship', { ...fields(), instanceId: 'harin', scope: 'current', targetId: 'player', intent: 'remove' }, '/lores');
+		assert.equal(current('harin').relationships.player, undefined);
+		assert.equal(initial('harin').relationships.player.trust, 73);
+		const reverse = current('jieun').relationships.seoyeon;
+		assert.equal(reverse.trust, 70, 'editing another relationship must preserve unrelated directed relationships');
+		const templatePage = await (await fetch(`${running.base}/lores?tab=templates`)).text();
+		assert.match(templatePage, /name="initialStateRows"/);
+		const relationPage = await (await fetch(`${running.base}/lores?tab=instances`)).text();
+		assert.match(relationPage, /type="range"/);
+		assert.match(relationPage, /name="trustKnown"/);
+	} finally { await running.stop(); db.close(); }
 });
 
 test('fresh storage contains only scene-based data and rejects unsupported imports', async () => {
