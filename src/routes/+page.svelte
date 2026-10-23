@@ -15,6 +15,9 @@
 	let { data, form }: PageProps = $props();
 	let submitting = $state(false);
 	let targetId = $state('');
+	let modelsDialog = $state<HTMLDialogElement>();
+	let resetDialog = $state<HTMLDialogElement>();
+	let resetError = $state('');
 	let historyElement = $state<HTMLDivElement>();
 	let objectsOpen = $state(true);
 	let scrollContext = '';
@@ -108,6 +111,17 @@
 		submitting = true;
 		return async ({ update }) => { try { await update({ reset: false }); } finally { submitting = false; } };
 	};
+	const submitReset: SubmitFunction = () => {
+		submitting = true;
+		resetError = '';
+		return async ({ update, result }) => {
+			try {
+				await update();
+				if (result.type === 'success') resetDialog?.close();
+				else if (result.type === 'failure') resetError = String(result.data?.message ?? '초기화하지 못했습니다.');
+			} finally { submitting = false; }
+		};
+	};
 	$effect(() => {
 		if (targetId && !characters.some((instance) => instance.id === targetId)) targetId = '';
 	});
@@ -138,7 +152,50 @@
 
 <svelte:head><title>{world.definition.name} · newera</title><meta name="description" content="씬과 인물의 선택으로 이어지는 이야기" /></svelte:head>
 <div class="play-shell">
-<header class="topbar"><a class="brand" href="/">newera<span>THEATER</span></a><a class="top-link" href="/lores">세계관과 무대 편집 ↗</a></header>
+<header class="topbar">
+ <a class="brand" href="/">newera<span>THEATER</span></a>
+ <nav class="session-actions" aria-label="세션 관리">
+  <button type="button" onclick={() => { modelsDialog?.showModal(); if (!modelCatalog) void loadModels(); }}>모델 설정</button>
+  <button type="button" onclick={() => { resetError = ''; resetDialog?.showModal(); }}>처음부터 다시</button>
+  <a class="top-link" href="/lores">세계관과 무대 편집 ↗</a>
+ </nav>
+</header>
+<dialog class="session-dialog" aria-labelledby="models-dialog-title" bind:this={modelsDialog}>
+ <form method="dialog" class="dialog-close"><button aria-label="모델 설정 닫기">닫기</button></form>
+		<div class="model-settings">
+			<h2 id="models-dialog-title">이 세션의 모델 설정</h2>
+			<small>판단: {world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정'} · 생성: {world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정'}</small>
+			<p>현재 세계관의 다음 진행부터 적용됩니다. 진행 중인 작업은 시작할 때 선택한 모델을 유지합니다.</p>
+			<form method="POST" action="?/models" use:enhance={submitModels} class="model-form">
+				<input type="hidden" name="worldId" value={world.id} />
+				<label>판단 모델<select name="decisionModel" bind:value={decisionModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
+					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
+					{#if decisionModel && !modelCatalog?.models.includes(decisionModel)}<option value={decisionModel} disabled>{decisionModel} (목록에 없음)</option>{/if}
+					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
+				</select></label>
+				<label>생성 모델<select name="textModel" bind:value={textModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
+					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
+					{#if textModel && !modelCatalog?.models.includes(textModel)}<option value={textModel} disabled>{textModel} (목록에 없음)</option>{/if}
+					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
+				</select></label>
+				<div class="model-buttons"><button disabled={modelsLoading || modelsSaving || !modelCatalog?.models.includes(decisionModel) || !modelCatalog?.models.includes(textModel)}>모델 적용</button><button name="mode" value="defaults" formnovalidate disabled={modelsSaving}>기본 설정 사용</button><button type="button" onclick={loadModels} disabled={modelsLoading || modelsSaving}>목록 새로고침</button></div>
+			</form>
+			{#if modelsError}<p class="feedback error" role="alert">{modelsError}</p>{/if}
+		</div>
+</dialog>
+<dialog class="session-dialog" aria-labelledby="reset-dialog-title" bind:this={resetDialog}>
+ <form method="dialog" class="dialog-close"><button aria-label="초기화 창 닫기">닫기</button></form>
+ <h2 id="reset-dialog-title">처음부터 다시</h2>
+ <p>현재 세계관의 진행·대화·기억을 지우고 초기 배치로 돌아갑니다. 저장 슬롯과 모델 설정은 유지됩니다.</p>
+ <a class="session-export" href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>초기화 전에 공연 기록 내려받기</a>
+ {#if generating}<p>생성 중에는 먼저 「생성 중단」을 눌러 주세요.</p>{/if}
+ <form method="POST" action="?/reset" use:enhance={submitReset} class="reset-form">
+  <input type="hidden" name="worldId" value={world.id} />
+  <input type="hidden" name="revision" value={world.revision} />
+  <button class="danger-button" disabled={busy}>현재 진행 초기화</button>
+ </form>
+ {#if resetError}<p class="feedback error" role="alert">{resetError}</p>{/if}
+</dialog>
 <div class="theater-layout">
 	<aside class="catalog">
 		<p class="eyebrow">WORLDS</p>
@@ -169,26 +226,7 @@
 		<div class="cast-strip" aria-label="현재 씬의 등장인물">
 			{#each characters as instance}<span class:companion={instance.companion}>{instance.name}{instance.companion ? ' · 동행' : ''}</span>{:else}<span>지금 이곳에는 나 혼자 있다.</span>{/each}
 		</div>
-		<details class="model-settings" ontoggle={(event) => { if (event.currentTarget.open && !modelCatalog) void loadModels(); }}>
-			<summary>이 세션의 모델 설정</summary>
-			<small>판단: {world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정'} · 생성: {world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정'}</small>
-			<p>현재 세계관의 다음 진행부터 적용됩니다. 진행 중인 작업은 시작할 때 선택한 모델을 유지합니다.</p>
-			<form method="POST" action="?/models" use:enhance={submitModels} class="model-form">
-				<input type="hidden" name="worldId" value={world.id} />
-				<label>판단 모델<select name="decisionModel" bind:value={decisionModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
-					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
-					{#if decisionModel && !modelCatalog?.models.includes(decisionModel)}<option value={decisionModel} disabled>{decisionModel} (목록에 없음)</option>{/if}
-					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
-				</select></label>
-				<label>생성 모델<select name="textModel" bind:value={textModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
-					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
-					{#if textModel && !modelCatalog?.models.includes(textModel)}<option value={textModel} disabled>{textModel} (목록에 없음)</option>{/if}
-					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
-				</select></label>
-				<div class="model-buttons"><button disabled={modelsLoading || modelsSaving || !modelCatalog?.models.includes(decisionModel) || !modelCatalog?.models.includes(textModel)}>모델 적용</button><button name="mode" value="defaults" formnovalidate disabled={modelsSaving}>기본 설정 사용</button><button type="button" onclick={loadModels} disabled={modelsLoading || modelsSaving}>목록 새로고침</button></div>
-			</form>
-			{#if modelsError}<p class="feedback error" role="alert">{modelsError}</p>{/if}
-		</details>
+
 		<div class="scene-tools">
 		<details class="world-notes"><summary>세계관과 현재 인물의 기억</summary><p>{world.definition.description}</p><p>{world.definition.rules}</p>
 			{#each characters as instance}<h3>{instance.name}</h3>
@@ -212,7 +250,7 @@
 				{:else}<li>아직 기억한 사건이 없습니다.</li>{/each}</ul>
 			{/each}
 		</details>
-		<footer class="reader-footer"><a href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>공연 기록 내려받기</a><details><summary>처음부터 다시</summary><p>현재 진행을 초기 배치로 되돌립니다. 저장 슬롯은 유지됩니다.</p><form method="POST" action="?/reset" use:enhance><input type="hidden" name="worldId" value={world.id} /><input type="hidden" name="revision" value={world.revision} /><button disabled={busy}>현재 진행 초기화</button></form></details></footer>
+
 		</div>
 		<div class="event-thread" aria-live="polite">
 			{#each events as event (event.id)}
