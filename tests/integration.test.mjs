@@ -336,7 +336,8 @@ test('individual results are visible while the next inference is pending and res
 			assert.equal(retrying.error, null);
 			assert.deepEqual(retrying.progress, failedJob.progress);
 			assert.deepEqual(snapshot(), failed, 'retry must preserve committed state, memories, clock and revision until new output');
-			assert.equal(callModels.at(-1), failedJob.models.textModel, 'retry retains the original job model after preferences change');
+			assert.deepEqual(retrying.models, { decisionModel: 'actor-model', textModel: 'actor-model' });
+			assert.equal(callModels.at(-1), 'actor-model', 'manual retry adopts the current session model after preferences change');
 			await post(running.base, 'retry', retryFields, '/', true);
 		} finally { releaseRetry(); }
 		const completedJob = await waitJob(running.base, db, worldId);
@@ -1235,8 +1236,9 @@ test('a single resident continues through speech, object use and speech, publish
 	} finally { release(); await running.stop(); db.close(); model.closeAllConnections(); await new Promise(done => model.close(done)); }
 });
 
-test('multiple provider aliases route real HTTP calls and private snapshots survive provider edits, deletion and restart', async () => {
-	const decisionCalls = [], textCalls = [];
+test('manual retry adopts current aliases, provider routes and defaults after restart while preserving committed progress', async () => {
+	const decisionCalls = [], textCalls = [], recoveryCalls = [];
+	let failRecovery = false;
 	let started = false, failFirst = true, release;
 	const hold = new Promise(done => { release = done; });
 	const decisionServer = createServer(async (request, response) => {
@@ -1258,14 +1260,25 @@ test('multiple provider aliases route real HTTP calls and private snapshots surv
 		if (failFirst) { failFirst = false; started = true; await hold; response.statusCode = 503; response.end('{"error":"temporary"}'); return; }
 		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ actionId: 'speak:player', targetId: 'player', narrative: null, utterance: '다른 Provider에서 생성한 대사입니다.', memoUpdate: null }) } }] }));
 	});
-	const decisionPort = await listen(decisionServer), textPort = await listen(textServer), directory = scratch();
+	const recoveryServer = createServer(async (request, response) => {
+		response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/models') { response.end(JSON.stringify({ data: [{ id: 'actor-model', task: 'generation' }] })); return; }
+		const chunks = []; for await (const chunk of request) chunks.push(chunk);
+		const body = JSON.parse(Buffer.concat(chunks).toString());
+		recoveryCalls.push({ path: request.url, body, auth: request.headers.authorization });
+		if (replyReflection(body, response) || replyPerformanceReview(body, response)) return;
+		if (request.url === '/v1/systemone') { response.end(participationResponse(participation(body.state), 'idle')); return; }
+		if (failRecovery) { response.statusCode = 503; response.end('{"error":"recovery unavailable"}'); return; }
+		response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ actionId: 'speak:player', targetId: 'player', narrative: null, utterance: '현재 선택한 서버로 이어서 말할게.', memoUpdate: null }) } }] }));
+	});
+	const decisionPort = await listen(decisionServer), textPort = await listen(textServer), recoveryPort = await listen(recoveryServer), directory = scratch();
 	let running = await app(directory, `http://127.0.0.1:${decisionPort}/v1`);
 	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
 	const providerRequest = async (method, body, expected = 200, origin = running.base) => {
 		const response = await fetch(`${running.base}/api/providers`, { method, headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 		const raw = await response.text();
 		assert.equal(response.status, expected, raw);
-		assert.ok(!raw.includes('private-decision-key') && !raw.includes('private-text-key'));
+		assert.ok(!['private-decision-key', 'private-text-key', 'private-recovery-key', 'private-default-key'].some(key => raw.includes(key)));
 		return JSON.parse(raw);
 	};
 	const entry = (id, kind, port, key) => ({ id, label: id, kind, baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: key, models: [{ id: 'main', label: '같은 모델의 별칭', modelId: 'actor-model', task: 'generation' }] });
@@ -1296,19 +1309,57 @@ test('multiple provider aliases route real HTTP calls and private snapshots surv
 		await running.stop();
 		running = await app(directory, `http://127.0.0.1:${decisionPort}/v1`);
 		await providerRequest('DELETE', { revision: registry.revision, id: 'writer' }, 400);
-		await post(running.base, 'models', { worldId, mode: 'defaults' });
-		registry = await providerRequest('DELETE', { revision: registry.revision, id: 'writer' });
+		const recovery = { ...entry('recovery', 'oev', recoveryPort, 'private-recovery-key'), models: [{ id: 'judge', label: '새 판단', modelId: 'retry-judge', task: 'generation' }, { id: 'writer', label: '새 생성', modelId: 'retry-writer', task: 'generation' }] };
+		registry = await providerRequest('POST', { revision: registry.revision, provider: recovery });
+		const currentModels = { decisionModel: 'recovery::judge', textModel: 'recovery::writer' };
+		await post(running.base, 'models', { worldId, ...currentModels });
+		registry = await providerRequest('POST', { revision: registry.revision, provider: { ...recovery, apiKeyEnv: 'NEWERA_UNSET_RETRY_KEY_FOR_TEST' } });
+		const storedJob = () => db.prepare('SELECT * FROM theater_jobs WHERE id=?').get(job.id);
+		const beforeInvalidRetry = storedJob();
 		const failure = await latestJob(running.base, db, worldId);
+		await post(running.base, 'retry', { worldId, revision: String(failure.revision), jobId: failure.id }, '/', true);
+		assert.deepEqual(storedJob(), beforeInvalidRetry, 'invalid current settings must preserve failure, cursor, inputs and old private snapshot');
+		// Keep the same selected alias IDs while changing their real model targets before retry.
+		registry = await providerRequest('POST', { revision: registry.revision, provider: { ...recovery, models: recovery.models.map(model => ({ ...model, modelId: `${model.modelId}-v2` })) } });
+		registry = await providerRequest('DELETE', { revision: registry.revision, id: 'writer' });
+		const oldDecisionCount = decisionCalls.length, oldTextCount = textCalls.length;
 		await post(running.base, 'retry', { worldId, revision: String(failure.revision), jobId: failure.id });
 		const completed = await waitJob(running.base, db, worldId);
 		assert.equal(completed.id, job.id);
-		assert.deepEqual(completed.models, models);
+		assert.deepEqual(completed.models, currentModels);
+		const updatedRoutes = JSON.parse(storedJob().providers_json);
+		assert.equal(updatedRoutes.text.baseUrl, `http://127.0.0.1:${recoveryPort}/v1`);
+		assert.equal(updatedRoutes.text.model, 'retry-writer-v2');
+		assert.equal(updatedRoutes.text.apiKey, 'private-recovery-key');
+		assert.equal(decisionCalls.length, oldDecisionCount);
+		assert.equal(textCalls.length, oldTextCount);
 		assert.ok(decisionCalls.every(c => c.path === '/v1/systemone' && c.auth === 'Bearer private-decision-key' && c.body.model === 'actor-model'));
 		assert.ok(textCalls.every(c => c.path === '/v1/chat/completions' && c.auth === 'Bearer private-text-key' && c.body.model === 'actor-model' && !('reasoning_effort' in c.body)));
+		assert.ok(recoveryCalls.some(c => c.path === '/v1/systemone') && recoveryCalls.some(c => c.path === '/v1/chat/completions'));
+		assert.ok(recoveryCalls.every(c => c.auth === 'Bearer private-recovery-key' && c.body.model === (c.path === '/v1/systemone' ? 'retry-judge-v2' : 'retry-writer-v2')));
 		const exportedWorld = await exported(running.base, worldId);
 		assert.equal(exportedWorld.world.state.events.filter(e => e.actorId === 'player').length, 1);
-		assert.ok(!JSON.stringify(exportedWorld).includes('private-text-key'));
-	} finally { release(); await running.stop(); db.close(); decisionServer.closeAllConnections(); textServer.closeAllConnections(); await Promise.all([new Promise(done => decisionServer.close(done)), new Promise(done => textServer.close(done))]); }
+		assert.ok(!JSON.stringify(exportedWorld).includes('private-recovery-key'));
+
+		failRecovery = true;
+		await post(running.base, 'turn', { worldId, revision: String(completed.revision), kind: 'speak', text: '다음 질문이야.', targetId: 'seoyeon' });
+		const nextFailure = await waitJob(running.base, db, worldId, true);
+		const committedState = JSON.parse(db.prepare('SELECT state_json FROM theater_worlds WHERE id=?').get(worldId).state_json);
+		await post(running.base, 'models', { worldId, mode: 'defaults' });
+		registry = await providerRequest('POST', { revision: registry.revision, provider: entry('default', 'oev', recoveryPort, 'private-default-key') });
+		registry = await providerRequest('DELETE', { revision: registry.revision, id: 'recovery' });
+		failRecovery = false;
+		const recoveryBoundary = recoveryCalls.length;
+		await post(running.base, 'retry', { worldId, revision: String(nextFailure.revision), jobId: nextFailure.id });
+		const defaultRetry = await waitJob(running.base, db, worldId);
+		assert.deepEqual(defaultRetry.models, { decisionModel: 'actor-model', textModel: 'actor-model' });
+		assert.ok(recoveryCalls.slice(recoveryBoundary).every(c => c.auth === 'Bearer private-default-key' && c.body.model === 'actor-model'));
+		const finalState = JSON.parse(db.prepare('SELECT state_json FROM theater_worlds WHERE id=?').get(worldId).state_json);
+		assert.deepEqual(finalState.events.slice(0, committedState.events.length), committedState.events);
+		assert.equal(finalState.tick, committedState.tick);
+		assert.equal(finalState.minute, committedState.minute);
+		assert.equal(finalState.events.filter(event => event.actorId === 'player').length, 2);
+	} finally { release(); await running.stop(); db.close(); for (const server of [decisionServer, textServer, recoveryServer]) server.closeAllConnections(); await Promise.all([decisionServer, textServer, recoveryServer].map(server => new Promise(done => server.close(done)))); }
 });
 
 test.after(() => {

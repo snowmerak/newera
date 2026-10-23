@@ -32,14 +32,14 @@ export const actions: Actions = {
 			const worldId = String(body.get('worldId'));
 			if (body.get('mode') === 'defaults') {
 				setWorldModels(worldId, null);
-				return { message: '이 세션은 다음 진행부터 기본 모델을 사용합니다.', models: null };
+				return { message: '이 세션은 다음 새 진행 또는 이어서 재시도부터 기본 모델을 사용합니다.', models: null };
 			}
 			const selection = checkedModelSelection({ decisionModel: body.get('decisionModel'), textModel: body.get('textModel') });
 			const catalog = await getModelCatalog(request.signal);
 			if (!catalog.models.includes(selection.decisionModel) || !catalog.models.includes(selection.textModel)) throw new Error('등록된 Provider에서 사용할 수 있는 모델을 선택해 주세요.');
 			resolveProviderSnapshot(modelSettings(), selection);
 			setWorldModels(worldId, selection);
-			return { message: '이 세션의 판단·생성 모델을 저장했습니다. 다음 진행부터 적용됩니다.', models: selection };
+			return { message: '이 세션의 판단·생성 모델을 저장했습니다. 다음 새 진행 또는 이어서 재시도부터 적용됩니다.', models: selection };
 		} catch (error) { return failed(error); }
 	},
 	turn: async ({ request }) => {

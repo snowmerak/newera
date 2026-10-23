@@ -66,6 +66,7 @@ export function queueStageTurn(worldId: string, revision: number, request: Playe
 	schedule(job.id);
 }
 export function retryStageTurn(worldId: string, revision: number, jobId: string): void {
-	const job = retryFailedJob(worldId, revision, jobId);
+	const settings = modelSettings();
+	const job = retryFailedJob(worldId, revision, jobId, { decisionModel: settings.decisionModel, textModel: settings.textModel }, (models) => resolveProviderSnapshot(settings, models));
 	schedule(job.id);
 }

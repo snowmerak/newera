@@ -169,7 +169,7 @@
 		<div class="model-settings">
 			<h2 id="models-dialog-title">이 세션의 모델 설정</h2>
 			<small>판단: {modelLabel(world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정')} · 생성: {modelLabel(world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정')}</small>
-			<p>현재 세계관의 다음 진행부터 적용됩니다. 진행 중인 작업은 시작할 때 선택한 모델을 유지합니다.</p>
+			<p>현재 세계관의 다음 새 진행 또는 이어서 재시도부터 적용됩니다. 진행 중인 작업은 시작할 때 선택한 모델을 유지합니다.</p>
 			<form method="POST" action="?/models" use:enhance={submitModels} class="model-form">
 				<input type="hidden" name="worldId" value={world.id} />
 				<label>판단 모델<select name="decisionModel" bind:value={decisionModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
@@ -293,7 +293,7 @@
 						<input type="hidden" name="revision" value={world.revision} />
 						<input type="hidden" name="jobId" value={data.generation.id} />
 						<button disabled={busy}>{submitting ? '재시도 요청 중…' : '이어서 재시도'}</button>
-						<small>실패한 지점부터 기존 모델로 다시 진행합니다.</small>
+						<small>실패한 지점부터 현재 적용된 판단·생성 모델로 다시 진행합니다.</small>
 					</form>
 				{:else}<small>실패 이후 장면이 변경되어 재시도할 수 없습니다. 새 말이나 행동으로 진행해 주세요.</small>{/if}
 			</div>

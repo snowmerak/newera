@@ -302,14 +302,17 @@ export function latestJob(worldId: string): GenerationJob | null {
 	const row = store().prepare('SELECT * FROM theater_jobs WHERE world_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(worldId) as Row | undefined;
 	return row ? jobFromRow(row) : null;
 }
-export function retryFailedJob(worldId: string, revision: number, jobId: string): GenerationJob {
+export function retryFailedJob(worldId: string, revision: number, jobId: string, defaults: ModelSelection, providers: (selection: ModelSelection) => ProviderSnapshot): GenerationJob {
 	return transaction(() => {
 		const world = getWorld(worldId);
 		const job = latestJob(worldId);
 		if (!job || job.id !== jobId || job.status !== 'failed') throw new Error('재시도할 실패 작업이 없습니다. 진행 상태를 새로고침해 주세요.');
 		if (world.revision !== revision || job.revision !== world.revision) throw new Error('실패 이후 장면이 변경되어 이어서 재시도할 수 없습니다.');
-		// Keep the request, committed cursor, queued chat and model snapshot: retry must not replay the input.
-		store().prepare("UPDATE theater_jobs SET status = 'pending', worker_id = NULL, heartbeat_at = NULL, completed_at = NULL, error = NULL WHERE id = ? AND status = 'failed'").run(job.id);
+		const models = checkedModelSelection(world.models ?? defaults);
+		const routes = providers(models);
+		// Keep the request, committed cursor and queued chat; manual retry adopts the current model routes atomically.
+		store().prepare("UPDATE theater_jobs SET status = 'pending', worker_id = NULL, heartbeat_at = NULL, completed_at = NULL, error = NULL, models_json = ?, providers_json = ? WHERE id = ? AND status = 'failed'")
+			.run(JSON.stringify(models), JSON.stringify(routes), job.id);
 		return getJob(job.id)!;
 	});
 }
