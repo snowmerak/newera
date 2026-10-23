@@ -7,6 +7,7 @@ import { exampleWorld } from '$lib/theater/fixtures';
 import { actionForRequest, initialState, templateFor } from '$lib/theater/runtime';
 import type { GenerationJob, ModelSelection, PlayerRequest, RelationshipScores, SaveSlot, StageView, TurnProgress, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
 import { checkedModelSelection, checkedRelationships, record, text, validateDefinition, validateState } from '$lib/theater/validation';
+import { checkedProviderSnapshot, type ProviderSnapshot } from './providers';
 
 type Row = Record<string, unknown>;
 let database: DatabaseSync | undefined;
@@ -37,6 +38,7 @@ export function store(): DatabaseSync {
 		db.exec('ALTER TABLE theater_jobs ADD COLUMN progress_json TEXT');
 	}
 	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'models_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN models_json TEXT');
+	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'providers_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN providers_json TEXT');
 	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'inputs_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN inputs_json TEXT');
 	if (!(db.prepare('PRAGMA table_info(theater_worlds)').all() as Row[]).some((column) => column.name === 'model_settings_json')) db.exec('ALTER TABLE theater_worlds ADD COLUMN model_settings_json TEXT');
 	database = db;
@@ -286,6 +288,16 @@ export function getJob(id: string): GenerationJob | null {
 	const row = store().prepare('SELECT * FROM theater_jobs WHERE id = ?').get(id) as Row | undefined;
 	return row ? jobFromRow(row) : null;
 }
+/** Credentials are worker-only; jobFromRow deliberately excludes this column from all public data. */
+export function getJobProviders(id: string): ProviderSnapshot | null {
+	const row = store().prepare('SELECT providers_json FROM theater_jobs WHERE id = ?').get(id) as Row | undefined;
+	return row?.providers_json ? checkedProviderSnapshot(JSON.parse(String(row.providers_json))) : null;
+}
+export function pinJobProviders(job: GenerationJob, workerId: string, snapshot: ProviderSnapshot): ProviderSnapshot {
+	checkJob(job, workerId);
+	store().prepare("UPDATE theater_jobs SET providers_json = ? WHERE id = ? AND worker_id = ? AND status = 'running' AND providers_json IS NULL").run(JSON.stringify(snapshot), job.id, workerId);
+	return getJobProviders(job.id)!;
+}
 export function latestJob(worldId: string): GenerationJob | null {
 	const row = store().prepare('SELECT * FROM theater_jobs WHERE world_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(worldId) as Row | undefined;
 	return row ? jobFromRow(row) : null;
@@ -310,7 +322,7 @@ export function stopJob(worldId: string, jobId: string): void {
 			.run('사용자가 자동 생성을 중단했습니다.', new Date().toISOString(), job.id);
 	});
 }
-export function enqueue(worldId: string, revision: number, request: PlayerRequest, defaults: ModelSelection): GenerationJob {
+export function enqueue(worldId: string, revision: number, request: PlayerRequest, defaults: ModelSelection, providers?: (selection: ModelSelection) => ProviderSnapshot): GenerationJob {
 	return transaction(() => {
 		const world = getWorld(worldId);
 		const active = store().prepare("SELECT * FROM theater_jobs WHERE world_id = ? AND status IN ('pending', 'running')").get(worldId) as Row | undefined;
@@ -328,8 +340,9 @@ export function enqueue(worldId: string, revision: number, request: PlayerReques
 		actionForRequest(world, request);
 		const id = randomUUID();
 		const models = checkedModelSelection(world.models ?? defaults);
-		store().prepare("INSERT INTO theater_jobs (id, world_id, revision, request_json, status, created_at, models_json) VALUES (?, ?, ?, ?, 'pending', ?, ?)")
-			.run(id, worldId, revision, JSON.stringify(request), new Date().toISOString(), JSON.stringify(models));
+		const routes = providers?.(models);
+		store().prepare("INSERT INTO theater_jobs (id, world_id, revision, request_json, status, created_at, models_json, providers_json) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)")
+			.run(id, worldId, revision, JSON.stringify(request), new Date().toISOString(), JSON.stringify(models), routes ? JSON.stringify(routes) : null);
 		return getJob(id)!;
 	});
 }

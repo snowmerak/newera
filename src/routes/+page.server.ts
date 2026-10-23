@@ -2,8 +2,9 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld, setWorldModels, stopJob } from '$lib/server/stage-store';
 import { ensureStageWorker, queueStageTurn, retryStageTurn } from '$lib/server/stage';
-import { getModelCatalog } from '$lib/server/oev';
+import { getModelCatalog, modelSettings } from '$lib/server/oev';
 import { checkedModelSelection } from '$lib/theater/validation';
+import { resolveProviderSnapshot } from '$lib/server/providers';
 
 export const load: PageServerLoad = () => { ensureStageWorker(); return getStageView(); };
 
@@ -35,7 +36,8 @@ export const actions: Actions = {
 			}
 			const selection = checkedModelSelection({ decisionModel: body.get('decisionModel'), textModel: body.get('textModel') });
 			const catalog = await getModelCatalog(request.signal);
-			if (!catalog.models.includes(selection.decisionModel) || !catalog.models.includes(selection.textModel)) throw new Error('OEV에서 사용 가능한 생성 모델을 선택해 주세요.');
+			if (!catalog.models.includes(selection.decisionModel) || !catalog.models.includes(selection.textModel)) throw new Error('등록된 Provider에서 사용할 수 있는 모델을 선택해 주세요.');
+			resolveProviderSnapshot(modelSettings(), selection);
 			setWorldModels(worldId, selection);
 			return { message: '이 세션의 판단·생성 모델을 저장했습니다. 다음 진행부터 적용됩니다.', models: selection };
 		} catch (error) { return failed(error); }

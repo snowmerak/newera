@@ -17,6 +17,77 @@ const resolveTurn = (world, request, director, ...rest) => executeTurn(world, re
 function world() { const definition = exampleWorld(); return { id: 'test-world', revision: 0, definition, state: initialState(definition) }; }
 const instance = (world, id) => world.state.instances.find((entry) => entry.id === id);
 
+function soloWorld() {
+	const stage = world();
+	instance(stage, 'harin').active = false;
+	return stage;
+}
+
+test('a lone actor reconsiders its own committed speech and object use until choosing not to participate', async () => {
+	for (const mode of ['watch', 'continue', 'idle']) {
+		let actions = 0, decisions = 0, cursor;
+		const result = await resolveTurn(soloWorld(), { kind: 'speak', text: '계속 준비해도 돼.', targetId: 'seoyeon' }, {
+			async decide(state) {
+				decisions++;
+				if (actions) assert.ok(state.recentEvents.some(event => event.actorId === 'seoyeon'));
+				if (actions >= 2) assert.equal(state.present.find(entry => entry.id === 'desk-bell').state.rung, true);
+				if (actions === 3) assert.equal(state.self.memo.currentIntention, '답을 기다린다.');
+				return { act: actions < 3, inactivity: mode, model: 'fake' };
+			},
+			async perform() {
+				actions++;
+				if (actions === 2) return { actionId: 'interact:desk-bell:ring', targetId: 'desk-bell', narrative: '탁상 종을 누른다.', utterance: null, memoUpdate: null, model: 'fake' };
+				return { actionId: 'speak:player', targetId: 'player', narrative: null, utterance: actions === 1 ? '종부터 확인할게.' : '이제 준비됐어. 시작할까?', memoUpdate: { summary: '종을 확인한다.', currentIntention: actions === 3 ? '답을 기다린다.' : '종을 누른다.', feelings: [], openThreads: [] }, model: 'fake' };
+			}
+		}, () => {}, { onProgress: (_, progress) => { cursor = structuredClone(progress); } });
+		assert.equal(actions, 3);
+		assert.equal(decisions, 4, 'each completed action gets a follow-up decision, but inactivity does not');
+		assert.deepEqual(cursor.pendingActorIds, []);
+		assert.equal(result.state.tick, 1);
+		assert.equal(result.state.minute, 1081);
+		assert.equal(result.state.events.filter(event => event.actorId === 'player').length, 1);
+		assert.deepEqual(result.state.events.filter(event => event.actorId === 'seoyeon').map(event => event.kind), ['speak', 'interact', 'speak', ...(mode === 'watch' ? ['wait'] : [])]);
+	}
+});
+
+test('a lone actor follow-up resumes after failure without replaying its committed action', async () => {
+	let saved, cursor, decisions = 0;
+	await assert.rejects(resolveTurn(soloWorld(), { kind: 'wait' }, {
+		async decide() { if (++decisions === 2) throw Error('follow-up offline'); return { act: true, model: 'fake' }; },
+		async perform() { return { actionId: 'speak:player', targetId: 'player', narrative: null, utterance: '먼저 이것만 말할게.', memoUpdate: null, model: 'fake' }; }
+	}, () => {}, { onProgress: (stage, progress) => { saved = structuredClone(stage); cursor = structuredClone(progress); } }), /follow-up offline/);
+	assert.deepEqual(cursor.pendingActorIds, ['seoyeon']);
+	assert.equal(cursor.completedDecisions, 1);
+	const previous = structuredClone(saved.state.events);
+	let resumedDecisions = 0;
+	const result = await resolveTurn(saved, { kind: 'wait' }, {
+		async decide(state) { resumedDecisions++; assert.equal(state.self.id, 'seoyeon'); return { act: false, inactivity: 'idle', model: 'fake' }; },
+		async perform() { assert.fail('resume must not replay speech'); }
+	}, () => {}, { progress: cursor });
+	assert.equal(resumedDecisions, 1);
+	assert.deepEqual(result.state.events, previous);
+	assert.equal(result.state.tick, 1);
+});
+
+test('new player chat takes priority over a lone actor follow-up', async () => {
+	const inputs = [];
+	let actions = 0, cursor;
+	const result = await resolveTurn(soloWorld(), { kind: 'wait' }, {
+		async decide(state) { return { act: !state.recentEvents.some(event => event.body.utterance === '여기서 기다려.'), inactivity: 'idle', model: 'fake' }; },
+		async perform() { actions++; return { actionId: 'speak:player', targetId: 'player', narrative: null, utterance: '계속 준비할게.', memoUpdate: null, model: 'fake' }; }
+	}, () => {}, {
+		nextInput: index => inputs[index] ?? null,
+		onProgress: (stage, progress) => {
+			cursor = structuredClone(progress);
+			if (stage.state.events.some(event => event.actorId === 'seoyeon') && !inputs.length) inputs.push({ kind: 'speak', text: '여기서 기다려.', targetId: 'seoyeon' });
+		}
+	});
+	assert.equal(actions, 1);
+	assert.equal(cursor.consumedInputs, 1);
+	assert.deepEqual(cursor.pendingActorIds, []);
+	assert.equal(result.state.events.filter(event => event.text === '여기서 기다려.').length, 1);
+});
+
 test('watching is visible; continuing work and doing nothing commit private choices without events or generation', async () => {
 	for (const mode of ['watch', 'continue', 'idle']) {
 		let saved, progress, decisions = 0;
@@ -53,9 +124,9 @@ test('new speech awakens a silent actor and performing clears the previous inact
 			return { actionId: `speak:${targetId}`, targetId, narrative: null, utterance: '이쪽도 볼래?', memoUpdate: null, model: 'fake' };
 		}
 	});
-	assert.deepEqual(decisions, ['seoyeon', 'harin', 'seoyeon', 'harin']);
+	assert.deepEqual(decisions, ['seoyeon', 'harin', 'seoyeon', 'harin', 'seoyeon']);
 	assert.equal(result.state.events.length, 3);
-	assert.equal(instance(result, 'seoyeon').inactivity, undefined);
+	assert.equal(instance(result, 'seoyeon').inactivity.mode, 'idle');
 	assert.equal(instance(result, 'harin').inactivity.mode, 'idle');
 });
 
@@ -207,7 +278,7 @@ test('ensemble rechecks earlier actors after new speech, without leaking private
 		}
 	};
 	const result = await resolveTurn(stage, { kind: 'speak', text: 'Hello.', targetId: 'seoyeon' }, director);
-	assert.deepEqual(calls.map((state) => state.self.id), ['seoyeon', 'harin', 'seoyeon']);
+	assert.deepEqual(calls.map((state) => state.self.id), ['seoyeon', 'harin', 'seoyeon', 'harin']);
 	assert.ok(calls[1].recentEvents.some((entry) => entry.actorId === 'seoyeon' && entry.body.utterance === '서연 answers.'));
 	const witnessed = calls[1].self.memories.find((entry) => entry.actorId === 'seoyeon');
 	assert.deepEqual(witnessed.body, { narrative: '대본을 접는다.', utterance: '서연 answers.' }, 'both body fields must be recorded before witnesses receive the event');
@@ -247,9 +318,9 @@ test('a conversation can keep alternating until a participant chooses to wait', 
 			return { actionId: `speak:${targetId}`, targetId, narrative: null, utterance: lines[spoken++], memoUpdate: null, model: 'fake' };
 		}
 	}, () => {}, { onProgress: (_, progress) => { finalProgress = structuredClone(progress); } });
-	assert.deepEqual(decisions, ['seoyeon', 'harin', 'seoyeon', 'harin', 'seoyeon', 'harin']);
+	assert.deepEqual(decisions, ['seoyeon', 'harin', 'seoyeon', 'harin', 'seoyeon', 'harin', 'seoyeon']);
 	assert.deepEqual(result.state.events.filter((event) => event.kind === 'speak').map((event) => event.utterance), lines);
-	assert.deepEqual(finalProgress, { pendingActorIds: [], completedDecisions: 6, consumedInputs: 0 });
+	assert.deepEqual(finalProgress, { pendingActorIds: [], completedDecisions: 7, consumedInputs: 0 });
 	assert.equal(result.state.tick, 1, 'reactive dialogue must not replay or advance player input');
 });
 
@@ -259,7 +330,7 @@ test('an actor who waited is awakened by another action; waiting alone does not 
 		async decide(state) { decisions.push(state.self.id); return { act: decisions.length === 2, model: 'fake' }; },
 		async perform() { return { actionId: 'speak:seoyeon', targetId: 'seoyeon', narrative: null, utterance: '서연아?', memoUpdate: null, model: 'fake' }; }
 	});
-	assert.deepEqual(decisions, ['seoyeon', 'harin', 'seoyeon']);
+	assert.deepEqual(decisions, ['seoyeon', 'harin', 'seoyeon', 'harin']);
 });
 
 test('old cursors and a repeated reaction resume without replaying committed speech', async () => {
@@ -271,10 +342,10 @@ test('old cursors and a repeated reaction resume without replaying committed spe
 		async decide() { if (++calls === 3) throw new Error('restart'); return { act: true, model: 'fake' }; },
 		async perform(state) { return { actionId: 'speak:player', targetId: 'player', narrative: null, utterance: `${state.self.id} 대사`, memoUpdate: null, model: 'fake' }; }
 	}, () => {}, { onProgress: (world, position) => { saved = structuredClone(world); progress = structuredClone(position); } }), /restart/);
-	assert.deepEqual(progress, { pendingActorIds: ['seoyeon'], completedDecisions: 2, consumedInputs: 0 });
+	assert.deepEqual(progress, { pendingActorIds: ['seoyeon', 'harin'], completedDecisions: 2, consumedInputs: 0 });
 	const previous = structuredClone(saved.state.events);
 	const resumed = await resolveTurn(saved, { kind: 'wait' }, {
-		async decide(state) { assert.equal(state.self.id, 'seoyeon'); return { act: false, model: 'fake' }; }
+		async decide(state) { assert.ok(['seoyeon', 'harin'].includes(state.self.id)); return { act: false, model: 'fake' }; }
 	}, () => {}, { progress });
 	assert.deepEqual(resumed.state.events.slice(0, previous.length), previous);
 	assert.equal(resumed.state.tick, 1);
@@ -334,16 +405,16 @@ test('incremental execution publishes complete actions and resumes from the save
 		}
 	}, () => {}, { onProgress: persist }), /대사가 필요/);
 	assert.equal(checkpoints.length, 4, 'input, private reflections and the complete first action are published');
-	assert.deepEqual(progress, { pendingActorIds: ['seoyeon'], completedDecisions: 1, consumedInputs: 0 });
+	assert.deepEqual(progress, { pendingActorIds: ['seoyeon', 'harin'], completedDecisions: 1, consumedInputs: 0 });
 	assert.deepEqual(saved.state.events.map((event) => event.actorId), ['player', 'harin']);
 	const ids = saved.state.events.map((event) => event.id);
 	const result = await resolveTurn(saved, { kind: 'speak', text: '먼저 답해 줘.', targetId: 'harin' }, {
-		async decide(state) { assert.equal(state.self.id, 'seoyeon'); return { act: false, model: 'fake' }; },
+		async decide(state) { assert.ok(['seoyeon', 'harin'].includes(state.self.id)); return { act: false, model: 'fake' }; },
 		async perform() { assert.fail('waiting must skip generation'); }
 	}, () => {}, { progress, onProgress: persist });
 	assert.equal(result.state.tick, 1);
 	assert.deepEqual(result.state.events.slice(0, 2).map((event) => event.id), ids);
-	assert.equal(progress.completedDecisions, 2);
+	assert.equal(progress.completedDecisions, 3);
 	assert.deepEqual(progress.pendingActorIds, []);
 });
 

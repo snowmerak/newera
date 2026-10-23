@@ -140,13 +140,17 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 		}
 		progress.pendingActorIds.shift();
 		progress.completedDecisions++;
-		// Only a new witnessed action wakes another decision. Waiting never wakes itself or its peers.
+		// Peers react first; the performer also reconsiders after its committed action. Waiting wakes nobody.
 		const emitted = draft.state.events.slice(eventStart).filter((event) => event.kind !== 'wait');
-		for (const id of castIds(draft)) {
+		const cast = castIds(draft);
+		for (const id of cast) {
 			const witness = draft.state.instances.find((candidate) => candidate.id === id)!;
 			if (emitted.some((event) => event.actorId !== id && witness.memories.some((memory) => memory.eventId === event.id)) && !progress.pendingActorIds.includes(id)) {
 				progress.pendingActorIds.push(id);
 			}
+		}
+		if (cast.includes(actorId) && emitted.some((event) => event.actorId === actorId) && !progress.pendingActorIds.includes(actorId)) {
+			progress.pendingActorIds.push(actorId);
 		}
 		checkpoint();
 		execution.onProgress?.(draft, progress);

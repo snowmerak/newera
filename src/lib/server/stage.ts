@@ -4,7 +4,8 @@ import type { PlayerRequest } from '$lib/theater/types';
 import { generationHistoryEvents } from '$lib/theater/generation-history';
 import { createDirector, modelSettings } from './oev';
 import { createMemoryRecall } from './memory-search';
-import { checkJob, claimJob, enqueue, failJob, finishJob, getWorld, heartbeatJob, nextJobInput, retryFailedJob, runnableJobs, saveJobProgress } from './stage-store';
+import { resolveProviderSnapshot } from './providers';
+import { checkJob, claimJob, enqueue, failJob, finishJob, getJobProviders, getWorld, heartbeatJob, nextJobInput, pinJobProviders, retryFailedJob, runnableJobs, saveJobProgress } from './stage-store';
 
 const workerId = randomUUID();
 const scheduled = new Set<string>();
@@ -23,7 +24,9 @@ async function processJob(id: string): Promise<void> {
 		checkpoint();
 		// Empty scenes and object-only turns do not need a model connection.
 		let connected: Promise<Director> | undefined;
-		const connection = () => connected ??= createDirector(controller.signal, job.models, checkpoint);
+		const settings = modelSettings();
+		const pinned = getJobProviders(job.id) ?? pinJobProviders(job, workerId, resolveProviderSnapshot(settings, job.models ?? settings));
+		const connection = () => connected ??= createDirector(controller.signal, job.models, checkpoint, pinned);
 		const recall = createMemoryRecall(controller.signal, checkpoint);
 		const director: Director = {
 			chooseAppearance: async (state, outfits) => (await connection()).chooseAppearance!(state, outfits),
@@ -59,7 +62,7 @@ export function ensureStageWorker(): void {
 }
 export function queueStageTurn(worldId: string, revision: number, request: PlayerRequest): void {
 	const settings = modelSettings();
-	const job = enqueue(worldId, revision, request, { decisionModel: settings.decisionModel, textModel: settings.textModel });
+	const job = enqueue(worldId, revision, request, { decisionModel: settings.decisionModel, textModel: settings.textModel }, (models) => resolveProviderSnapshot(settings, models));
 	schedule(job.id);
 }
 export function retryStageTurn(worldId: string, revision: number, jobId: string): void {

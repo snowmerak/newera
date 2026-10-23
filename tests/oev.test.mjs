@@ -8,8 +8,15 @@ import { inactivityContext, outfitContext, participationContext, performanceCont
 
 const originalFetch = globalThis.fetch;
 const originalRetries = process.env.NEWERA_MAX_RETRIES;
+const originalProviders = process.env.NEWERA_PROVIDER_CONFIG;
+const providerDirectory = mkdtempSync(join(tmpdir(), 'newera-oev-unit-'));
+process.env.NEWERA_PROVIDER_CONFIG = join(providerDirectory, 'providers.json');
 process.env.NEWERA_MAX_RETRIES = '0';
-test.after(() => { if (originalRetries === undefined) delete process.env.NEWERA_MAX_RETRIES; else process.env.NEWERA_MAX_RETRIES = originalRetries; });
+test.after(() => {
+	if (originalRetries === undefined) delete process.env.NEWERA_MAX_RETRIES; else process.env.NEWERA_MAX_RETRIES = originalRetries;
+	if (originalProviders === undefined) delete process.env.NEWERA_PROVIDER_CONFIG; else process.env.NEWERA_PROVIDER_CONFIG = originalProviders;
+	rmSync(providerDirectory, { recursive: true, force: true });
+});
 const actions = [
 	{ id: 'speak:player', kind: 'speak', targetId: 'player', label: 'speak to player' }
 ];

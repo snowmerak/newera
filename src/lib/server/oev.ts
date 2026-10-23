@@ -8,6 +8,8 @@ import { checkedExpression, performanceSchema } from '$lib/theater/performance';
 import { reflectionSchema } from '$lib/theater/reflection';
 import { checkedModelSelection, checkedReflection, record, text } from '$lib/theater/validation';
 import { RetryableError, withRetries, type RetryPolicy } from './retry';
+import { aliasReference, providerCatalogRoute, providerRegistry, resolveProviderModel, resolveProviderSnapshot, type ProviderRoute, type ProviderSnapshot } from './providers';
+import type { ModelOption } from '$lib/providers/types';
 
 export interface Settings extends RetryPolicy {
 	baseUrl: string;
@@ -77,24 +79,46 @@ export function modelSettings(): Settings {
 	}
 }
 
-async function request(settings: Settings, path: string, signal: AbortSignal, body?: unknown): Promise<Record<string, unknown>> {
+function providerBody(route: ProviderRoute, path: string, input: unknown): unknown {
+	if (input === undefined) return undefined;
+	const body: Record<string, unknown> = { ...record(input, 'Provider 요청'), model: route.model };
+	if (route.kind === 'openai-compatible') {
+		delete body.input_type;
+		if (path === '/chat/completions') {
+			delete body.reasoning_effort;
+			delete body.temperature;
+			if (route.outputTokenParameter === 'max_tokens') { body.max_tokens = body.max_completion_tokens; delete body.max_completion_tokens; }
+			if (route.structuredOutput === 'json_object') {
+				const schema = record(record(body.response_format, '구조화된 출력').json_schema, 'JSON 스키마').schema;
+				body.response_format = { type: 'json_object' };
+				body.messages = [...body.messages as unknown[], { role: 'user', content: `다음 JSON 스키마를 따르는 객체만 출력한다: ${JSON.stringify(schema)}` }];
+			}
+		}
+	}
+	return body;
+}
+
+async function request(settings: Settings, path: string, signal: AbortSignal, body?: unknown, target?: ProviderRoute): Promise<Record<string, unknown>> {
+	const route = target ?? resolveProviderModel(settings, '', 'generation');
+	const label = route.providerId === 'default' ? 'OEV' : route.providerLabel;
 	const timeoutMs = path === '/embeddings' ? settings.embeddingTimeoutMs : path === '/chat/completions' ? settings.timeoutMs : settings.decisionTimeoutMs;
 	const timed = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
-	const payload = body === undefined ? undefined : JSON.stringify(body);
-	const endpoint = new URL(`${settings.baseUrl}${path}`);
+	const payload = body === undefined ? undefined : JSON.stringify(providerBody(route, path, body));
+	const endpoint = new URL(`${route.baseUrl}${path}`);
 	endpoint.username = ''; endpoint.password = ''; endpoint.search = ''; endpoint.hash = '';
-	const metadata = { requestId: randomUUID(), method: body === undefined ? 'GET' : 'POST', endpoint: endpoint.toString(), bytes: Buffer.byteLength(payload ?? ''), timeoutMs };
+	const metadata = { requestId: randomUUID(), providerId: route.providerId, method: body === undefined ? 'GET' : 'POST', endpoint: endpoint.toString(), bytes: Buffer.byteLength(payload ?? ''), timeoutMs };
 	const started = Date.now();
 	let status: number | null = null;
 	// Log the transport boundary without exposing character observations, chat or model output.
 	console.info('[OEV] 요청 시작', metadata);
 	try {
-		const response = await fetch(`${settings.baseUrl}${path}`, {
-			method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json' }, body: payload, signal: timed
+		const response = await fetch(`${route.baseUrl}${path}`, {
+			method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', ...(route.apiKey ? { authorization: `Bearer ${route.apiKey}` } : {}) }, body: payload, signal: timed
 		});
 		status = response.status;
 		if (!response.ok) {
-			const message = `OEV ${path} 오류 ${response.status}: ${(await response.text()).slice(0, 300)}`;
+			const detail = await response.text();
+			const message = `${label} ${path} 오류 ${response.status}: ${(route.apiKey ? detail.replaceAll(route.apiKey, '[redacted]') : detail).slice(0, 300)}`;
 			if ([408, 429, 500, 502, 503, 504].includes(response.status)) throw new RetryableError(message);
 			throw new Error(message);
 		}
@@ -105,9 +129,9 @@ async function request(settings: Settings, path: string, signal: AbortSignal, bo
 		const reason = signal.aborted ? 'cancelled' : timed.aborted ? 'timeout' : error instanceof TypeError ? 'connection' : status === null ? 'request' : 'response';
 		console.warn('[OEV] 요청 실패', { ...metadata, status, elapsedMs: Date.now() - started, reason });
 		signal.throwIfAborted();
-		if (timed.aborted) throw new RetryableError(`OEV ${path} 응답 대기 시간(${timeoutMs / 1000}초)이 초과되었습니다.`);
-		if (error instanceof TypeError) throw new RetryableError(`OEV ${path} 연결에 실패했습니다.`);
-		if (error instanceof SyntaxError) throw new RetryableError(`OEV ${path} 응답이 올바른 JSON이 아닙니다.`);
+		if (timed.aborted) throw new RetryableError(`${label} ${path} 응답 대기 시간(${timeoutMs / 1000}초)이 초과되었습니다.`);
+		if (error instanceof TypeError) throw new RetryableError(`${label} ${path} 연결에 실패했습니다.`);
+		if (error instanceof SyntaxError) throw new RetryableError(`${label} ${path} 응답이 올바른 JSON이 아닙니다.`);
 		throw error;
 	}
 }
@@ -126,15 +150,16 @@ export function checkedEmbeddings(response: Record<string, unknown>, count: numb
 	return vectors;
 }
 
-export function createEmbedder(settings: Settings, signal: AbortSignal, checkpoint: () => void = () => {}) {
+export function createEmbedder(settings: Settings, signal: AbortSignal, checkpoint: () => void = () => {}, pinned?: ProviderRoute) {
+	const route = pinned ?? resolveProviderModel(settings, settings.embeddingModel, 'embedding');
 	return async (input: string[], inputType: 'query' | 'document'): Promise<number[][]> => {
 		// UTF-8 bytes conservatively bound text work without assuming a Korean token/character ratio.
 		if (!input.length || input.length > 8 || input.some((value) => !value.trim() || Buffer.byteLength(value) > 6000) || input.reduce((sum, value) => sum + Buffer.byteLength(value), 0) > 12000) throw new Error('임베딩 배치의 개수 또는 입력 크기가 한도를 초과했습니다.');
 		return withRetries('기억 임베딩', { ...settings, maxRetries: Math.min(settings.maxRetries, 1) }, signal, async () => {
 			checkpoint();
-			const result = await request(settings, '/embeddings', signal, { model: settings.embeddingModel, input, input_type: inputType, dimensions: settings.embeddingDimensions, encoding_format: 'float' });
+			const result = await request(settings, '/embeddings', signal, { model: route.model, input, input_type: inputType, dimensions: settings.embeddingDimensions, encoding_format: 'float' }, route);
 			checkpoint();
-			return generatedOutput(() => checkedEmbeddings(result, input.length, settings.embeddingDimensions, settings.embeddingModel));
+			return generatedOutput(() => checkedEmbeddings(result, input.length, settings.embeddingDimensions, route.model));
 		});
 	};
 }
@@ -160,26 +185,53 @@ function answer(response: Record<string, unknown>, key: string, type: string): R
 	return entry;
 }
 
-async function generationModels(settings: Settings, signal: AbortSignal, checkpoint: () => void = () => {}): Promise<string[]> {
-	const catalog = await withRetries('모델 목록 조회', settings, signal, () => { checkpoint(); return request(settings, '/models', signal); });
+async function generationModels(settings: Settings, signal: AbortSignal, checkpoint: () => void = () => {}, route?: ProviderRoute): Promise<string[]> {
+	const catalog = await withRetries('모델 목록 조회', settings, signal, () => { checkpoint(); return request(settings, '/models', signal, undefined, route); });
 	if (!Array.isArray(catalog.data)) throw new Error('OEV 모델 목록이 올바르지 않습니다.');
 	return [...new Set(catalog.data.map((entry) => record(entry, '모델')).filter((entry) => entry.task === 'generation').map((entry) => text(entry.id, '모델 ID', 200)))].sort();
 }
 
-export async function getModelCatalog(signal: AbortSignal): Promise<{ models: string[]; defaults: ModelSelection }> {
+export async function getModelCatalog(signal: AbortSignal): Promise<{ models: string[]; defaults: ModelSelection; options: ModelOption[]; errors: string[] }> {
 	const settings = modelSettings();
-	return { models: await generationModels(settings, signal), defaults: { decisionModel: settings.decisionModel, textModel: settings.textModel } };
+	const registry = providerRegistry(settings);
+	const options: ModelOption[] = registry.providers.flatMap((owner) => owner.models.filter((alias) => alias.task === 'generation').map((alias) => ({ value: aliasReference(owner.id, alias.id), label: alias.label, providerId: owner.id, providerLabel: owner.label, modelId: alias.modelId, decision: owner.kind === 'oev' })));
+	const errors: string[] = [];
+	try {
+		const route = resolveProviderModel(settings, '', 'generation', registry);
+		const models = await generationModels(settings, signal, () => {}, route);
+		options.unshift(...models.map((id) => ({ value: id, label: id, providerId: route.providerId, providerLabel: route.providerLabel, modelId: id, decision: true })));
+	} catch (error) {
+		signal.throwIfAborted();
+		if (!options.length) throw error;
+		errors.push(error instanceof Error ? error.message : '기본 OEV 목록 조회에 실패했습니다.');
+	}
+	return { models: options.map((option) => option.value), options, errors, defaults: { decisionModel: settings.decisionModel, textModel: settings.textModel } };
 }
 
-export async function createDirector(signal: AbortSignal, models?: ModelSelection | null, checkpoint: () => void = () => {}): Promise<Director> {
+export async function discoverProviderModels(id: string, signal: AbortSignal): Promise<{ models: { id: string; task: 'generation' | 'embedding' }[] }> {
+	const settings = modelSettings();
+	const route = providerCatalogRoute(settings, id);
+	const catalog = await withRetries('Provider 모델 목록 조회', settings, signal, () => request(settings, '/models', signal, undefined, route));
+	if (!Array.isArray(catalog.data)) throw new Error('Provider의 모델 목록 형식이 올바르지 않습니다.');
+	return { models: catalog.data.flatMap((entry) => {
+		const model = record(entry, 'Provider 모델');
+		if (route.kind === 'oev' && model.task !== 'generation' && model.task !== 'embedding') return [];
+		return [{ id: text(model.id, '실제 모델 ID', 200), task: model.task === 'embedding' ? 'embedding' as const : 'generation' as const }];
+	}) };
+}
+
+export async function createDirector(signal: AbortSignal, models?: ModelSelection | null, checkpoint: () => void = () => {}, pinned?: ProviderSnapshot | null): Promise<Director> {
 	const settings = modelSettings();
 	const { decisionModel, textModel } = checkedModelSelection(models ?? settings);
-	const generation = await generationModels(settings, signal, checkpoint);
-	if (!generation.includes(decisionModel) || !generation.includes(textModel)) throw new Error('설정한 판단·생성 모델이 OEV generation 모델 목록에 없습니다.');
+	const routes = pinned ?? resolveProviderSnapshot(settings, { decisionModel, textModel });
+	if (!decisionModel.includes('::') || !textModel.includes('::')) {
+		const generation = await generationModels(settings, signal, checkpoint, !decisionModel.includes('::') ? routes.decision : routes.text);
+		if ((!decisionModel.includes('::') && !generation.includes(decisionModel)) || (!textModel.includes('::') && !generation.includes(textModel))) throw new Error('설정한 판단·생성 모델이 OEV generation 모델 목록에 없습니다.');
+	}
 	async function choose(label: string, key: string, state: Record<string, unknown>, instructions: string, criteria: Record<string, unknown>): Promise<string> {
 		return withRetries(label, settings, signal, async () => {
 			checkpoint();
-			const response = await request(settings, '/systemone', signal, { model: decisionModel, state, questions: { [key]: { type: 'choice', instructions, criteria } } });
+			const response = await request(settings, '/systemone', signal, { model: routes.decision.model, state, questions: { [key]: { type: 'choice', instructions, criteria } } }, routes.decision);
 			return generatedOutput(() => {
 				const selected = answer(response, key, 'choice').choice;
 				if (typeof selected !== 'string' || !Object.hasOwn(criteria, selected)) throw new Error(`OEV ${key} 판단이 후보와 다릅니다.`);
@@ -206,7 +258,7 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 							{ role: 'user', content: JSON.stringify(reflectionInput(state, context)) },
 							...(corrections ? [{ role: 'user', content: `수정 요청 ${corrections}: 이전 응답이 출력 계약 검증에 실패했다. 각 관계 변경의 evidenceEventIds에는 이번 새 사건 ID ${JSON.stringify(context.newEvents.map((event) => event.eventId))} 중 하나 이상이 필요하다. 과거 발언이나 자기 행동만 근거로 재평가하지 않는다. 새 사건으로 바꿀 관계가 없으면 relationshipUpdates: []로 출력하고, 메모도 바꿀 이유가 없으면 memoUpdate: null로 둔다. 다른 필드와 JSON 스키마도 그대로 지킨다.` }] : [])
 						]
-					});
+					}, routes.text);
 					return generatedOutput(() => checkedReflection(structuredResponse(response), context));
 				} catch (error) {
 					if (error instanceof RetryableError) corrections++;
@@ -241,7 +293,7 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 							{ role: 'user', content: JSON.stringify({ ...context, availableActions: actions }) },
 							...(corrections ? [{ role: 'user', content: `수정 요청 ${corrections}: 이전 제안이 검증을 통과하지 못했다. ${speakerInstructions} 다른 사람의 질문을 플레이어 대신 대답하거나 미완성 이름을 출력하지 말고, 자기 역할에 맞는 새로운 말이나 행동을 JSON으로 제안한다.` }] : [])
 						]
-					});
+					}, routes.text);
 					const expression = generatedOutput(() => checkedExpression(structuredResponse(response), actions));
 					const identityCheck = await choose('화자 정체성 검수', 'identity_check', identityReviewContext(state, expression), '제안된 대사와 메모의 나는 고정 화자 speaker를 가리킨다. 대사가 화자의 이름·나이대·직업·역할과 모순되는 자기소개를 하는지 확인한다. 모순이 있으면 contradiction이다. 다른 사람의 자기소개를 화자가 자기 것처럼 답해도 contradiction이다.', { consistent: '이 제안의 자기소개는 고정 화자의 실제 정체성과 모순되지 않는다.', contradiction: '이 제안은 고정 화자와 다른 사람의 정체성으로 자기소개한다.' });
 					if (identityCheck !== 'consistent') throw new RetryableError('고정 화자의 이름·역할과 다른 정체성으로 생성되었습니다.');

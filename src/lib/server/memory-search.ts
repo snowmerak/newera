@@ -5,6 +5,7 @@ import { Bool, Field, FixedSizeList, Float32, List, Schema, Utf8 } from 'apache-
 import { memoryForEvent } from '$lib/theater/memory';
 import type { WitnessedEvent, World } from '$lib/theater/types';
 import { createEmbedder, modelSettings, type Settings } from './oev';
+import { resolveProviderModel } from './providers';
 
 type Fields = Record<string, unknown>;
 type Embed = (input: string[], inputType: 'query' | 'document') => Promise<number[][]>;
@@ -22,7 +23,7 @@ interface MemoryDocument {
 interface Dependencies {
 	settings: Settings;
 	directory: string;
-	embed: Embed;
+	embed?: Embed;
 	signal: AbortSignal;
 	checkpoint: () => void;
 }
@@ -135,7 +136,7 @@ function queryText(state: Fields): string {
 }
 
 async function recall(world: World, state: Fields, deps: Dependencies): Promise<MemoryRecall> {
-	const { settings, signal, checkpoint, embed } = deps;
+	const { settings, signal, checkpoint } = deps;
 	checkpoint();
 	if (!settings.memoryEnabled) return { status: 'disabled', events: [] };
 	const actor = world.state.instances.find((instance) => instance.id === (state.self as Fields).id);
@@ -147,7 +148,10 @@ async function recall(world: World, state: Fields, deps: Dependencies): Promise<
 	if (!candidates.size || !query.trim()) return { status: 'not_needed', events: [] };
 	const source = documents(world);
 	const canonical = new Map(source.map((doc) => [doc.eventId, doc]));
-	const tableName = `memories_${hash(JSON.stringify([world.id, settings.baseUrl, settings.embeddingModel, settings.embeddingDimensions, settings.memoryTokenizer, 'event-text-v1-ngram2-3'])).slice(0, 32)}`;
+	const embedding = resolveProviderModel(settings, settings.embeddingModel, 'embedding');
+	// The index identity and its vectors must use the same route, even if an alias is edited while awaiting I/O.
+	const embed = deps.embed ?? createEmbedder(settings, signal, checkpoint, embedding);
+	const tableName = `memories_${hash(JSON.stringify([world.id, embedding.baseUrl, embedding.kind, embedding.model, settings.embeddingDimensions, settings.memoryTokenizer, 'event-text-v1-ngram2-3'])).slice(0, 32)}`;
 	return exclusive(`${deps.directory}:${tableName}`, async () => {
 		checkpoint();
 		const db = await connect(deps.directory);
@@ -207,7 +211,7 @@ export function createMemoryRecall(signal: AbortSignal, checkpoint: () => void, 
 	const deps: Dependencies = {
 		settings, signal, checkpoint,
 		directory: resolve(process.env.NEWERA_MEMORY_DIR || resolve(process.env.NEWERA_DATA_DIR || 'data', 'memory-lance')),
-		embed: createEmbedder(settings, signal, checkpoint), ...overrides
+		...overrides
 	};
 	const cached = new WeakMap<Fields, Promise<Fields>>();
 	return (world: World, state: Fields): Promise<Fields> => {

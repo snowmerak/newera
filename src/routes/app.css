@@ -41,6 +41,15 @@ h1, h2, h3, h4 { color: #f1e9de; }
 .dialog-close button { padding: 6px 10px; font-size: 12px; }
 .session-export { display: inline-block; font-size: 12px; margin: 8px 0 20px; }
 .reset-form { margin-top: 10px; }
+.provider-toggle { margin-top: 16px; }
+.provider-manager { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 8px; }
+.provider-manager h3, .provider-manager h4 { font-size: 14px; font-weight: 500; }
+.provider-form { display: grid; gap: 14px; margin-top: 14px; }
+.provider-aliases fieldset { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--line); margin: 12px 0; padding: 12px; }
+.provider-aliases legend { color: var(--muted); font-size: 11px; }
+.provider-key-clear { display: flex; align-items: center; }
+.provider-key-clear input { width: auto; }
+.provider-form details label + label { margin-top: 12px; }
 .theater-layout { width: 100%; flex: 1; min-height: 0; max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: 200px minmax(0, 1fr) 280px; gap: 36px; padding: 0 28px; overflow: hidden; }
 .catalog { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 24px 20px 30px 0; border-right: 1px solid var(--line); }
 .world-link { width: 100%; text-align: left; color: #b7b0a6; border: none; border-left: 2px solid transparent; background: transparent; border-radius: 0; margin: 2px 0; padding: 12px; font-size: 13px; overflow-wrap: anywhere; }

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { connect } from '@lancedb/lancedb';
 import { createMemoryRecall } from '../src/lib/server/memory-search.ts';
+import { getProviders, saveProvider } from '../src/lib/server/providers.ts';
 import { checkedEmbeddings, createEmbedder, modelSettings } from '../src/lib/server/oev.ts';
 import { memoryForEvent } from '../src/lib/theater/memory.ts';
 import { participationContext, performanceContext, performanceReviewContext, outfitContext, reflectionInput } from '../src/lib/theater/inference-context.ts';
@@ -22,6 +23,42 @@ function fixture() {
 	return { world, state, promise, unseen, observer };
 }
 const vector = (text) => text.includes('교실') ? [1, 0, 0] : [0, 1, 0];
+test('disabled or unnecessary recall never resolves an unused embedding alias', async () => {
+	const { world, state } = fixture();
+	const settings = { ...modelSettings(), memoryEnabled: false, embeddingModel: 'missing::embedding' };
+	const recall = createMemoryRecall(new AbortController().signal, () => {}, { settings });
+	assert.equal((await recall(world, state)).memoryRecall.status, 'disabled');
+	const fresh = createMemoryRecall(new AbortController().signal, () => {}, { settings: { ...settings, memoryEnabled: true } });
+	world.state.instances.find(actor => actor.id === 'observer').memories = [];
+	assert.equal((await fresh(world, state)).memoryRecall.status, 'not_needed');
+});
+
+test('retargeting an embedding alias changes both its actual route and index identity together', async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), 'newera-memory-provider-'));
+	const oldConfig = process.env.NEWERA_PROVIDER_CONFIG, oldFetch = globalThis.fetch;
+	process.env.NEWERA_PROVIDER_CONFIG = join(directory, 'providers.json');
+	t.after(async () => { globalThis.fetch = oldFetch; if (oldConfig === undefined) delete process.env.NEWERA_PROVIDER_CONFIG; else process.env.NEWERA_PROVIDER_CONFIG = oldConfig; await rm(directory, { recursive: true, force: true }); });
+	const settings = { ...modelSettings(), embeddingDimensions: 3, embeddingModel: 'vectors::main', memoryEnabled: true };
+	const update = (modelId) => saveProvider(settings, getProviders(settings).revision, { id: 'vectors', label: '벡터 서버', kind: 'oev', baseUrl: `http://${modelId}.test/v1`, models: [{ id: 'main', label: '기억', task: 'embedding', modelId }] });
+	update('before');
+	const calls = [];
+	globalThis.fetch = async (url, options) => {
+		const body = JSON.parse(options.body); calls.push({ url: String(url), model: body.model });
+		return new Response(JSON.stringify({ model: body.model, data: body.input.map((text, index) => ({ index, embedding: vector(text) })) }));
+	};
+	const recall = createMemoryRecall(new AbortController().signal, () => {}, { settings, directory });
+	update('first');
+	const { world, state } = fixture();
+	assert.equal((await recall(world, state)).memoryRecall.status, 'hybrid');
+	assert.ok(calls.every(call => call.model === 'first' && call.url === 'http://first.test/v1/embeddings'));
+	const firstCount = calls.length;
+	update('second');
+	assert.equal((await recall(world, structuredClone(state))).memoryRecall.status, 'hybrid');
+	assert.ok(calls.slice(firstCount).every(call => call.model === 'second' && call.url === 'http://second.test/v1/embeddings'));
+	const db = await connect(directory);
+	try { assert.equal((await db.tableNames()).length, 2); } finally { db.close(); }
+});
+
 async function harness(t, options = {}) {
 	const directory = await mkdtemp(join(tmpdir(), 'newera-memory-test-'));
 	t.after(() => rm(directory, { recursive: true, force: true }));

@@ -12,6 +12,8 @@
 	import type { ModelSelection } from '$lib/theater/types';
 	import type { PageProps } from './$types';
 	import CharacterIntroduction from '$lib/components/CharacterIntroduction.svelte';
+	import ProviderManager from '$lib/components/ProviderManager.svelte';
+	import type { ModelOption } from '$lib/providers/types';
 	let { data, form }: PageProps = $props();
 	let submitting = $state(false);
 	let targetId = $state('');
@@ -66,7 +68,9 @@
 		resizeHistory.observe(element);
 		return () => { narrow.removeEventListener('change', resizeObjects); resizeHistory.disconnect(); };
 	});
-	let modelCatalog = $state<{ models: string[]; defaults: ModelSelection } | null>(null);
+	let modelCatalog = $state<{ models: string[]; defaults: ModelSelection; options: ModelOption[]; errors: string[] } | null>(null);
+	let providerManagerOpen = $state(false);
+	const modelLabel = (value: string) => { const option = modelCatalog?.options.find((entry) => entry.value === value); return option ? `${option.providerLabel} / ${option.label}` : value; };
 	let modelsLoading = $state(false);
 	let modelsSaving = $state(false);
 	let modelsError = $state('');
@@ -164,23 +168,26 @@
  <form method="dialog" class="dialog-close"><button aria-label="모델 설정 닫기">닫기</button></form>
 		<div class="model-settings">
 			<h2 id="models-dialog-title">이 세션의 모델 설정</h2>
-			<small>판단: {world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정'} · 생성: {world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정'}</small>
+			<small>판단: {modelLabel(world.models?.decisionModel ?? modelCatalog?.defaults.decisionModel ?? '기본 설정')} · 생성: {modelLabel(world.models?.textModel ?? modelCatalog?.defaults.textModel ?? '기본 설정')}</small>
 			<p>현재 세계관의 다음 진행부터 적용됩니다. 진행 중인 작업은 시작할 때 선택한 모델을 유지합니다.</p>
 			<form method="POST" action="?/models" use:enhance={submitModels} class="model-form">
 				<input type="hidden" name="worldId" value={world.id} />
 				<label>판단 모델<select name="decisionModel" bind:value={decisionModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
 					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
 					{#if decisionModel && !modelCatalog?.models.includes(decisionModel)}<option value={decisionModel} disabled>{decisionModel} (목록에 없음)</option>{/if}
-					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
+					{#each modelCatalog?.options.filter((entry) => entry.decision) ?? [] as option}<option value={option.value}>{option.providerLabel} / {option.label}</option>{/each}
 				</select></label>
 				<label>생성 모델<select name="textModel" bind:value={textModel} disabled={modelsLoading || modelsSaving || !modelCatalog} required>
 					<option value="">{modelsLoading ? '목록을 불러오는 중…' : '모델을 선택하세요'}</option>
 					{#if textModel && !modelCatalog?.models.includes(textModel)}<option value={textModel} disabled>{textModel} (목록에 없음)</option>{/if}
-					{#each modelCatalog?.models ?? [] as model}<option value={model}>{model}</option>{/each}
+					{#each modelCatalog?.options ?? [] as option}<option value={option.value}>{option.providerLabel} / {option.label}</option>{/each}
 				</select></label>
-				<div class="model-buttons"><button disabled={modelsLoading || modelsSaving || !modelCatalog?.models.includes(decisionModel) || !modelCatalog?.models.includes(textModel)}>모델 적용</button><button name="mode" value="defaults" formnovalidate disabled={modelsSaving}>기본 설정 사용</button><button type="button" onclick={loadModels} disabled={modelsLoading || modelsSaving}>목록 새로고침</button></div>
+				<div class="model-buttons"><button disabled={modelsLoading || modelsSaving || !modelCatalog?.options.some((entry) => entry.value === decisionModel && entry.decision) || !modelCatalog?.models.includes(textModel)}>모델 적용</button><button name="mode" value="defaults" formnovalidate disabled={modelsSaving}>기본 설정 사용</button><button type="button" onclick={loadModels} disabled={modelsLoading || modelsSaving}>목록 새로고침</button></div>
 			</form>
 			{#if modelsError}<p class="feedback error" role="alert">{modelsError}</p>{/if}
+			{#each modelCatalog?.errors ?? [] as message}<p class="feedback error">{message}</p>{/each}
+			<button type="button" class="provider-toggle" onclick={() => { providerManagerOpen = !providerManagerOpen; }}>{providerManagerOpen ? 'Provider 관리 접기' : 'Provider 관리'}</button>
+			{#if providerManagerOpen}<ProviderManager onsaved={loadModels} />{/if}
 		</div>
 </dialog>
 <dialog class="session-dialog" aria-labelledby="reset-dialog-title" bind:this={resetDialog}>
