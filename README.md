@@ -16,6 +16,8 @@ npm run dev
 
 규모 있는 학원물 예제 **솔빛고, 가을제까지 열흘**은 [가져오기 파일](static/lore-presets/solbit-high.json)을 작업실에서 가져와 사용합니다. 현대 한국 고등학교를 배경으로 44개 씬, 학생·교직원·이웃 25명, 오브젝트 49개를 포함하며 일상·동아리·축제와 가벼운 미스터리를 다룹니다. [세계관·인물·단서 설정](docs/SOLBIT_HIGH.md)과 [작성 원본](lore-sources/solbit-high.json)을 함께 제공합니다.
 
+성인 캠퍼스 연애물 **하온대학교, 스물하나의 첫 학기**는 [가져오기 파일](static/lore-presets/haon-university.json)로 시작합니다. 입학 직후 군휴학한 남자 주인공이 만 21세에 복학해 만 19세 신입생 네 명과 첫 교양 과제의 같은 조가 됩니다. 씬 29개·인물 10명·사물 38개에 첫 관계, 의상·음식 취향과 각자의 생활·연애관을 설정했습니다. [세계관·인물 설정](docs/HAON_UNIVERSITY.md)과 [작성 원본](lore-sources/haon-university.json)을 함께 제공합니다.
+
 ```powershell
 npm run build
 npm start
