@@ -2,6 +2,7 @@
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import type { PageProps } from './$types';
 	import type { ComfyCatalog } from '$lib/images/comfyui';
+	import type { HostedImageCatalog } from '$lib/images/models';
 	import type { ImageProvider } from '$lib/images/types';
 	import { imageProviderNames } from '$lib/images/presets';
 	import type { ImagePreset, ImagePresetConfig } from '$lib/images/presets';
@@ -24,7 +25,9 @@
 	let aspectRatio = $state('');
 	let resolution = $state('');
 	let catalog = $state<ComfyCatalog | null>(null);
-	let catalogAddress = $state('');
+	let hostedCatalog = $state<HostedImageCatalog | null>(null);
+	let catalogKey = $state('');
+	let modelSearch = $state('');
 	let loadingModels = $state(false);
 	let saving = $state(false);
 	let generating = $state(false);
@@ -42,7 +45,10 @@
 	let catalogController: AbortController | undefined;
 	let workflow = $derived(data.presets.find((entry) => entry.id === current.presetId)!);
 	let profile = $derived(current.profiles[current.presetId]);
-	let connected = $derived(!!catalog && catalogAddress === baseUrl);
+	let connectionKey = $derived(JSON.stringify([provider, baseUrl, provider === 'comfyui' ? '' : apiKeyEnv]));
+	let connected = $derived(!!catalog && provider === 'comfyui' && catalogKey === connectionKey);
+	let hostedConnected = $derived(!!hostedCatalog && provider !== 'comfyui' && catalogKey === connectionKey);
+	let filteredModels = $derived(hostedConnected ? hostedCatalog!.models.filter((entry) => `${entry.id} ${entry.name}`.toLowerCase().includes(modelSearch.trim().toLowerCase())) : []);
 	let missingNodes = $derived(connected ? workflow.requiredNodeTypes.filter((node) => !catalog!.nodeTypes.includes(node)) : []);
 	let usedBy = $derived(registry.find((entry) => entry.id === selected)?.usedBy ?? 0);
 	let config = $derived.by(() => {
@@ -52,6 +58,7 @@
 		return { provider, baseUrl, stylePrompt, apiKeyEnv, model, options: Object.fromEntries(entries.filter(([, value]) => value !== '' && value !== undefined)) } as ImagePresetConfig;
 	});
 	function choose(id: string) {
+		resetCatalog();
 		const saved = registry.find((entry) => entry.id === id);
 		selected = saved?.id ?? ''; revision = saved?.revision ?? 0; name = saved?.name ?? '';
 		current = structuredClone(data.settings);
@@ -66,9 +73,10 @@
 			outputCompression = options.outputCompression as number | undefined; background = String(options.background ?? ''); aspectRatio = String(options.aspectRatio ?? ''); resolution = String(options.resolution ?? '');
 		}
 		error = ''; notice = '';
-		if (provider === 'comfyui') void loadCatalog();
+		void loadCatalog();
 	}
 	function changeProvider(next: ImageProvider) {
+		resetCatalog();
 		provider = next; error = ''; notice = ''; seed = undefined;
 		if (next === 'comfyui') { baseUrl = current.baseUrl; void loadCatalog(); return; }
 		baseUrl = next === 'openai' ? 'https://api.openai.com/v1' : next === 'xai' ? 'https://api.x.ai/v1' : 'https://openrouter.ai/api/v1';
@@ -76,17 +84,28 @@
 		const candidates = next === 'openai' ? ['OPENAI_API_KEY', 'NEWERA_OPENAI_API_KEY'] : next === 'xai' ? ['X_AI_API_KEY', 'XAI_API_KEY', 'NEWERA_XAI_API_KEY'] : ['OPENROUTER_API_KEY', 'NEWERA_OPENROUTER_API_KEY'];
 		apiKeyEnv = candidates.find((key) => data.availableKeyNames.includes(key)) ?? candidates[0];
 		size = next === 'xai' ? '' : '1024x1024'; quality = 'low'; outputFormat = next === 'xai' ? '' : 'png'; outputCompression = undefined; background = ''; aspectRatio = next === 'xai' ? '16:9' : ''; resolution = next === 'xai' ? '1k' : '';
+		void loadCatalog();
+	}
+	function resetCatalog() {
+		catalogController?.abort(); catalogController = undefined; loadingModels = false;
+		catalog = null; hostedCatalog = null; catalogKey = ''; modelSearch = ''; connectionError = '';
 	}
 	async function loadCatalog() {
-		if (loadingModels || provider !== 'comfyui') return;
-		loadingModels = true; connectionError = ''; const address = baseUrl;
-		catalogController = new AbortController();
+		catalogController?.abort();
+		const pending = new AbortController(); catalogController = pending;
+		loadingModels = true; connectionError = ''; const key = connectionKey;
+		const connection = { provider, baseUrl, apiKeyEnv };
 		try {
-			const response = await fetch(`/api/images/comfyui?baseUrl=${encodeURIComponent(address)}`, { signal: catalogController.signal, cache: 'no-store' });
+			const response = connection.provider === 'comfyui'
+				? await fetch(`/api/images/comfyui?baseUrl=${encodeURIComponent(connection.baseUrl)}`, { signal: pending.signal, cache: 'no-store' })
+				: await fetch('/api/images/models', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(connection), signal: pending.signal, cache: 'no-store' });
 			const result = await response.json(); if (!response.ok) throw new Error(result.message);
-			catalog = result; catalogAddress = address;
-		} catch (cause) { if (!catalogController.signal.aborted) { connectionError = cause instanceof Error ? cause.message : '모델 목록을 불러오지 못했습니다.'; catalog = null; } }
-		finally { loadingModels = false; }
+			if (pending.signal.aborted || key !== connectionKey) return;
+			if (connection.provider === 'comfyui') catalog = result; else hostedCatalog = result;
+			catalogKey = key;
+		} catch (cause) {
+			if (!pending.signal.aborted && key === connectionKey) { connectionError = cause instanceof Error ? cause.message : '모델 목록을 불러오지 못했습니다.'; catalog = null; hostedCatalog = null; }
+		} finally { if (catalogController === pending) loadingModels = false; }
 	}
 	async function save(event: SubmitEvent) {
 		event.preventDefault(); if (saving) return; saving = true; error = ''; notice = '';
@@ -143,8 +162,13 @@
 					<p class="field-hint">{workflow.outputScale === 1 ? '기본 크기가 최종 이미지 크기입니다.' : 'ZIT는 기본 크기를 1.8배 확대한 뒤 세부 묘사를 생성합니다.'}</p>
 					{#if workflow.bindings.negativePrompt}<label>네거티브 프롬프트<textarea bind:value={profile.negativePrompt} rows="4" maxlength="32000" disabled={generating || saving}></textarea></label>{/if}
 				{:else}
-					<label>모델 ID<input bind:value={model} maxlength="200" required disabled={saving || generating} /></label>
 					<label>API 키 환경 변수<input bind:value={apiKeyEnv} list="image-key-names" required disabled={saving || generating} /></label><datalist id="image-key-names">{#each data.availableKeyNames as key}<option value={key}></option>{/each}</datalist><p class="field-hint">환경 변수 이름만 저장합니다. API 키 값은 프리셋에 포함하지 않습니다.</p>
+					<button type="button" onclick={loadCatalog} disabled={loadingModels || generating || saving}>{loadingModels ? '모델 조회 중…' : '서버 모델 불러오기'}</button>
+					{#if connectionError}<p class="feedback error" role="alert">{connectionError} 모델 ID를 직접 입력할 수도 있습니다.</p>{:else if hostedConnected}<p class="connection" role="status">이미지 생성 모델 {hostedCatalog!.models.length}개를 불러왔습니다.{hostedCatalog!.filter === 'model-family' ? ' OpenAI는 기능 정보를 제공하지 않아 GPT Image 계열 ID로 필터링합니다.' : ''}</p>{/if}
+					<label>모델 검색<input type="search" bind:value={modelSearch} placeholder="이름이나 ID로 검색" disabled={!hostedConnected || saving || generating} /></label>
+					<label>이미지 생성 모델<select value={model} onchange={(event) => { model = event.currentTarget.value; }} disabled={!hostedConnected || saving || generating}><option value="">목록에서 선택하세요</option>{#if model && !filteredModels.some((entry) => entry.id === model)}<option value={model}>{model} (현재 선택)</option>{/if}{#each filteredModels as entry (entry.id)}<option value={entry.id}>{entry.name === entry.id ? entry.id : `${entry.name} · ${entry.id}`}</option>{/each}</select></label>
+					{#if hostedConnected && !filteredModels.length}<p class="field-hint">{modelSearch.trim() ? '검색 결과가 없습니다.' : '표시할 이미지 생성 모델이 없습니다.'}</p>{/if}
+					<label>모델 ID<input bind:value={model} maxlength="200" required disabled={saving || generating} /></label><p class="field-hint">목록 선택과 직접 입력을 모두 지원합니다. 목록을 다시 불러와도 선택한 모델은 유지됩니다.</p>
 					{#if provider !== 'xai'}<label>이미지 크기<input bind:value={size} placeholder="1024x1024 · 비워두면 모델 기본값" disabled={saving || generating} /></label>{/if}
 					<label>품질<select bind:value={quality} disabled={saving || generating}><option value="">모델 기본값</option>{#each (provider === 'xai' ? ['auto', 'low', 'medium'] : provider === 'openai' ? ['auto', 'low', 'medium', 'high', 'xhigh', 'max'] : ['auto', 'low', 'medium', 'high']) as value}<option value={value}>{value}</option>{/each}</select></label>
 					{#if provider !== 'openai'}<label>화면 비율<input bind:value={aspectRatio} placeholder="16:9 · 비워두면 모델 기본값" disabled={saving || generating} /></label><label>해상도<select bind:value={resolution} disabled={saving || generating}><option value="">모델 기본값</option>{#each (provider === 'xai' ? ['1k', '2k'] : ['512', '768', '1K', '1.5K', '2K', '4K']) as value}<option value={value}>{value}</option>{/each}</select></label>{/if}

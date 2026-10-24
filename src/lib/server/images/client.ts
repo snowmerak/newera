@@ -1,25 +1,11 @@
 import { Buffer } from 'node:buffer';
 import type { GeneratedImage, HostedImageProvider, ImageClient, ImageGenerationRequest, ImageGenerationResult } from '$lib/images/types';
 import { ImageGenerationError, imageMediaType, maxImageBytes } from './common';
+import { resolveImageConnection, type ImageClientConfig } from './hosted';
+export type { ImageClientConfig } from './hosted';
 export { ImageGenerationError } from './common';
 export type { ImageErrorCode } from './common';
 
-/** Credentials and clients belong in server code, never in page data or world exports. */
-export interface ImageClientConfig<P extends HostedImageProvider = HostedImageProvider> {
-	provider: P;
-	apiKey?: string;
-	/** Defaults to NEWERA_OPENAI_API_KEY, NEWERA_XAI_API_KEY or NEWERA_OPENROUTER_API_KEY. */
-	apiKeyEnv?: string;
-	/** API root, including /v1 (OpenRouter: /api/v1). */
-	baseUrl?: string;
-	timeoutMs?: number;
-}
-
-const defaults = {
-	openai: { baseUrl: 'https://api.openai.com/v1', apiKeyEnv: 'NEWERA_OPENAI_API_KEY', path: '/images/generations' },
-	xai: { baseUrl: 'https://api.x.ai/v1', apiKeyEnv: 'NEWERA_XAI_API_KEY', path: '/images/generations' },
-	openrouter: { baseUrl: 'https://openrouter.ai/api/v1', apiKeyEnv: 'NEWERA_OPENROUTER_API_KEY', path: '/images' }
-} as const;
 const maxResponseBytes = 64 * 1024 * 1024;
 type Fields = Record<string, unknown>;
 const isRecord = (value: unknown): value is Fields => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -128,19 +114,8 @@ function result(provider: HostedImageProvider, request: Pick<ImageGenerationRequ
 /** A single non-streaming generation. Never retries a potentially billable request automatically. */
 export function createImageClient<P extends HostedImageProvider>(config: ImageClientConfig<P>): ImageClient<P> {
 	const provider = config.provider;
-	const invalid = (message: string): never => { throw new ImageGenerationError(provider, 'configuration', message); };
-	if (!Object.hasOwn(defaults, provider)) invalid('지원하지 않는 이미지 Provider입니다.');
-	const apiKeyEnv = config.apiKeyEnv ?? defaults[provider].apiKeyEnv;
-	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(apiKeyEnv)) invalid('API 키 환경 변수 이름이 올바르지 않습니다.');
-	const apiKey = config.apiKey ?? process.env[apiKeyEnv];
-	if (typeof apiKey !== 'string' || !apiKey.trim() || /[\r\n]/.test(apiKey)) invalid('이미지 API 키를 설정해 주세요.');
-	let baseUrl: URL;
-	try { baseUrl = new URL(config.baseUrl ?? defaults[provider].baseUrl); }
-	catch { return invalid('이미지 API 주소가 올바르지 않습니다.'); }
-	if (!['https:', 'http:'].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) invalid('API 주소는 인증 정보·쿼리·해시가 없는 HTTP(S) 주소여야 합니다.');
-	const endpoint = baseUrl.toString().replace(/\/+$/, '') + defaults[provider].path;
-	const timeoutMs = config.timeoutMs ?? 180000;
-	if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600000) invalid('이미지 요청 대기 시간은 1~600000ms여야 합니다.');
+	const { apiKey, baseUrl, generationPath, timeoutMs } = resolveImageConnection(config);
+	const endpoint = baseUrl + generationPath;
 	return {
 		async generate(request, signal) {
 			signal?.throwIfAborted();

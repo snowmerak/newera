@@ -62,7 +62,7 @@ await router.generate({
 - 공통: `model`, `prompt`(1~32000자), `count`(기본 1, 1~10). 모델별 실제 제한은 서비스가 최종 검증한다.
 - OpenAI: `size`, `quality`, `outputFormat`, `outputCompression`, `background`.
 - xAI: `aspectRatio`, `resolution`(`1k`/`2k`), `quality`(`auto`/`low`/`medium`). 품질 옵션의 지원 여부는 모델에 따라 다르다.
-- OpenRouter: `size`, `aspectRatio`, `resolution`, `quality`, `outputFormat`, `outputCompression`, `background`. 모델별 허용 범위는 `/api/v1/images/models`와 해당 모델의 `/endpoints`에서 확인한다. 이 클라이언트는 모델 검색이나 크기 자동 변환을 하지 않는다.
+- OpenRouter: `size`, `aspectRatio`, `resolution`, `quality`, `outputFormat`, `outputCompression`, `background`. 모델별 허용 범위는 `/api/v1/images/models`와 해당 모델의 `/endpoints`에서 확인한다. 모델 목록은 아래 조회 모듈에서 제공하며, 생성 클라이언트는 크기나 옵션을 자동 변환하지 않는다.
 
 압축률은 0~100이며 `jpeg`/`webp`를 명시해야 한다. JPEG와 투명 배경의 조합은 전송 전에 거부한다. 지원하지 않는 옵션도 조용히 버리지 않고 거부한다.
 
@@ -77,6 +77,24 @@ await router.generate({
 그 밖의 오류는 `ImageGenerationError`의 `provider`, `code`, 선택적인 HTTP `status`로 구분한다. 코드는 `configuration`, `invalid_request`, `http`, `network`, `timeout`, `invalid_response`, `content_filtered`, `execution`이다. API 오류 본문과 전송 예외 원문은 키·프롬프트 노출을 피하기 위해 반환하거나 로그에 쓰지 않는다.
 
 이미지 요청은 비용이 발생할 수 있으므로 **자동 재시도를 하지 않는다**. 특히 시간 초과·연결 실패·잘못된 응답은 원격 생성 실패나 과금 취소를 뜻하지 않는다. 호출 측에서 완료 여부와 재요청 정책을 정해야 한다.
+
+## 외부 API 모델 목록
+
+`/images`에서 외부 Provider 프리셋을 선택하면 현재 서버 주소와 키 환경 변수로 모델 목록을 조회한다. **서버 모델 불러오기**로 갱신하고, **모델 검색**에서 이름·ID를 대소문자 구분 없이 검색해 **이미지 생성 모델** 드롭다운에서 고를 수 있다. 새로고침·검색은 선택 모델을 변경하지 않는다. 목록에 없는 모델은 **모델 ID**에 직접 입력한다. 주소·키 환경 변수·Provider가 바뀌면 이전 목록은 사용할 수 없고, 이전 요청의 늦은 응답도 적용하지 않는다.
+
+| Provider | 조회 경로 (API 루트 기준) | 필터 기준 |
+| --- | --- | --- |
+| OpenAI | `GET /models` | `gpt-image-*`, `chatgpt-image-*` 모델 ID |
+| xAI | `GET /image-generation-models` | 전용 목록에서 text 입력·image 출력 확인 |
+| OpenRouter | `GET /images/models` | 전용 목록의 architecture에서 text 입력·image 출력 확인 |
+
+근거: [OpenAI 모델 목록](https://developers.openai.com/api/reference/resources/models/methods/list), [xAI 모델 API](https://docs.x.ai/developers/rest-api-reference/inference/models), [OpenRouter 모델 검색](https://openrouter.ai/docs/guides/overview/multimodal/image-generation#model-discovery).
+
+OpenAI 목록에는 이미지 생성 기능 메타데이터가 없어 알려진 GPT Image 계열 이름을 사용한다. 이름이 다른 새 계열은 직접 입력하거나 필터를 갱신해야 한다. 기존 DALL-E는 현재 생성 클라이언트의 GPT Image 응답 계약과 달라 목록에 포함하지 않는다. 모델 목록은 생성 성공·조직 권한·품질/크기/출력 형식 지원을 보장하지 않으며, 옵션은 모델별로 설정한다. OpenRouter의 `supported_parameters`에 따른 옵션 UI 자동 조정은 구현하지 않았다.
+
+서버 모듈은 `getHostedImageCatalog(config, signal?)`이며 생성과 동일한 API 루트·자격 증명 검증을 사용한다. 앱 경로 `POST /api/images/models`는 `{ provider, baseUrl, apiKeyEnv }`만 받아 서버에서 upstream GET을 실행하고 `{ provider, models: [{ id, name }], filter }`를 반환한다. 원시 키 전달은 거부하며 동일 출처 요청만 허용한다. 기본 시간 제한 20초, 응답 한도 4MiB·10000항목, 자동 재시도 없음, `Cache-Control: no-store`다. 오류 원문·응답의 부가 필드는 브라우저로 전달하지 않는다.
+
+2026-10-24 실제 환경 변수로 앱의 조회 경로를 호출해 OpenAI 10개, xAI 3개, OpenRouter 61개를 확인했다. 이는 조회 시점의 목록이며 생성 호출은 하지 않았다. 새 모델 조회 테스트 9개를 포함한 전체 단위/계약 테스트 145개와 기존 통합 테스트 18개가 통과했다. 프로덕션 빌드의 Chromium에서 세 Provider의 검색·선택·직접 입력·저장/재로드·늦은 응답 무시·390px 화면을 확인했다.
 
 ## 이미지 설정 프리셋과 세션별 선택
 
