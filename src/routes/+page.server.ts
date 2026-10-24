@@ -1,17 +1,25 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld, setWorldModels, stopJob } from '$lib/server/stage-store';
+import { getStageView, loadWorld, resetWorld, saveWorld, selectWorld, setWorldModels, setWorldImagePreset, stopJob } from '$lib/server/stage-store';
+import { listImagePresets } from '$lib/server/images/presets';
 import { ensureStageWorker, queueStageTurn, retryStageTurn } from '$lib/server/stage';
 import { getModelCatalog, modelSettings } from '$lib/server/oev';
 import { checkedModelSelection } from '$lib/theater/validation';
 import { resolveProviderSnapshot } from '$lib/server/providers';
 
-export const load: PageServerLoad = () => { ensureStageWorker(); return getStageView(); };
+export const load: PageServerLoad = () => { ensureStageWorker(); return { ...getStageView(), imagePresets: listImagePresets().map(({ id, name, revision, provider }) => ({ id, name, revision, provider })) }; };
 
 function failed(error: unknown) {
 	return fail(400, { message: error instanceof Error ? error.message : '요청을 처리하지 못했습니다.' });
 }
 export const actions: Actions = {
+	imagePreset: async ({ request }) => {
+		try {
+			const body = await request.formData();
+			setWorldImagePreset(String(body.get('worldId')), String(body.get('imagePresetId') ?? '') || null);
+			return { message: '이 세션의 이미지 프리셋을 적용했습니다.' };
+		} catch (error) { return failed(error); }
+	},
 	stop: async ({ request }) => {
 		try {
 			const body = await request.formData();

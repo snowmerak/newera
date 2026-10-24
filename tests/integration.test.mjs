@@ -803,8 +803,8 @@ test('fresh storage contains only scene-based data and rejects unsupported impor
 	let running = await app(directory, 'http://127.0.0.1:1/v1');
 	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
 	try {
-		assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((row) => row.name), ['theater_jobs', 'theater_meta', 'theater_saves', 'theater_worlds']);
-		assert.deepEqual(db.prepare('PRAGMA table_info(theater_worlds)').all().map((row) => row.name), ['id', 'revision', 'definition_json', 'state_json', 'created_at', 'model_settings_json']);
+		assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((row) => row.name), ['theater_image_presets', 'theater_jobs', 'theater_meta', 'theater_saves', 'theater_worlds']);
+		assert.deepEqual(db.prepare('PRAGMA table_info(theater_worlds)').all().map((row) => row.name), ['id', 'revision', 'definition_json', 'state_json', 'created_at', 'model_settings_json', 'image_preset_id']);
 		const unsupported = { format: 'newera-lore', version: 1, title: 'Unsupported', state: {}, saves: [] };
 		const file = new FormData(); file.append('file', new Blob([JSON.stringify(unsupported)]), 'unsupported.json');
 		const response = await fetch(`${running.base}/lores?/importWorld`, { method: 'POST', headers: { origin: running.base }, body: file });

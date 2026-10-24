@@ -3,8 +3,13 @@ import type { Actions, PageServerLoad } from './$types';
 import { comfyPresets } from '$lib/images/comfyui';
 import { getComfySettings, saveComfySettings } from '$lib/server/images/comfy-settings';
 import { requiredComfyNodes } from '$lib/server/images/comfy-workflows';
+import { listImagePresets } from '$lib/server/images/presets';
 
-export const load: PageServerLoad = () => ({ settings: getComfySettings(), presets: comfyPresets.map((preset) => ({ ...preset, requiredNodeTypes: requiredComfyNodes(preset.id) })) });
+export const load: PageServerLoad = () => {
+	const imagePresets = listImagePresets();
+	const keys = ['OPENAI_API_KEY', 'XAI_API_KEY', 'X_AI_API_KEY', 'OPENROUTER_API_KEY', 'NEWERA_OPENAI_API_KEY', 'NEWERA_XAI_API_KEY', 'NEWERA_OPENROUTER_API_KEY', ...imagePresets.flatMap((preset) => preset.config.provider === 'comfyui' ? [] : [preset.config.apiKeyEnv])];
+	return { settings: getComfySettings(), presets: comfyPresets.map((preset) => ({ ...preset, requiredNodeTypes: requiredComfyNodes(preset.id) })), imagePresets, availableKeyNames: [...new Set(keys)].filter((key) => !!process.env[key]) };
+};
 export const actions: Actions = {
 	save: async ({ request }) => {
 		try {

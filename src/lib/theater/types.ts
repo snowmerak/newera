@@ -190,6 +190,7 @@ export interface World {
 	definition: WorldDefinition;
 	state: WorldState;
 	models?: ModelSelection | null;
+	imagePresetId?: string | null;
 }
 export interface WorldSummary { id: string; name: string; revision: number }
 export interface StageAction {

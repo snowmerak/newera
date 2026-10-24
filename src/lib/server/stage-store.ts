@@ -18,6 +18,10 @@ export function store(): DatabaseSync {
 	mkdirSync(directory, { recursive: true });
 	const db = new DatabaseSync(join(directory, 'newera.sqlite'), { timeout: 5000 });
 	db.exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
+		CREATE TABLE IF NOT EXISTS theater_image_presets (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, revision INTEGER NOT NULL,
+			config_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+		);
 		CREATE TABLE IF NOT EXISTS theater_worlds (
 			id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, definition_json TEXT NOT NULL,
 			state_json TEXT NOT NULL, created_at TEXT NOT NULL, model_settings_json TEXT
@@ -41,6 +45,7 @@ export function store(): DatabaseSync {
 	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'providers_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN providers_json TEXT');
 	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'inputs_json')) db.exec('ALTER TABLE theater_jobs ADD COLUMN inputs_json TEXT');
 	if (!(db.prepare('PRAGMA table_info(theater_worlds)').all() as Row[]).some((column) => column.name === 'model_settings_json')) db.exec('ALTER TABLE theater_worlds ADD COLUMN model_settings_json TEXT');
+	if (!(db.prepare('PRAGMA table_info(theater_worlds)').all() as Row[]).some((column) => column.name === 'image_preset_id')) db.exec('ALTER TABLE theater_worlds ADD COLUMN image_preset_id TEXT REFERENCES theater_image_presets(id)');
 	database = db;
 	try {
 		transaction(() => {
@@ -75,7 +80,16 @@ export function selectWorld(id: string): void { getWorld(id); setActive(id); }
 export function getWorld(id = activeWorldId()): World {
 	const row = store().prepare('SELECT * FROM theater_worlds WHERE id = ?').get(id) as Row | undefined;
 	if (!row) throw new Error('세계관을 찾을 수 없습니다.');
-	return { id: String(row.id), revision: Number(row.revision), definition: JSON.parse(String(row.definition_json)), state: JSON.parse(String(row.state_json)), models: row.model_settings_json ? checkedModelSelection(JSON.parse(String(row.model_settings_json))) : null };
+	return { id: String(row.id), revision: Number(row.revision), definition: JSON.parse(String(row.definition_json)), state: JSON.parse(String(row.state_json)), models: row.model_settings_json ? checkedModelSelection(JSON.parse(String(row.model_settings_json))) : null, imagePresetId: row.image_preset_id ? String(row.image_preset_id) : null };
+}
+
+/** Image selection is a session preference, independent of story revisions and save slots. */
+export function setWorldImagePreset(id: string, presetId: string | null): void {
+	transaction(() => {
+		getWorld(id);
+		if (presetId !== null && !store().prepare('SELECT id FROM theater_image_presets WHERE id = ?').get(presetId)) throw new Error('선택한 이미지 프리셋이 없습니다. 목록을 새로 불러와 주세요.');
+		store().prepare('UPDATE theater_worlds SET image_preset_id = ? WHERE id = ?').run(presetId, id);
+	});
 }
 
 /** Operational session preferences apply to the next accepted job, without invalidating an active job. */
@@ -272,7 +286,7 @@ export function importWorld(raw: string, replace?: { worldId: string; revision: 
 			if (previous.revision !== replace.revision) throw new Error('세계관이 변경되었습니다. 새로고침 후 다시 시도해 주세요.');
 			id = previous.id;
 			clearWorldHistory(id);
-			store().prepare('UPDATE theater_worlds SET definition_json = ?, state_json = ?, model_settings_json = NULL, revision = revision + 1 WHERE id = ?')
+			store().prepare('UPDATE theater_worlds SET definition_json = ?, state_json = ?, model_settings_json = NULL, image_preset_id = NULL, revision = revision + 1 WHERE id = ?')
 				.run(JSON.stringify(definition), JSON.stringify(state), id);
 		} else id = insertWorld(definition, state);
 		for (const save of saves) store().prepare('INSERT INTO theater_saves VALUES (?, ?, ?, ?)').run(id, save.slot, save.savedAt, JSON.stringify(save.world));

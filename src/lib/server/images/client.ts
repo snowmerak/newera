@@ -68,6 +68,9 @@ function requestBody(provider: HostedImageProvider, request: ImageGenerationRequ
 	return body;
 }
 
+/** Validate saved options without resolving credentials or making a billable request. */
+export function validateHostedImageRequest(provider: HostedImageProvider, request: ImageGenerationRequest): void { requestBody(provider, request); }
+
 async function readJson(response: Response, provider: HostedImageProvider, signal: AbortSignal): Promise<unknown> {
 	const invalid = () => new ImageGenerationError(provider, 'invalid_response', '이미지 응답 형식이 잘못되었거나 64MiB 한도를 초과했습니다.');
 	if (!response.body) throw invalid();

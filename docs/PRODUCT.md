@@ -92,7 +92,7 @@ worker는 15초 lease와 3초 heartbeat를 사용한다. 요청이나 상태 조
 
 설정 편집·슬롯 불러오기·진행 초기화는 리비전을 올린다. 슬롯 저장과 화면의 세계관 전환은 진행 리비전을 바꾸지 않는다. 슬롯은 정의와 진행을 함께 보관한다. JSON 가져오기는 전체 참조와 상태를 먼저 검증한 뒤 새 세계관으로 삽입한다.
 
-저장소는 `theater_worlds`, `theater_meta`, `theater_saves`, `theater_jobs`로 구성한다. 씬 기반 version 2 파일만 가져올 수 있으며 구형 형식의 변환·자동 이전·원본 아카이브 보관은 지원하지 않는다.
+저장소는 `theater_worlds`, `theater_meta`, `theater_saves`, `theater_jobs`, `theater_image_presets`로 구성한다. 이미지 생성 프리셋은 앱 전체에서 관리하고 `theater_worlds.image_preset_id`로 세션마다 선택한다. 이 운영 설정은 진행 리비전을 바꾸지 않으며 슬롯·진행 초기화에도 유지하고 세계관 내보내기에는 포함하지 않는다. 프리셋 변경·삭제·생성과 연결 중단의 계약은 [이미지 생성 문서](IMAGE_GENERATION.md)를 따른다. 씬 기반 version 2 파일만 가져올 수 있으며 구형 형식의 변환·자동 이전·원본 아카이브 보관은 지원하지 않는다.
 
 ## 현재 범위
 

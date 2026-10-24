@@ -5,8 +5,8 @@ import type { ComfySettings } from '$lib/images/comfyui';
 import { checkedComfyProfile, checkedComfyUrl, comfyError, comfyPreset, defaultComfyProfile } from './comfy-workflows';
 
 const configPath = () => resolve(process.env.NEWERA_COMFYUI_CONFIG || resolve(process.env.NEWERA_DATA_DIR || 'data', 'comfyui.json'));
-export function defaultComfySettings(): ComfySettings {
-	return { version: 1, revision: 0, baseUrl: checkedComfyUrl(process.env.NEWERA_COMFYUI_BASE_URL || 'http://localhost:22222'), presetId: 'zit-moody', profiles: { 'zit-moody': defaultComfyProfile('zit-moody'), 'sdxl-simple': defaultComfyProfile('sdxl-simple'), 'anima-preview': defaultComfyProfile('anima-preview') } };
+export function defaultComfySettings(baseUrl = process.env.NEWERA_COMFYUI_BASE_URL || 'http://localhost:22222'): ComfySettings {
+	return { version: 1, revision: 0, baseUrl: checkedComfyUrl(baseUrl), presetId: 'zit-moody', profiles: { 'zit-moody': defaultComfyProfile('zit-moody'), 'sdxl-simple': defaultComfyProfile('sdxl-simple'), 'anima-preview': defaultComfyProfile('anima-preview') } };
 }
 export function checkedComfySettings(input: unknown): ComfySettings {
 	if (!input || typeof input !== 'object' || Array.isArray(input)) throw comfyError('configuration', 'ComfyUI 설정이 올바르지 않습니다.');

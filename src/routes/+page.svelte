@@ -13,11 +13,13 @@
 	import type { PageProps } from './$types';
 	import CharacterIntroduction from '$lib/components/CharacterIntroduction.svelte';
 	import ProviderManager from '$lib/components/ProviderManager.svelte';
+	import SessionImageSettings from '$lib/components/SessionImageSettings.svelte';
 	import type { ModelOption } from '$lib/providers/types';
 	let { data, form }: PageProps = $props();
 	let submitting = $state(false);
 	let targetId = $state('');
 	let modelsDialog = $state<HTMLDialogElement>();
+	let imagesDialog = $state<HTMLDialogElement>();
 	let resetDialog = $state<HTMLDialogElement>();
 	let resetError = $state('');
 	let historyElement = $state<HTMLDivElement>();
@@ -159,12 +161,16 @@
 <header class="topbar">
  <a class="brand" href="/">newera<span>THEATER</span></a>
  <nav class="session-actions" aria-label="세션 관리">
-  <a class="top-link" href="/images">이미지 설정</a>
+  <button type="button" onclick={() => imagesDialog?.showModal()}>이미지 설정</button>
   <button type="button" onclick={() => { modelsDialog?.showModal(); if (!modelCatalog) void loadModels(); }}>모델 설정</button>
   <button type="button" onclick={() => { resetError = ''; resetDialog?.showModal(); }}>처음부터 다시</button>
   <a class="top-link" href="/lores">세계관과 무대 편집 ↗</a>
  </nav>
 </header>
+<dialog class="session-dialog" aria-label="이미지 설정" bind:this={imagesDialog}>
+ <form method="dialog" class="dialog-close"><button aria-label="이미지 설정 닫기">닫기</button></form>
+ {#key world.id}<SessionImageSettings {world} presets={data.imagePresets} />{/key}
+</dialog>
 <dialog class="session-dialog" aria-labelledby="models-dialog-title" bind:this={modelsDialog}>
  <form method="dialog" class="dialog-close"><button aria-label="모델 설정 닫기">닫기</button></form>
 		<div class="model-settings">
@@ -194,7 +200,7 @@
 <dialog class="session-dialog" aria-labelledby="reset-dialog-title" bind:this={resetDialog}>
  <form method="dialog" class="dialog-close"><button aria-label="초기화 창 닫기">닫기</button></form>
  <h2 id="reset-dialog-title">처음부터 다시</h2>
- <p>현재 세계관의 진행·대화·기억을 지우고 초기 배치로 돌아갑니다. 저장 슬롯과 모델 설정은 유지됩니다.</p>
+ <p>현재 세계관의 진행·대화·기억을 지우고 초기 배치로 돌아갑니다. 저장 슬롯과 모델·이미지 설정은 유지됩니다.</p>
  <a class="session-export" href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>초기화 전에 공연 기록 내려받기</a>
  {#if generating}<p>생성 중에는 먼저 「생성 중단」을 눌러 주세요.</p>{/if}
  <form method="POST" action="?/reset" use:enhance={submitReset} class="reset-form">

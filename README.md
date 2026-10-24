@@ -132,7 +132,9 @@ npm start
 
 ## 이미지 생성 클라이언트
 
-OpenAI·Grok(xAI)·OpenRouter 서버 클라이언트와 ComfyUI 기본 워크플로우 **ZIT · Moody Minimal / SDXL · Simple / Anima · Preview**를 제공합니다. 상단 **이미지 설정**(`/images`)에서 ComfyUI 서버의 모델을 조회하고, 워크플로우별 모델·크기·LoRA·네거티브 프롬프트를 저장하고 테스트 이미지를 생성합니다. 기본 서버는 `http://localhost:22222`입니다. 결과는 `SaveImageWebsocket`으로 직접 받아 브라우저에 표시하며, 내려받기를 누르기 전에는 이미지 파일을 저장하지 않습니다. [설정과 사용 예](docs/IMAGE_GENERATION.md)를 참고하세요. 공연 중 자동 삽화·영구 이미지 저장·참조 이미지 입력은 후속 작업입니다.
+**이미지 생성 프리셋**(`/images`)에서 OpenAI·Grok(xAI)·OpenRouter·ComfyUI의 서버·모델·화풍과 생성 옵션을 이름으로 저장하고 복사·수정합니다. ComfyUI는 **ZIT · Moody Minimal / SDXL · Simple / Anima · Preview** 워크플로우를 제공하며 기본 서버는 `http://localhost:22222`입니다. 서버에서 모델을 조회해 선택할 수 있습니다. 외부 API 키는 환경 변수 이름으로만 참조합니다.
+
+공연 화면 상단 **이미지 설정**에서 현재 세션의 프리셋을 선택하고, 그 프리셋으로 삽화를 직접 생성할 수 있습니다. 선택은 세계관별로 독립적이며 진행 초기화·저장 슬롯 불러오기에도 유지됩니다. 사용 중인 프리셋의 삭제는 막고, 수정한 설정은 다음 생성부터 적용합니다. ComfyUI 결과는 `SaveImageWebsocket`으로 받아 브라우저에 표시합니다. [설정과 사용 예](docs/IMAGE_GENERATION.md)를 참고하세요. 공연 중 자동 삽화·영구 이미지 저장·참조 이미지 입력은 후속 작업입니다.
 
 ## 데이터 형식
 
