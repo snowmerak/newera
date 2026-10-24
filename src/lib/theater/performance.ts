@@ -1,5 +1,14 @@
-import type { ActorExpression, StageAction } from './types.ts';
+import type { ActorExpression, StageAction, WitnessedEvent } from './types.ts';
 import { checkedMemo, record, text } from './validation.ts';
+
+/** Compare public output, not private memo, model or event timestamps. Inputs have already passed schema validation. */
+export function isExactRepeat(previous: WitnessedEvent | undefined, actorId: string, sceneId: string, action: StageAction, expression: ActorExpression): boolean {
+	if (!previous || previous.actorId !== actorId || previous.sceneId !== sceneId || previous.targetId !== action.targetId) return false;
+	if (action.kind === 'move' ? previous.kind !== 'leave' && previous.kind !== 'move' : previous.kind !== action.kind) return false;
+	if (action.kind === 'interact' && previous.interactionId !== action.interactionId) return false;
+	if (action.kind === 'move' && previous.destinationId !== action.destinationId) return false;
+	return previous.body.narrative === expression.narrative && previous.body.utterance === expression.utterance;
+}
 
 function exactKeys(source: Record<string, unknown>, keys: string[], label: string): void {
 	if (Object.keys(source).length !== keys.length || keys.some((key) => !Object.hasOwn(source, key))) throw new Error(`${label}: 허용되지 않거나 누락된 항목이 있습니다.`);

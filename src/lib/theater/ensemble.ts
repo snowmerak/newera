@@ -1,16 +1,17 @@
 import { applyAction, availableActions, beginTurn, observation, residents, templateFor } from './runtime.ts';
-import { checkedExpression } from './performance.ts';
+import { checkedExpression, isExactRepeat } from './performance.ts';
+import { memoryForEvent } from './memory.ts';
 import { applyReflection, reflectionContext } from './reflection.ts';
 import { applyAppearance, needsAppearance } from './appearance.ts';
 import { inactivityModes } from './types.ts';
-import type { ActorPerformance, CharacterReflection, InactivityMode, OutfitOption, PlayerRequest, ReflectionContext, StageAction, TurnProgress, World } from './types.ts';
+import type { ActorPerformance, CharacterReflection, InactivityMode, OutfitOption, PlayerRequest, ReflectionContext, StageAction, TurnProgress, WitnessedEvent, World } from './types.ts';
 
 export interface ActorDecision { act: boolean; model: string; inactivity?: InactivityMode }
 export interface Director {
 	chooseAppearance?(state: Record<string, unknown>, outfits: OutfitOption[]): Promise<{ outfitId: string; model: string }>;
 	reflect(state: Record<string, unknown>, context: ReflectionContext): Promise<CharacterReflection>;
 	decide(state: Record<string, unknown>): Promise<ActorDecision>;
-	perform(state: Record<string, unknown>, actions: StageAction[], writingStyle?: string): Promise<ActorPerformance>;
+	perform(state: Record<string, unknown>, actions: StageAction[], writingStyle?: string, previousAction?: WitnessedEvent): Promise<ActorPerformance>;
 }
 
 interface TurnExecution {
@@ -120,8 +121,10 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 				}
 			} else {
 				const candidates = actions.filter((action) => action.kind !== 'wait');
+				const previous = draft.state.events.findLast((event) => event.actorId === actor.id && ['speak', 'interact', 'leave', 'move'].includes(event.kind));
+				const previousAction = previous ? memoryForEvent(previous) : undefined;
 				let performance: ActorPerformance;
-				try { performance = await director.perform(state, candidates, draft.definition.writingStyle); }
+				try { performance = await director.perform(state, candidates, draft.definition.writingStyle, previousAction); }
 				catch (error) {
 					checkpoint();
 					if (execution.nextInput?.(progress.consumedInputs)) continue;
@@ -132,10 +135,14 @@ export async function resolveTurn(original: World, request: PlayerRequest, direc
 				if (execution.nextInput?.(progress.consumedInputs)) continue;
 				const expression = checkedExpression(output, candidates);
 				const action = candidates.find((candidate) => candidate.id === expression.actionId)!;
-				const text = [expression.narrative, expression.utterance].filter(Boolean).join('\n') || action.label;
-				applyAction(draft, actor.id, action, text, { model: decision.model, choice: action.id, acted: true, generationModel: model }, expression);
-				delete actor.inactivity;
-				if (expression.memoUpdate) actor.memo = expression.memoUpdate;
+				if (isExactRepeat(previousAction, actor.id, actor.sceneId, action, expression)) {
+					actor.inactivity = { mode: 'idle', tick: draft.state.tick, model: decision.model };
+				} else {
+					const text = [expression.narrative, expression.utterance].filter(Boolean).join('\n') || action.label;
+					applyAction(draft, actor.id, action, text, { model: decision.model, choice: action.id, acted: true, generationModel: model }, expression);
+					delete actor.inactivity;
+					if (expression.memoUpdate) actor.memo = expression.memoUpdate;
+				}
 			}
 		}
 		progress.pendingActorIds.shift();

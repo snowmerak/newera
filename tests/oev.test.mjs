@@ -42,6 +42,17 @@ function provider(options = {}) {
 	return calls;
 }
 
+test('a structurally valid exact repeat skips model reviews and regeneration for the host to choose silent idle', async () => {
+	const calls = provider({ reviewChoice: 'revise' });
+	const previous = { eventId: 'old', tick: 1, actorId: 'actor', targetId: 'player', sceneId: 'room', kind: 'speak', body: { narrative: null, utterance: '반가워요. 같이 준비할까요?' } };
+	try {
+		const director = await createDirector(new AbortController().signal);
+		const output = await director.perform({ ...state, scene: { id: 'room' } }, actions, '', previous);
+		assert.equal(output.utterance, previous.body.utterance);
+		assert.deepEqual(calls.map(call => call.url.split('/').at(-1)), ['models', 'completions']);
+	} finally { globalThis.fetch = originalFetch; }
+});
+
 test('each inference receives only its own context and keeps witnessed actions with their actual authors', () => {
 	const events = Array.from({ length: 20 }, (_, index) => ({ eventId: `event-${index}`, tick: index, actorId: index === 12 ? 'player' : index === 13 ? 'actor' : 'peer', targetId: 'light', kind: 'interact', body: { narrative: `실제 행동 ${index}`, utterance: null }, changes: { on: false } }));
 	const input = {

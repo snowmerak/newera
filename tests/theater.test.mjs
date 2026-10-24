@@ -5,6 +5,7 @@ import { initialState, beginTurn, availableActions, applyAction, observation } f
 import { resolveTurn as executeTurn, restoredProgress } from '../src/lib/theater/ensemble.ts';
 import { eventContent } from '../src/lib/theater/event-content.ts';
 import { memoryForEvent } from '../src/lib/theater/memory.ts';
+import { isExactRepeat } from '../src/lib/theater/performance.ts';
 import { sceneGraph } from '../src/lib/theater/scene-graph.ts';
 import { validateDefinition, validateState } from '../src/lib/theater/validation.ts';
 import { buildBundle, validateBundle } from '../skills/newera-lore-authoring/scripts/lore-format.mjs';
@@ -22,6 +23,76 @@ function soloWorld() {
 	instance(stage, 'harin').active = false;
 	return stage;
 }
+
+test('exact repeated speech or physical action becomes silent idle without events, effects or proposed memo changes', async () => {
+	for (const physical of [false, true]) {
+		let calls = 0, cursor;
+		const memo = { summary: '확정한 생각', currentIntention: '종을 확인한다.', feelings: [], openThreads: [] };
+		const result = await resolveTurn(soloWorld(), { kind: 'speak', text: '계속해줘.', targetId: 'seoyeon' }, {
+			async decide() { return { act: true, model: 'decision' }; },
+			async perform(state, actions, style, previousAction) {
+				assert.ok(++calls <= 2, 'a duplicate must end self requeueing');
+				if (calls === 1) assert.equal(previousAction, undefined);
+				else assert.equal(previousAction.actorId, 'seoyeon');
+				return { actionId: physical ? 'interact:desk-bell:ring' : 'speak:player', targetId: physical ? 'desk-bell' : 'player', narrative: physical ? '탁상 종을 누른다.' : '고개를 끄덕인다.', utterance: physical ? null : '여기서 기다릴게.', memoUpdate: calls === 1 ? memo : { ...memo, summary: '실행하지 않은 반복을 기억하면 안 된다.' }, model: calls === 1 ? 'first-model' : 'changed-model' };
+			}
+		}, () => {}, { onProgress: (_, progress) => { cursor = structuredClone(progress); } });
+		assert.equal(calls, 2);
+		assert.deepEqual(instance(result, 'seoyeon').inactivity, { mode: 'idle', tick: 1, model: 'decision' });
+		assert.deepEqual(instance(result, 'seoyeon').memo, memo);
+		assert.equal(result.state.events.filter(event => event.actorId === 'seoyeon').length, 1);
+		assert.equal(result.state.events.filter(event => event.kind === 'wait').length, 0);
+		assert.equal(result.state.events.filter(event => event.actorId === 'desk-bell').length, physical ? 1 : 0);
+		assert.equal(instance(result, 'seoyeon').memories.length, physical ? 3 : 2);
+		assert.deepEqual(cursor, { pendingActorIds: [], completedDecisions: 2, consumedInputs: 0 });
+		assert.equal(result.state.minute, 1081);
+	}
+});
+
+test('repeat matching uses the last real action across persisted history, excluding waits and other speakers', async () => {
+	const stage = world();
+	const speak = availableActions(stage, 'seoyeon').find(action => action.id === 'speak:player');
+	applyAction(stage, 'seoyeon', speak, '기다릴게.', undefined, { narrative: null, utterance: '기다릴게.' });
+	for (let i = 0; i < 20; i++) applyAction(stage, 'harin', speak, `새 사건 ${i}`, undefined, { narrative: null, utterance: `새 사건 ${i}` });
+	applyAction(stage, 'seoyeon', availableActions(stage, 'seoyeon').find(action => action.kind === 'wait'), '주변을 지켜본다.');
+	instance(stage, 'harin').active = false;
+	beginTurn(stage, { kind: 'speak', text: '계속해줘.', targetId: 'seoyeon' });
+	stage.state = validateState(JSON.parse(JSON.stringify(stage.state)), stage.definition);
+	const before = structuredClone(stage.state.events);
+	assert.ok(!observation(stage, instance(stage, 'seoyeon')).self.memories.some(event => event.body?.utterance === '기다릴게.'));
+	let calls = 0;
+	const result = await resolveTurn(stage, { kind: 'speak', text: '계속해줘.', targetId: 'seoyeon' }, {
+		async decide() { return { act: true, model: 'fake' }; },
+		async perform() { calls++; return { actionId: 'speak:player', targetId: 'player', narrative: null, utterance: '기다릴게.', memoUpdate: null, model: 'fake' }; }
+	}, () => {}, { progress: { pendingActorIds: ['seoyeon'], completedDecisions: 1, consumedInputs: 0 } });
+	assert.equal(calls, 1);
+	assert.deepEqual(result.state.events, before);
+	assert.equal(instance(result, 'seoyeon').inactivity.mode, 'idle');
+});
+
+test('exact equality keeps actor, scene, target, action details and both body fields distinct', () => {
+	const action = { id: 'speak:player', kind: 'speak', targetId: 'player' };
+	const expression = { actionId: action.id, targetId: action.targetId, narrative: '웃는다.', utterance: '안녕.', memoUpdate: null };
+	const previous = { actorId: 'seoyeon', sceneId: 'lobby', kind: 'speak', targetId: 'player', body: { narrative: expression.narrative, utterance: expression.utterance } };
+	const matches = (event = previous, candidate = action, output = expression) => isExactRepeat(event, 'seoyeon', 'lobby', candidate, output);
+	assert.equal(matches(), true);
+	assert.equal(matches({ ...previous, actorId: 'harin' }), false);
+	assert.equal(matches({ ...previous, sceneId: 'stage' }), false);
+	assert.equal(matches(previous, { ...action, id: 'speak:harin', targetId: 'harin' }), false);
+	assert.equal(matches(previous, action, { ...expression, narrative: '고개를 끄덕인다.' }), false);
+	assert.equal(matches(previous, action, { ...expression, utterance: '안녕!' }), false);
+	assert.equal(matches(previous, action, { ...expression, utterance: '안 녕.' }), false);
+	const move = { id: 'move:stage', kind: 'move', targetId: null, destinationId: 'stage' };
+	const movement = { ...expression, actionId: move.id, targetId: null, utterance: null };
+	const leaving = { ...previous, kind: 'leave', targetId: null, destinationId: 'stage', body: { narrative: movement.narrative, utterance: null } };
+	assert.equal(matches(leaving, move, movement), true);
+	assert.equal(matches({ ...leaving, destinationId: 'rehearsal' }, move, movement), false);
+	const interact = { id: 'interact:light:on', kind: 'interact', targetId: 'light', interactionId: 'on' };
+	const interacting = { ...movement, actionId: interact.id, targetId: 'light' };
+	const used = { ...previous, kind: 'interact', targetId: 'light', interactionId: 'on', body: { narrative: interacting.narrative, utterance: null } };
+	assert.equal(matches(used, interact, interacting), true);
+	assert.equal(matches({ ...used, interactionId: 'off' }, interact, interacting), false);
+});
 
 test('a lone actor reconsiders its own committed speech and object use until choosing not to participate', async () => {
 	for (const mode of ['watch', 'continue', 'idle']) {

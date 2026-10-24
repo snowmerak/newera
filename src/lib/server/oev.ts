@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { ActorDecision, Director } from '$lib/theater/ensemble';
 import type { InactivityMode, ModelSelection } from '$lib/theater/types';
 import { identityReviewContext, inactivityContext, outfitContext, participationContext, performanceContext, performanceReviewContext, reflectionInput } from '$lib/theater/inference-context';
-import { checkedExpression, performanceSchema } from '$lib/theater/performance';
+import { checkedExpression, isExactRepeat, performanceSchema } from '$lib/theater/performance';
 import { reflectionSchema } from '$lib/theater/reflection';
 import { checkedModelSelection, checkedReflection, record, text } from '$lib/theater/validation';
 import { RetryableError, withRetries, type RetryPolicy } from './retry';
@@ -272,7 +272,7 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 			const inactivity = await choose('비참여 태도 판단', 'inactivity', inactivityContext(state), '새로 참여하지 않기로 했다. 주의를 기울여 지켜보면 watch, 실제로 이미 하던 일을 이어가면 continue, 활동하거나 주시하지 않으면 idle이다. 목표·계획만으로 하던 일이 있다고 가정하지 않는다. 이전 inactivity는 영구 지시가 아니다. 이동·작업 완료·시간 진행을 확정하지 않는다.', { watch: '주변을 주의 깊게 지켜본다.', continue: '실제로 이미 하던 일을 계속한다.', idle: '아무것도 하지 않는다.' });
 			return { act: false, inactivity: inactivity as InactivityMode, model: decisionModel };
 		},
-		async perform(state, actions, writingStyle = '') {
+		async perform(state, actions, writingStyle = '', previousAction) {
 			const self = state.self as Record<string, unknown>;
 			const context = performanceContext(state, settings.generationHistoryTokens);
 			console.info('[생성 히스토리] 입력 구성', { model: textModel, ...(context.historyWindow as Record<string, unknown>), events: (context.history as unknown[]).length });
@@ -295,6 +295,9 @@ export async function createDirector(signal: AbortSignal, models?: ModelSelectio
 						]
 					}, routes.text);
 					const expression = generatedOutput(() => checkedExpression(structuredResponse(response), actions));
+					const action = actions.find((candidate) => candidate.id === expression.actionId)!;
+					// The host converts exact repeats to silent idle; no semantic review or regeneration is needed.
+					if (isExactRepeat(previousAction, String(self.id), String((state.scene as Record<string, unknown>)?.id ?? ''), action, expression)) return { ...expression, model: textModel };
 					const identityCheck = await choose('화자 정체성 검수', 'identity_check', identityReviewContext(state, expression), '제안된 대사와 메모의 나는 고정 화자 speaker를 가리킨다. 대사가 화자의 이름·나이대·직업·역할과 모순되는 자기소개를 하는지 확인한다. 모순이 있으면 contradiction이다. 다른 사람의 자기소개를 화자가 자기 것처럼 답해도 contradiction이다.', { consistent: '이 제안의 자기소개는 고정 화자의 실제 정체성과 모순되지 않는다.', contradiction: '이 제안은 고정 화자와 다른 사람의 정체성으로 자기소개한다.' });
 					if (identityCheck !== 'consistent') throw new RetryableError('고정 화자의 이름·역할과 다른 정체성으로 생성되었습니다.');
 					const review = await choose('행동·대사 검수', 'performance_check', performanceReviewContext(state, expression), 'proposal을 기록하기 전에 검수한다. 고정 화자는 identity의 speaker뿐이다. 플레이어 이름·답변·선택을 대신 만들거나, 다른 사람의 역할로 답하거나, 새 계기 없이 이미 답을 기다리는 질문을 다시 묻는 제안은 revise다. 자기 이름·역할·알고 있는 사실과 충돌하거나 메모가 타인의 발언을 자기 경험으로 바꾸는 경우도 revise다. 과거 발언과 메모 자체가 주체 혼동일 수 있으므로 고정 정체성과 실제 actorId를 우선한다. 자기 역할에 맞는 제안은 accept다. 새 사건이나 격한 감정에 따른 의미 있는 반복과 실제로 관측한 것에 대한 반응은 허용한다.', { accept: '자기 역할과 사건 주체를 지키며 유효한 새 반응이다.', revise: '다른 역할의 답변·플레이어 대신 결정·주체 혼동·의미 없는 질문 반복을 수정해야 한다.' });

@@ -32,11 +32,11 @@ async function processJob(id: string): Promise<void> {
 			chooseAppearance: async (state, outfits) => (await connection()).chooseAppearance!(state, outfits),
 			reflect: async (state, context) => (await connection()).reflect(state, context),
 			decide: async (state) => (await connection()).decide(await recall(getWorld(job.worldId), state)),
-			perform: async (state, actions, writingStyle) => {
+			perform: async (state, actions, writingStyle, previousAction) => {
 				const world = getWorld(job.worldId);
 				const observed = await recall(world, state);
 				checkpoint();
-				return (await connection()).perform({ ...observed, generationEvents: generationHistoryEvents(world, String((state.self as Record<string, unknown>).id)) }, actions, writingStyle);
+				return (await connection()).perform({ ...observed, generationEvents: generationHistoryEvents(world, String((state.self as Record<string, unknown>).id)) }, actions, writingStyle, previousAction);
 			}
 		};
 		do {
