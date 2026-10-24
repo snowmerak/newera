@@ -159,6 +159,7 @@
 <header class="topbar">
  <a class="brand" href="/">newera<span>THEATER</span></a>
  <nav class="session-actions" aria-label="세션 관리">
+  <a class="top-link" href="/images">이미지 설정</a>
   <button type="button" onclick={() => { modelsDialog?.showModal(); if (!modelCatalog) void loadModels(); }}>모델 설정</button>
   <button type="button" onclick={() => { resetError = ''; resetDialog?.showModal(); }}>처음부터 다시</button>
   <a class="top-link" href="/lores">세계관과 무대 편집 ↗</a>

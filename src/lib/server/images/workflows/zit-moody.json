@@ -1,0 +1,226 @@
+{
+  "599": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": [
+        "649",
+        0
+      ],
+      "steps": 9,
+      "cfg": 1,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "beta",
+      "start_at_step": 0,
+      "end_at_step": 7,
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "822",
+        0
+      ],
+      "positive": [
+        "627",
+        0
+      ],
+      "negative": [
+        "763",
+        0
+      ],
+      "latent_image": [
+        "698",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "고급 KSampler"
+    }
+  },
+  "610": {
+    "inputs": {
+      "samples": [
+        "638",
+        0
+      ],
+      "vae": [
+        "757",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE 디코드"
+    }
+  },
+  "627": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "755",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP 텍스트 인코딩 (프롬프트)"
+    }
+  },
+  "638": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": [
+        "649",
+        0
+      ],
+      "steps": 9,
+      "cfg": 1,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "sgm_uniform",
+      "start_at_step": 4,
+      "end_at_step": 999,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "756",
+        0
+      ],
+      "positive": [
+        "627",
+        0
+      ],
+      "negative": [
+        "627",
+        0
+      ],
+      "latent_image": [
+        "647",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "고급 KSampler"
+    }
+  },
+  "647": {
+    "inputs": {
+      "upscale_method": "bislerp",
+      "scale_by": 1.8,
+      "samples": [
+        "599",
+        0
+      ]
+    },
+    "class_type": "LatentUpscaleBy",
+    "_meta": {
+      "title": "잠재 데이터 크기 배율 조정"
+    }
+  },
+  "649": {
+    "inputs": {
+      "seed": 813972274184088
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (1ST)"
+    }
+  },
+  "698": {
+    "inputs": {
+      "width": 640,
+      "height": 960,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image (Base Dimensions) 初始大小"
+    }
+  },
+  "732": {
+    "class_type": "SaveImageWebsocket",
+    "inputs": {
+      "images": [
+        "610",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "newera image output"
+    }
+  },
+  "755": {
+    "inputs": {
+      "clip_name": "",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "CLIP 로드"
+    }
+  },
+  "756": {
+    "inputs": {
+      "shift": 3,
+      "sampling": "flow",
+      "model": [
+        "822",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "모델 샘플링 (AuraFlow)"
+    }
+  },
+  "757": {
+    "inputs": {
+      "vae_name": ""
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "VAE 로드"
+    }
+  },
+  "761": {
+    "inputs": {
+      "unet_name": "",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "확산 모델 로드"
+    }
+  },
+  "763": {
+    "inputs": {
+      "conditioning": [
+        "627",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "조건 (0으로 출력)"
+    }
+  },
+  "822": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": false,
+        "lora": "None",
+        "strength": 1
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "761",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  }
+}

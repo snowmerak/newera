@@ -130,6 +130,10 @@ npm start
 
 대화 목적·질문/응답 대기·인물별 과제와 계획/표현 분리는 아직 구현하지 않았습니다. 다음 변경의 검토안은 [대화 상태와 컨텍스트 설계](docs/CONVERSATION_CONTEXT_DESIGN.md)에 정리했습니다.
 
+## 이미지 생성 클라이언트
+
+OpenAI·Grok(xAI)·OpenRouter 서버 클라이언트와 ComfyUI 기본 워크플로우 **ZIT · Moody Minimal / SDXL · Simple / Anima · Preview**를 제공합니다. 상단 **이미지 설정**(`/images`)에서 ComfyUI 서버의 모델을 조회하고, 워크플로우별 모델·크기·LoRA·네거티브 프롬프트를 저장하고 테스트 이미지를 생성합니다. 기본 서버는 `http://localhost:22222`입니다. 결과는 `SaveImageWebsocket`으로 직접 받아 브라우저에 표시하며, 내려받기를 누르기 전에는 이미지 파일을 저장하지 않습니다. [설정과 사용 예](docs/IMAGE_GENERATION.md)를 참고하세요. 공연 중 자동 삽화·영구 이미지 저장·참조 이미지 입력은 후속 작업입니다.
+
 ## 데이터 형식
 
 씬 기반 `newera-theater` version 2만 사용합니다. 세계관·진행·저장 슬롯·생성 작업은 `data/newera.sqlite`의 `theater_*` 테이블에 저장합니다. 구형 형식의 가져오기와 자동 이전은 지원하지 않습니다.
