@@ -183,7 +183,7 @@
 			<form onsubmit={generate} class="settings-form"><label>그릴 장면<textarea bind:value={prompt} rows="5" maxlength="32000" required disabled={generating}></textarea></label>{#if provider === 'comfyui'}<label>Seed · 비워두면 무작위<input type="number" bind:value={seed} min="0" max="281474976710655" step="1" placeholder="무작위" disabled={generating} /></label>{/if}<div class="buttons"><button class="primary" disabled={generating || saving || (provider === 'comfyui' ? !connected || !!missingNodes.length || workflow.models.some((field) => field.required && !profile.models[field.field]) : !model || !apiKeyEnv)}>테스트 이미지 생성</button>{#if generating}<button type="button" onclick={() => controller?.abort()}>생성 수신 중단</button>{/if}</div></form>
 			{#if generating}<p class="connection" role="status">이미지를 생성하고 있습니다. 완료되면 여기에 표시됩니다.</p>{/if}{#if error}<p class="feedback error" role="alert">{error}</p>{/if}
 			<div class="preview" aria-busy={generating}>{#if imageUrl}<img src={imageUrl} alt={`${generatedName} 테스트 삽화`} /><div class="image-details"><span>{generatedName} · {elapsed}초{generatedSeed ? ` · Seed ${generatedSeed}` : ''}</span><a href={imageUrl} download={`newera-image.${imageType === 'image/jpeg' ? 'jpg' : imageType === 'image/webp' ? 'webp' : 'png'}`}>이미지 내려받기 ↓</a></div>{:else}<div class="empty-preview"><span>장면을 그려보세요</span><p>생성한 이미지는 이곳에 표시됩니다.</p></div>{/if}</div>
-			<p class="field-hint">프리셋을 저장한 뒤 공연 화면의 이미지 설정에서 세션별로 선택하세요. 결과 이미지는 브라우저에 표시하며, 공연 중 자동 삽화는 아직 연결하지 않았습니다.</p>
+			<p class="field-hint">프리셋을 저장한 뒤 공연 화면의 이미지 설정에서 세션별로 선택하고 이미지 생성 조건을 설정하세요. 이곳의 테스트 결과는 현재 화면에서만 표시합니다.</p>
 		</section>
 	</div>
 </main>

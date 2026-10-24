@@ -8,6 +8,7 @@ import { actionForRequest, initialState, templateFor } from '$lib/theater/runtim
 import type { GenerationJob, ModelSelection, PlayerRequest, RelationshipScores, SaveSlot, StageView, TurnProgress, World, WorldDefinition, WorldSummary } from '$lib/theater/types';
 import { checkedModelSelection, checkedRelationships, record, text, validateDefinition, validateState } from '$lib/theater/validation';
 import { checkedProviderSnapshot, type ProviderSnapshot } from './providers';
+import { imageTriggerCursor } from '$lib/images/triggers';
 
 type Row = Record<string, unknown>;
 let database: DatabaseSync | undefined;
@@ -37,7 +38,18 @@ export function store(): DatabaseSync {
 			created_at TEXT NOT NULL, completed_at TEXT, error TEXT, progress_json TEXT, models_json TEXT, inputs_json TEXT
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS theater_jobs_active ON theater_jobs(world_id) WHERE status IN ('pending', 'running');
-		CREATE INDEX IF NOT EXISTS theater_jobs_recent ON theater_jobs(world_id, created_at DESC);`);
+		CREATE INDEX IF NOT EXISTS theater_jobs_recent ON theater_jobs(world_id, created_at DESC);
+		CREATE TABLE IF NOT EXISTS theater_image_settings (
+			world_id TEXT PRIMARY KEY REFERENCES theater_worlds(id) ON DELETE CASCADE,
+			revision INTEGER NOT NULL, config_json TEXT NOT NULL, cursor_json TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS theater_illustrations (
+			id TEXT PRIMARY KEY, world_id TEXT NOT NULL REFERENCES theater_worlds(id) ON DELETE CASCADE,
+			source_key TEXT NOT NULL, settings_revision INTEGER NOT NULL, input_json TEXT NOT NULL,
+			status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', error TEXT, created_at TEXT NOT NULL,
+			media_type TEXT, bytes BLOB, UNIQUE(world_id, source_key)
+		);
+		CREATE INDEX IF NOT EXISTS theater_illustrations_pending ON theater_illustrations(status, created_at);`);
 	if (!(db.prepare('PRAGMA table_info(theater_jobs)').all() as Row[]).some((column) => column.name === 'progress_json')) {
 		db.exec('ALTER TABLE theater_jobs ADD COLUMN progress_json TEXT');
 	}
@@ -121,6 +133,13 @@ function clearWorldHistory(id: string): void {
 	// Removing jobs also fences in-flight model responses before deleting their world or replacing its snapshot.
 	store().prepare('DELETE FROM theater_jobs WHERE world_id = ?').run(id);
 	store().prepare('DELETE FROM theater_saves WHERE world_id = ?').run(id);
+	store().prepare('DELETE FROM theater_illustrations WHERE world_id = ?').run(id);
+	store().prepare('DELETE FROM theater_image_settings WHERE world_id = ?').run(id);
+}
+
+function resetImageHistory(world: World): void {
+	store().prepare('DELETE FROM theater_illustrations WHERE world_id = ?').run(world.id);
+	store().prepare('UPDATE theater_image_settings SET cursor_json = ? WHERE world_id = ?').run(JSON.stringify(imageTriggerCursor({ ...world, revision: world.revision + 1 })), world.id);
 }
 
 export function deleteWorld(id: string, revision: number): void {
@@ -249,10 +268,11 @@ export function loadWorld(id: string, revision: number, slot: number): void {
 	editWorld(id, revision, (world) => {
 		world.definition = validateDefinition(snapshot.definition);
 		world.state = validateState(snapshot.state, world.definition);
+		resetImageHistory(world);
 	});
 }
 export function resetWorld(id: string, revision: number): void {
-	editWorld(id, revision, (world) => { world.state = initialState(world.definition); });
+	editWorld(id, revision, (world) => { world.state = initialState(world.definition); resetImageHistory(world); });
 }
 
 export function exportWorld(id: string): string {

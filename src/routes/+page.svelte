@@ -14,6 +14,7 @@
 	import CharacterIntroduction from '$lib/components/CharacterIntroduction.svelte';
 	import ProviderManager from '$lib/components/ProviderManager.svelte';
 	import SessionImageSettings from '$lib/components/SessionImageSettings.svelte';
+	import IllustrationCard from '$lib/components/IllustrationCard.svelte';
 	import type { ModelOption } from '$lib/providers/types';
 	let { data, form }: PageProps = $props();
 	let submitting = $state(false);
@@ -38,10 +39,16 @@
 	let events = $derived(world.state.events.slice(-100));
 	let eventsById = $derived(new Map(world.state.events.map((event) => [event.id, event])));
 	let presentations = $derived(eventPresentations(world));
-	let historyRevision = $derived(JSON.stringify([world.id, world.revision, data.generation?.status, form?.message]));
+	let illustrationRevision = $derived(JSON.stringify(data.illustrations.map((entry) => [entry.id, entry.status])));
+	let historyRevision = $derived(JSON.stringify([world.id, world.revision, data.generation?.status, form?.message, illustrationRevision]));
+	let illustrationsByEvent = $derived(new Map(events.map((event) => [event.id, data.illustrations.filter((entry) => entry.eventId === event.id)])));
+	let otherIllustrations = $derived(data.illustrations.filter((entry) => !entry.eventId || !illustrationsByEvent.has(entry.eventId)));
 	function nearHistoryEnd(element: HTMLDivElement): boolean {
 		const range = element.scrollHeight - element.clientHeight;
 		return range <= 0 || element.scrollTop >= range * 0.98;
+	}
+	function followIllustration() {
+		if (historyElement && followingHistory) historyElement.scrollTop = historyElement.scrollHeight;
 	}
 	$effect.pre(() => {
 		historyRevision;
@@ -154,6 +161,26 @@
 		return () => { stopped = true; controller.abort(); clearTimeout(timer); };
 	});
 	const clock = (minute: number) => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+	$effect(() => {
+		const current = illustrationRevision;
+		const worldId = world.id;
+		if (!data.illustrations.some((entry) => ['pending', 'checking', 'generating'].includes(entry.status))) return;
+		const controller = new AbortController();
+		let stopped = false;
+		let timer: ReturnType<typeof setTimeout>;
+		async function pollImages() {
+			try {
+				const response = await fetch(`/api/images/session?worldId=${encodeURIComponent(worldId)}`, { signal: controller.signal, cache: 'no-store' });
+				if (response.ok) {
+					const result = await response.json();
+					if (JSON.stringify(result.illustrations.map((entry: { id: string; status: string }) => [entry.id, entry.status])) !== current) { if (!stopped) await invalidateAll(); return; }
+				}
+			} catch { if (stopped) return; }
+			if (!stopped) timer = setTimeout(pollImages, 1000);
+		}
+		timer = setTimeout(pollImages, 700);
+		return () => { stopped = true; controller.abort(); clearTimeout(timer); };
+	});
 </script>
 
 <svelte:head><title>{world.definition.name} · newera</title><meta name="description" content="씬과 인물의 선택으로 이어지는 이야기" /></svelte:head>
@@ -169,7 +196,7 @@
 </header>
 <dialog class="session-dialog" aria-label="이미지 설정" bind:this={imagesDialog}>
  <form method="dialog" class="dialog-close"><button aria-label="이미지 설정 닫기">닫기</button></form>
- {#key world.id}<SessionImageSettings {world} presets={data.imagePresets} />{/key}
+ {#key world.id}<SessionImageSettings {world} presets={data.imagePresets} settings={data.imageTriggers} illustrationCount={data.illustrations.length} />{/key}
 </dialog>
 <dialog class="session-dialog" aria-labelledby="models-dialog-title" bind:this={modelsDialog}>
  <form method="dialog" class="dialog-close"><button aria-label="모델 설정 닫기">닫기</button></form>
@@ -200,7 +227,7 @@
 <dialog class="session-dialog" aria-labelledby="reset-dialog-title" bind:this={resetDialog}>
  <form method="dialog" class="dialog-close"><button aria-label="초기화 창 닫기">닫기</button></form>
  <h2 id="reset-dialog-title">처음부터 다시</h2>
- <p>현재 세계관의 진행·대화·기억을 지우고 초기 배치로 돌아갑니다. 저장 슬롯과 모델·이미지 설정은 유지됩니다.</p>
+ <p>현재 세계관의 진행·대화·기억·삽화 기록을 지우고 초기 배치로 돌아갑니다. 저장 슬롯과 모델·이미지 설정은 유지됩니다.</p>
  <a class="session-export" href={`/session/export?worldId=${encodeURIComponent(world.id)}`}>초기화 전에 공연 기록 내려받기</a>
  {#if generating}<p>생성 중에는 먼저 「생성 중단」을 눌러 주세요.</p>{/if}
  <form method="POST" action="?/reset" use:enhance={submitReset} class="reset-form">
@@ -279,7 +306,9 @@
 					{#if event.changes && Object.keys(event.changes).length}<small class="state-change">{Object.entries(event.changes).map(([key, value]) => `${key}: ${value}`).join(' · ')}</small>{/if}
 					{#if event.decision}<details class="decision-detail"><summary>선택 기록</summary><small>{event.decision.acted === undefined ? '이전 판단' : event.decision.acted ? '행동한다' : '지켜본다'} · {event.decision.choice} · 판단 {event.decision.model}{#if event.decision.generationModel} · 생성 {event.decision.generationModel}{/if}</small></details>{/if}
 				</article>
+				{#each illustrationsByEvent.get(event.id) ?? [] as illustration (illustration.id)}<IllustrationCard {illustration} onImageLoad={followIllustration} />{/each}
 			{:else}<div class="empty-stage"><p>아직 아무도 말을 꺼내지 않았다.</p><span>말을 걸거나, 주변 사물을 살피거나, 잠시 기다려 보세요.</span></div>{/each}
+			{#each otherIllustrations as illustration (illustration.id)}<IllustrationCard {illustration} onImageLoad={followIllustration} />{/each}
 		</div>
 		{#if generating}
 			<div class="generation-status">

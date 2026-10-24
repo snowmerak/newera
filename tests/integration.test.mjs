@@ -70,6 +70,48 @@ async function waitJob(base, db, worldId, failure = false) {
 	assert.fail('job did not finish');
 }
 
+test('automatic illustration conditions coalesce, persist API image bytes and survive restart without duplicate charges', async () => {
+	let imageCalls = 0; let semanticCalls = 0;
+	const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+	const model = createServer(async (request, response) => {
+		const parts = []; for await (const part of request) parts.push(part);
+		const body = JSON.parse(Buffer.concat(parts).toString()); response.setHeader('content-type', 'application/json');
+		if (request.url === '/v1/images/generations') { imageCalls++; await pause(60); response.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })); }
+		else if (request.url === '/v1/chat/completions') { semanticCalls++; const { conditions } = JSON.parse(body.messages[1].content); response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ matches: conditions.map(({ id }) => ({ id, matched: true })) }) } }] })); }
+		else { response.statusCode = 404; response.end('{}'); }
+	});
+	const port = await listen(model); const directory = scratch();
+	let running = await app(directory, `http://127.0.0.1:${port}/v1`, { NEWERA_INTEGRATION_IMAGE_KEY: 'private-test-image-key' });
+	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
+	const imagePost = async (body) => {
+		const response = await fetch(`${running.base}/api/images/session`, { method: 'POST', headers: { origin: running.base, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+		assert.equal(response.status, 200); return response.json();
+	};
+	const imageView = async (id) => (await fetch(`${running.base}/api/images/session?worldId=${id}`)).json();
+	const completedImages = async (id, count) => {
+		for (let attempt = 0; attempt < 150; attempt++) { const view = await imageView(id); if (view.illustrations.filter((entry) => entry.status === 'completed').length === count) return view; await pause(20); }
+		assert.fail('illustrations did not complete');
+	};
+	try {
+		await post(running.base, 'createWorld', { name: 'Image conditions integration', description: 'A quiet empty theater.' }, '/lores');
+		const id = db.prepare("SELECT value FROM theater_meta WHERE key='active'").get().value;
+		const saved = await fetch(`${running.base}/api/image-presets`, { method: 'POST', headers: { origin: running.base, 'content-type': 'application/json' }, body: JSON.stringify({ revision: 0, name: 'Image test style', config: { provider: 'openai', baseUrl: `http://127.0.0.1:${port}/v1`, apiKeyEnv: 'NEWERA_INTEGRATION_IMAGE_KEY', model: 'image-model', options: {}, stylePrompt: 'Watercolor.' } }) });
+		assert.equal(saved.status, 200); const { savedId } = await saved.json();
+		await post(running.base, 'imagePreset', { worldId: id, imagePresetId: savedId });
+		const baseRule = { enabled: true, minutes: 5, cooldownMinutes: 0, sceneId: '', entityId: '', state: null, naturalLanguage: '', prompt: '' };
+		await imagePost({ worldId: id, operation: 'save', revision: 0, config: { enabled: true, rules: [{ ...baseRule, id: 'interval', name: 'Every five minutes', when: 'interval' }, { ...baseRule, id: 'quiet', name: 'A quiet scene', when: 'condition', naturalLanguage: '현재 장면이 조용하다.' }] } });
+		const turn = async () => { const { revision } = db.prepare('SELECT revision FROM theater_worlds WHERE id=?').get(id); await post(running.base, 'turn', { worldId: id, revision: String(revision), kind: 'wait' }); await waitJob(running.base, db, id); };
+		await turn(); let view = await completedImages(id, 1); assert.equal(imageCalls, 1); assert.equal(semanticCalls, 1); assert.match(view.illustrations[0].reason, /Every five minutes.*A quiet scene/);
+		const image = await fetch(`${running.base}/api/images/illustrations/${view.illustrations[0].id}`); assert.equal(image.headers.get('content-type'), 'image/png'); assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+		await turn(); view = await completedImages(id, 2); assert.equal(imageCalls, 2); assert.equal(view.illustrations[1].reason, 'Every five minutes');
+		assert.ok(!JSON.stringify(view).includes('private-test-image-key')); assert.ok(!JSON.stringify(view.illustrations).includes('apiKeyEnv'));
+		await running.stop(); running = await app(directory, `http://127.0.0.1:${port}/v1`, { NEWERA_INTEGRATION_IMAGE_KEY: 'private-test-image-key' });
+		assert.equal((await imageView(id)).illustrations.length, 2); await pause(100); assert.equal(imageCalls, 2);
+		await post(running.base, 'reset', { worldId: id, revision: String(db.prepare('SELECT revision FROM theater_worlds WHERE id=?').get(id).revision) });
+		view = await imageView(id); assert.equal(view.illustrations.length, 0); assert.equal(view.settings.config.enabled, true); assert.equal(imageCalls, 2);
+	} finally { await running.stop(); db.close(); model.closeAllConnections(); await new Promise((resolve) => model.close(resolve)); }
+});
+
 test('scene play, typed decisions, multiple residents, object state, companions and world isolation', async () => {
 	const calls = [];
 	let failNext = false;
@@ -803,7 +845,7 @@ test('fresh storage contains only scene-based data and rejects unsupported impor
 	let running = await app(directory, 'http://127.0.0.1:1/v1');
 	const db = new DatabaseSync(join(directory, 'newera.sqlite'));
 	try {
-		assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((row) => row.name), ['theater_image_presets', 'theater_jobs', 'theater_meta', 'theater_saves', 'theater_worlds']);
+		assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((row) => row.name), ['theater_illustrations', 'theater_image_presets', 'theater_image_settings', 'theater_jobs', 'theater_meta', 'theater_saves', 'theater_worlds']);
 		assert.deepEqual(db.prepare('PRAGMA table_info(theater_worlds)').all().map((row) => row.name), ['id', 'revision', 'definition_json', 'state_json', 'created_at', 'model_settings_json', 'image_preset_id']);
 		const unsupported = { format: 'newera-lore', version: 1, title: 'Unsupported', state: {}, saves: [] };
 		const file = new FormData(); file.append('file', new Blob([JSON.stringify(unsupported)]), 'unsupported.json');

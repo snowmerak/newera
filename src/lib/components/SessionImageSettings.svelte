@@ -5,7 +5,9 @@
 	import type { World } from '$lib/theater/types';
 	import type { ImagePresetSummary } from '$lib/images/presets';
 	import { imageProviderNames } from '$lib/images/presets';
-	let { world, presets }: { world: World; presets: ImagePresetSummary[] } = $props();
+	import type { ImageTriggerView } from '$lib/images/triggers';
+	import ImageTriggerSettings from './ImageTriggerSettings.svelte';
+	let { world, presets, settings, illustrationCount }: { world: World; presets: ImagePresetSummary[]; settings: ImageTriggerView; illustrationCount: number } = $props();
 	let selected = $state('');
 	let saving = $state(false);
 	let generating = $state(false);
@@ -53,11 +55,12 @@
 	{#if notice}<p class="feedback" role="status">{notice}</p>{/if}
 	<p class="field-hint">현재 선택: {active?.name ?? '이미지 사용 안 함'}. 공유 프리셋의 수정은 다음 이미지 생성부터 반영됩니다.</p>
 	<details><summary>이 세션의 프리셋으로 삽화 생성</summary>
-		<p class="field-hint">입력한 장면을 한 장으로 그립니다. 외부 이미지 API는 요금이 발생할 수 있습니다. 자동 장면 삽화는 아직 연결하지 않았습니다.</p>
+		<p class="field-hint">입력한 장면을 한 장으로 미리 그립니다. 외부 이미지 API는 요금이 발생할 수 있습니다. 대화 기록에 삽화를 추가하려면 아래의 ‘현재 장면 삽화 추가’를 사용하세요.</p>
 		<form onsubmit={generate} class="settings-form"><label>그릴 장면<textarea bind:value={prompt} rows="4" maxlength="32000" required disabled={generating} placeholder="현재 장면에서 그리고 싶은 모습을 적어 주세요."></textarea></label><div class="button-row"><button disabled={!active || selected !== (world.imagePresetId ?? '') || saving || generating}>{generating ? '이미지 생성 중…' : '세션 삽화 생성'}</button>{#if generating}<button type="button" onclick={() => controller?.abort()}>생성 수신 중단</button>{/if}</div></form>
 	</details>
 	{#if error}<p class="feedback error" role="alert">{error}</p>{/if}
 	{#if imageUrl}<img class="session-image" src={imageUrl} alt="세션 프리셋으로 생성한 삽화" /><p class="field-hint">이 이미지는 현재 화면에서만 표시되며 대화 기록에 저장하지 않습니다.</p>{/if}
+	<ImageTriggerSettings {world} {settings} count={illustrationCount} />
 </section>
 
 <style>

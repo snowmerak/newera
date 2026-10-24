@@ -6,6 +6,7 @@ import { createDirector, modelSettings } from './oev';
 import { createMemoryRecall } from './memory-search';
 import { resolveProviderSnapshot } from './providers';
 import { checkJob, claimJob, enqueue, failJob, finishJob, getJobProviders, getWorld, heartbeatJob, nextJobInput, pinJobProviders, retryFailedJob, runnableJobs, saveJobProgress } from './stage-store';
+import { ensureImageWorker } from './images/trigger-worker';
 
 const workerId = randomUUID();
 const scheduled = new Set<string>();
@@ -48,7 +49,7 @@ async function processJob(id: string): Promise<void> {
 		} while (!finishJob(job, workerId));
 	} catch (error) {
 		failJob(id, workerId, error instanceof Error ? error.message : '장면 진행에 실패했습니다.');
-	} finally { clearInterval(timer); }
+	} finally { clearInterval(timer); ensureImageWorker(); }
 }
 function schedule(id: string): void {
 	if (scheduled.has(id)) return;
@@ -58,6 +59,7 @@ function schedule(id: string): void {
 	}, 0);
 }
 export function ensureStageWorker(): void {
+	ensureImageWorker();
 	for (const id of runnableJobs(new Date(Date.now() - leaseMs).toISOString())) schedule(id);
 }
 export function queueStageTurn(worldId: string, revision: number, request: PlayerRequest): void {

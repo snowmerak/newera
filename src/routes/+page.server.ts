@@ -6,8 +6,13 @@ import { ensureStageWorker, queueStageTurn, retryStageTurn } from '$lib/server/s
 import { getModelCatalog, modelSettings } from '$lib/server/oev';
 import { checkedModelSelection } from '$lib/theater/validation';
 import { resolveProviderSnapshot } from '$lib/server/providers';
+import { getImageTriggers, listIllustrations } from '$lib/server/images/trigger-store';
 
-export const load: PageServerLoad = () => { ensureStageWorker(); return { ...getStageView(), imagePresets: listImagePresets().map(({ id, name, revision, provider }) => ({ id, name, revision, provider })) }; };
+export const load: PageServerLoad = () => {
+	ensureStageWorker();
+	const view = getStageView();
+	return { ...view, imageTriggers: getImageTriggers(view.world.id), illustrations: listIllustrations(view.world.id), imagePresets: listImagePresets().map(({ id, name, revision, provider }) => ({ id, name, revision, provider })) };
+};
 
 function failed(error: unknown) {
 	return fail(400, { message: error instanceof Error ? error.message : '요청을 처리하지 못했습니다.' });
